@@ -341,7 +341,7 @@
               <MiscControls></MiscControls>
               <Define>USE_STDPERIPH_DRIVER</Define>
               <Undefine></Undefine>
-              <IncludePath>..\Device\src;..\MCI\Inc;..\User\Inc;..\Main\Inc;..\User\HeadFiles;..\CMSIS;..\Device\inc</IncludePath>
+              <IncludePath>..\FW\Inc;..\Device\src;..\MCI\Inc;..\User\Inc;..\Board\Inc;..\User\HeadFiles;..\CMSIS;..\Device\inc</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -383,67 +383,127 @@
       </TargetOption>
       <Groups>
         <Group>
-          <GroupName>MAIN</GroupName>
+          <GroupName>Config</GroupName>
           <Files>
             <File>
-              <FileName>main.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Main\Src\main.c</FilePath>
-            </File>
-            <File>
-              <FileName>SC_Init.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Main\Src\SC_Init.c</FilePath>
-            </File>
-            <File>
-              <FileName>user_function.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Main\Src\user_function.c</FilePath>
-            </File>
-            <File>
-              <FileName>mc_customize.h</FileName>
+              <FileName>cfg_motor.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\Main\Inc\mc_customize.h</FilePath>
+              <FilePath>..\FW\Inc\cfg_motor.h</FilePath>
+            </File>
+            <File>
+              <FileName>cfg_ctrl.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\FW\Inc\cfg_ctrl.h</FilePath>
+            </File>
+            <File>
+              <FileName>cfg_board.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\FW\Inc\cfg_board.h</FilePath>
+            </File>
+            <File>
+              <FileName>fw_config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\FW\Inc\fw_config.h</FilePath>
             </File>
           </Files>
         </Group>
         <Group>
-          <GroupName>USER</GroupName>
+          <GroupName>App</GroupName>
           <Files>
             <File>
-              <FileName>FOC_PMSM.c</FileName>
+              <FileName>main.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\User\Src\FOC_PMSM.c</FilePath>
+              <FilePath>..\FW\Src\main.c</FilePath>
             </File>
             <File>
-              <FileName>SC_it.c</FileName>
+              <FileName>supervisor.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\User\Src\SC_it.c</FilePath>
+              <FilePath>..\FW\Src\supervisor.c</FilePath>
             </File>
             <File>
-              <FileName>StateMachine.c</FileName>
+              <FileName>ctrl_globals.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\User\Src\StateMachine.c</FilePath>
+              <FilePath>..\FW\Src\ctrl_globals.c</FilePath>
             </File>
             <File>
-              <FileName>FluxObs.c</FileName>
+              <FileName>diag.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\User\Src\FluxObs.c</FilePath>
+              <FilePath>..\FW\Src\diag.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Control</GroupName>
+          <Files>
+            <File>
+              <FileName>startup.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\startup.c</FilePath>
             </File>
             <File>
-              <FileName>FluxObs.h</FileName>
+              <FileName>speed_ctrl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\speed_ctrl.c</FilePath>
+            </File>
+            <File>
+              <FileName>identify.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\identify.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Observer</GroupName>
+          <Files>
+            <File>
+              <FileName>est.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\est.c</FilePath>
+            </File>
+            <File>
+              <FileName>flux_obs.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\flux_obs.c</FilePath>
+            </File>
+            <File>
+              <FileName>flux_pll.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\flux_pll.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>FOC_Core</GroupName>
+          <Files>
+            <File>
+              <FileName>foc_core.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\foc_core.c</FilePath>
+            </File>
+            <File>
+              <FileName>mathx.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\mathx.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>HAL_Board</GroupName>
+          <Files>
+            <File>
+              <FileName>hal_sc32r602.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\hal_sc32r602.c</FilePath>
+            </File>
+            <File>
+              <FileName>SC_Init.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Board\Src\SC_Init.c</FilePath>
+            </File>
+            <File>
+              <FileName>Hardware_config.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\User\Inc\FluxObs.h</FilePath>
-            </File>
-            <File>
-              <FileName>FluxPLL.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\User\Src\FluxPLL.c</FilePath>
-            </File>
-            <File>
-              <FileName>FluxPLL.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\User\Inc\FluxPLL.h</FilePath>
+              <FilePath>..\Board\Inc\Hardware_config.h</FilePath>
             </File>
           </Files>
         </Group>
