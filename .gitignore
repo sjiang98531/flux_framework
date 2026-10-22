@@ -1,0 +1,64 @@
+# ============================================================
+# flux_selfpll 版本管理忽略规则
+#
+# 原则：只把「人手写的」和「要长期留存的」放进库；
+#       编译器每次都能重新生成的一律排除。
+# ============================================================
+
+# ---------- Keil 构建产物 ----------
+Output/*
+!Output/*.jscope
+List/
+*.o
+*.d
+*.crf
+*.dep
+*.axf
+*.hex
+*.bin
+*.lst
+*.map
+*.htm
+*.lnp
+*.sct
+*.iex
+*.__i
+*.build_log.*
+
+# ---------- J-Scope 采集数据 ----------
+# Output/ 里的新 CSV 不进库；整理过的台架数据放 Data/ 并提交
+Output/*.csv
+
+# ---------- Data/：台架数据与 SMO 基线固件（要进库）----------
+!Data/**
+!Data/smo_baseline/*.axf
+
+# ---------- Keil 的 GUI 布局 / 自动备份（每次都变，噪音）----------
+*.uvguix.*
+*.bak
+*.uvoptx.bak
+
+# ---------- 调试器日志 ----------
+Project/JLinkLog.txt
+Project/JLinkSettings.ini
+Project/Templst.soclst
+
+# ---------- 临时 / 大二进制存档 ----------
+User/Tmp/
+
+# ---------- 系统 ----------
+Thumbs.db
+desktop.ini
+
+# ---------- 助手工作目录（不属于代码）----------
+.workbuddy/
+
+# Keil 每用户选项（每次打开都变）
+*.uvoptx
+
+# Claude 改文件前留的快照（有 git 标签后不需要）
+_snapshots/
+
+# 整理用的临时目录（整理完删除）
+_reorg_new/
+_test28_new/
