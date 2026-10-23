@@ -131,6 +131,15 @@ void FluxObs_BeginStartup(void)
     }
 }
 
+void FluxObs_SeedCatch(int16_t theta)
+{
+    /* psi_s = psi_r + Lq*i：短接时电流不小（1500 rpm 约 2.8 A），不能只种 psi_r */
+    sAngle_Trig a = Mc_SinCos(theta);
+    FluxObs_Reset();
+    sFluxObs.s32PsiAlF = ((int32_t)Mx_MulQ15(FLUX_NOMINAL_Q15, a.s16Cos) + Mx_MulQ15(sFluxObs.s16KLs, gMeas.iab.s16Alpha)) << 16;
+    sFluxObs.s32PsiBeF = ((int32_t)Mx_MulQ15(FLUX_NOMINAL_Q15, a.s16Sin) + Mx_MulQ15(sFluxObs.s16KLs, gMeas.iab.s16Beta)) << 16;
+}
+
 static void FluxObs_Run(void)
 {
     MCFLIB_2_ALBE_T_S16 current;

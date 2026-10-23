@@ -37,5 +37,8 @@ void Est_StartupReportSpeed(void);
 void Est_OnEnterStartupCold(void);
 /* 进入 Startup：从 Spin 回退，转子还在转，从当前上报值开始 */
 void Est_OnEnterStartupFromSpin(void);
+/* 飞车直接接管进 Spin（FLY_PHASOR）：theta = 本拍采样时刻的转子角，spd = 转速 Q15。
+ * 预置观测器磁链、PLL（角度推到下一拍、转速、积分器）和转速反馈/滤波器。 */
+void Est_OnCatch(int16_t theta, int16_t spd);
 
 #endif

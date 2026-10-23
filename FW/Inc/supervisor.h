@@ -38,6 +38,7 @@ typedef enum _m1_run_substate_t {
 #define MC_FAULT_ROTOR_BLOCKED  4   /* 堵转 */
 #define MC_FAULT_PHASELESS      5   /* 缺相 */
 #define MC_FAULT_SPEED_OC       6   /* 超速 */
+#define MC_FAULT_FLY_TIMEOUT    7   /* 飞车检测：短接制动 FLY_BRAKE_TIMEOUT_S 还停不下来（FLY_PHASOR） */
 
 #define MC_FAULT_SET(faults, faultid)   (faults |= ((mcdef_fault_t)1 << faultid))
 #define MC_FAULT_CLEAR(faults, faultid) (faults &= ~((mcdef_fault_t)1 << faultid))
@@ -70,6 +71,8 @@ void Ctrl_SlowTick(void);       /* 慢环：状态机慢环 + 诊断 */
 void Sup_SwitchChargeCalib(void);
 void Sup_SwitchCalibAlign(void);
 void Sup_SwitchCalibTorqueloop(void);
+void Sup_SwitchCalibSpin(void);     /* 飞车直接接管（FLY_PHASOR） */
+void Sup_SwitchCalibIF(void);       /* 飞车低速同向，直接进 I/F（FLY_PHASOR + FLY_LOW_IF） */
 void Sup_SwitchAlignStartup(void);
 void Sup_SwitchStartupSpin(void);
 void Sup_SwitchTorqueloopSpin(void);

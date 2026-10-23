@@ -443,6 +443,54 @@ void Sup_SwitchCalibTorqueloop(void)
     FluxPLL_Init(&gEst.pll);
 }
 
+void Sup_SwitchCalibSpin(void)
+{
+    int16_t spd = gFly.speedCatch;
+    Est_OnCatch(gFly.thetaCatch, spd);
+    /* 电流环：指令 0；q 轴积分器预置成反电势电压，d 轴 0（id = iq = 0 时的稳态电压）。
+     * 短接时的短路电流由电流环几毫秒内拉到 0。解耦打开时 SetDecouple 会把这个前馈量
+     * 从积分器里搬出去，总输出不变。 */
+    gFoc.idqRef.s16D = 0;
+    gFoc.idqRef.s16Q = 0;
+    gFoc.piD.qdSum = 0;
+    gFoc.piQ.qdSum = (((int32_t)spd * DEC_K_EMF_Q15) >> 15) << 15;
+
+    DISABLE_PWMOUT();
+    PWMABC_Enb;
+    PWMABCN_Enb;
+    FocCore_ModulateZero();         /* 本周期仍是零矢量（= 短接），下一拍电流环接手 */
+    ENABLE_PWMOUT();
+
+    SpeedCtrl_OnEnterSpin();        /* 斜坡从测到的转速开始 */
+    gProt.u16PhaselessTimeCnt = 0;
+    s_u16SpinCheckTime = 0;
+    gSup.runState = RunState_Spin;
+    FocCore_SetDecouple(1);
+}
+
+#if (STARTUP_MODE == STARTUP_IF)
+void Sup_SwitchCalibIF(void)
+{
+    int16_t spd = gFly.speedCatch;
+    Est_OnCatch(gFly.thetaCatch, spd);
+    /* 开环电流沿转子 d 轴（iq = 0 -> 开环角 = 转子角，转矩从 0 开始），q 轴积分器预置成反电势 */
+    gFoc.idqRef.s16Q = 0;
+    gFoc.piD.qdSum = 0;
+    gFoc.piQ.qdSum = (((int32_t)spd * DEC_K_EMF_Q15) >> 15) << 15;
+    Startup_OnEnterIF(1);           /* 从 PLL 角（= 接管角推一拍）和转速开始拖 */
+
+    DISABLE_PWMOUT();
+    PWMABC_Enb;
+    PWMABCN_Enb;
+    FocCore_ModulateZero();
+    ENABLE_PWMOUT();
+
+    gSup.runState = RunState_Startup;
+    gSpd.speedRampSt.s32State = gMeas.speed << 16;
+    SpeedCtrl_UseStartupRamp();
+}
+#endif
+
 void Sup_SwitchAlignStartup(void)
 {
     Est_OnEnterStartupCold();

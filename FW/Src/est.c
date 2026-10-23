@@ -91,6 +91,26 @@ void Est_OnEnterStartupCold(void)
     s32StartupSpdRep = 0;           /* BeginStartup 也把 PLL 速度清零了 */
 }
 
+void Est_OnCatch(int16_t theta, int16_t spd)
+{
+    int32_t sp = (int32_t)spd << 16;
+    FluxPLL_Init(&gEst.pll);                    /* 增益（飞车检测前可能被 FLY_VENDOR 借用过）+ 清状态 */
+    gEst.pll.s32Speed = sp;
+    gEst.pll.s32I_1 = sp;
+    /* 下一拍 Est_SpinTick 用 s32Theta 当"本拍采样时刻"的角：先推进一拍（同 flux_pll.c 的 angleStep） */
+    gEst.pll.s32Theta = (int32_t)((uint32_t)(uint16_t)theta << 16) + (sp >> 15) * (int32_t)SPEED_TO_THETA;
+    gEst.thetaPll = (int16_t)(gEst.pll.s32Theta >> 16);
+    gEst.thetaOffset = 0;
+    gFoc.theta = gEst.thetaPll;
+    gFoc.thetaInv = gEst.thetaPll;
+    FluxObs_SeedCatch(theta);
+    gMeas.speedRaw = spd;
+    gMeas.speed = spd;
+    /* MLIB_FilterMA_Q15 输入恒为 x 时的稳态累加值 = x*2^sh - x */
+    gMeas.speedFilt.s32Acc = ((int32_t)spd << gMeas.speedFilt.u16Sh) - spd;
+    s32StartupSpdRep = sp;
+}
+
 void Est_OnEnterStartupFromSpin(void)
 {
     s32StartupSpdRep = (int32_t)gMeas.speedRaw * 65536;

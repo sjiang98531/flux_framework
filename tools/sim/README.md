@@ -18,7 +18,10 @@ tools/sim/run_equiv.sh        # test33 vs sim_legacy 45 组逐位对比，最后
 tools/sim/build/gain_check_legacy   # test33 参数算出的增益 vs test33 常量（13 项 OK）
 python3 tools/sim/eval.py tools/sim/build/sim_legacy tools/sim/build/sim_new      # 性能对比
 python3 tools/sim/startup_eval.py tools/sim/build/sim_legacy tools/sim/build/sim_new
-tools/sim/armchk/check.sh     # ARM 语法检查，最后一行 "checked 42 files, 0 with diagnostics"
+python3 tools/sim/fly_eval.py tools/sim/build/sim_new            # 飞车：转子初速 ±1500 rpm × 4 个初始角 × 正反指令，120 组
+python3 tools/sim/fly_eval.py --stress tools/sim/build/sim_new   # 飞车 + 参数失配/延时/噪声 10 种条件，480 组
+tools/sim/regress.sh [tag]    # 当前代码 vs 某个 tag 逐拍对比输出（60 组），只改代码组织时应全部 IDENTICAL
+tools/sim/armchk/check.sh     # ARM 语法检查，最后一行 "checked 46 files, 0 with diagnostics"
 
 # 单次仿真：sim_new <工况> <csv> <hash文件|""> <秒数> <IPM电机0/1>
 tools/sim/build/sim_new 0 out.csv "" 28
@@ -26,6 +29,8 @@ tools/sim/build/sim_new 0 out.csv "" 28
 #      5：±1000 硬换向；6：1172 -> 600 -> 1172；7：300/150/80 rpm 平台；8：1000 rpm 突加 0.5 N·m；9：-1000 反转冷启动
 # 环境变量改电机模型：SIM_TD（死区等效 s）SIM_TH0（初始机械角 rad）SIM_W0（初始转速 rpm，飞车）
 #                     SIM_FRIC（摩擦 N·m）SIM_VBUS SIM_LOAD SIM_LOAD_END
+#                     SIM_WIND（外部恒定转矩 N·m，模拟风吹；正 = SIM_W0 为正的方向）
+# 注意：csv 的 true_rpm = -电机模型转速，所以"固件方向 +600 rpm"要给 SIM_W0=-600
 
 # 改配置编变体（不改工作区）：
 tools/sim/variant.sh fw "" 's/#define CTRL_FW_ENABLE          0/#define CTRL_FW_ENABLE          1/'

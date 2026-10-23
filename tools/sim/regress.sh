@@ -17,7 +17,7 @@ cd "$B"; fails=0; total=0
 run() { local tag=$1 sc=$2 te=$3; shift 3
   env SIM_HASH=out "$@" "./sim_ref_$TAG" $sc r_rg.csv r_rg.hash $te >/dev/null
   env SIM_HASH=out "$@" ./sim_new $sc n_rg.csv n_rg.hash $te >/dev/null
-  r=$(python3 "$T/cmp.py" r_rg.hash n_rg.hash); total=$((total+1))
+  r=$(python3 "$T/cmp.py" r_rg.hash n_rg.hash || true); total=$((total+1))
   case "$r" in IDENTICAL*) ;; *) fails=$((fails+1)); printf "%-40s %s\n" "$tag" "$r";; esac; }
 for sc in 0 1 2 3 4 5 6 7 8 9; do
   for cond in "SIM_X=0" "SIM_PWMDLY=1 SIM_TD=0.6e-6" "SIM_TH0=4.7 SIM_KR=1.2" "SIM_TH0=2.3 SIM_KJ=2" "SIM_TD=1e-6 SIM_NOISE=4"; do

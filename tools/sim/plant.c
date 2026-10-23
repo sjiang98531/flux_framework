@@ -38,6 +38,8 @@ void plant_init(Plant *p, int ipm)
       if ((e = getenv("SIM_KL"))) { p->lD *= atof(e); p->lQ *= atof(e); }
       if ((e = getenv("SIM_KPSI"))) p->psi *= atof(e);
       if ((e = getenv("SIM_KJ"))) p->J *= atof(e);
+      /* 外部恒定转矩（N*m，电机自己的方向；正 = 往 SIM_W0 为正的方向推），模拟风吹 */
+      p->wind = (e = getenv("SIM_WIND")) ? atof(e) : 0.0;
       p->noise = (e = getenv("SIM_NOISE")) ? atof(e) : 1.0; }
 }
 
@@ -104,6 +106,7 @@ void plant_step(Plant *p, double dt)
         p->te = 1.5 * p->pp * (p->psi * p->iq + (p->lD - p->lQ) * p->id * p->iq);
         {
             double tl = p->kFan * p->wm * fabs(p->wm) + p->loadStep * (p->wm >= 0 ? 1 : -1);
+            tl -= p->wind;
             double net = p->te - tl;
             if (fabs(p->wm) < 1e-3 && fabs(net) < p->tFric) { p->wm = 0; }
             else {

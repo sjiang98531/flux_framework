@@ -168,12 +168,37 @@
 #define STARTUP_REPORT_ACC_LIMIT 1000.0f    /* rpm/s */
 
 /* ===================== 顺逆风（飞车）检测 ================================ */
-/* 飞车检测只有"下桥短接测短路电流"一种（flystart.c）。原厂的 FLY_CHECK_0BEMF = 1
- * （不短接、测反电势）在库里就是空函数，0xF20E0006 删除。 */
-#define FLYBRAKE_TIME           0.1         /* s */
-#define FLYCURRENT_TH_PU        0.02        /* 标幺（相对 I_MAX），0.02 * 7.964 A ≈ 0.16 A */
+/* 两种都是"三相下桥短接、测短路电流"（flystart.c），区别在怎么用这个电流：
+ *   FLY_VENDOR  原厂：PLL 跟踪短路电流角度，PLL 转速当转子转速；同向在转 -> Torqueloop
+ *               0.3 s -> Spin。台架上几十 rpm 时转向会判错（0xF20E0005 test_if_2st_04）。
+ *   FLY_PHASOR  0xF20E0008：每 1 ms 取一次短路电流矢量的平均，相邻两次的夹角（叉积/点积）
+ *               就是这 1 ms 转过的电角度 -> 转速和转向；电流矢量的方向加上阻抗角就是转子角。
+ *               |转速| >= FLY_CATCH_RPM 且与指令同向 -> 直接接进 Spin（观测器、PLL、
+ *               电流环积分器都按测到的角度/转速预置）；
+ *               其余情况（反向、或低于 FLY_CATCH_RPM）一律继续短接制动，短路电流低于
+ *               FLYCURRENT_TH_PU 持续 FLYBRAKE_TIME 后按静止处理 -> 定位 -> I/F。
+ *               低速时不需要判对转向：反正都是先刹停。 */
+#define FLY_VENDOR              0
+#define FLY_PHASOR              1
+#define FLY_MODE                FLY_PHASOR
+
+#define FLYBRAKE_TIME           0.1         /* s，短路电流低于门限持续这么久 = 静止 */
+#define FLYCURRENT_TH_PU        0.02        /* 标幺（相对 I_MAX），0.02 * 7.964 A ≈ 0.16 A（本电机约 30 rpm） */
 #define CALIPWMPERCENT          (0.99)
-#define TORQUELOOP_TIME         0.3         /* s */
+#define TORQUELOOP_TIME         0.3         /* s，FLY_VENDOR 接管后的力矩闭环时间 */
+
+/* FLY_PHASOR */
+#define FLY_CATCH_RPM           250.0       /* rpm，>= 它且同向才直接接管（= IF_FALLBACK_RPM，观测器在这以上可靠） */
+#define FLY_SETTLE_S            0.02        /* s，短接后等电流暂态衰减（L/R ≈ 3 ms）再开始测 */
+#define FLY_STABLE_MS           8           /* 连续这么多次（每次 1 ms）转速估计稳定才接管 */
+#define FLY_BRAKE_TIMEOUT_S     10.0        /* s，短接制动这么久还停不下来（例如风一直吹）-> 故障 */
+/* 同向、但低于 FLY_CATCH_RPM 时怎么办（只对 STARTUP_IF）：
+ *   FLY_LOW_BRAKE  刹停 -> 定位 -> I/F 冷启动（稳，但重新启动要 ~3 s）
+ *   FLY_LOW_IF     >= FLY_LOW_MIN_RPM 时按测到的角度/转速直接进 I/F 开环（同 Spin 回退的接法），省掉刹停和定位 */
+#define FLY_LOW_BRAKE           0
+#define FLY_LOW_IF              1
+#define FLY_LOW_MODE            FLY_LOW_IF
+#define FLY_LOW_MIN_RPM         40.0        /* rpm，FLY_LOW_IF 的下限；再低就刹停（短路电流门限约 30 rpm） */
 
 /* ===================== 保护 ============================================== */
 #define DCBUS_OVER              (424.0)     /* V */

@@ -146,7 +146,7 @@ void Startup_Init(void)
 #endif
 }
 
-void Startup_ResetFlyCheck(void)  { s_u16BemfCheckCnt = 0; }
+void Startup_ResetFlyCheck(void)  { s_u16BemfCheckCnt = 0; FlyStart_Begin(); }
 void Startup_ResetBlockTimer(void) { s_u16BlockTime = 0; }
 
 /* ---------------------------------------------------------------------------
@@ -178,6 +178,31 @@ void Startup_ChargeSlow(void)
  * 超门限持续 320 拍（20 ms）-> 转子在转 -> Torqueloop；
  * FLYBRAKE_TIME（100 ms）内没超 -> 静止 -> Align。
  * -------------------------------------------------------------------------*/
+#if (FLY_MODE == FLY_PHASOR)
+void Startup_CalibFast(void)
+{
+    switch (FlyStart_DetectFast(gSpd.cmd)) {
+    case FLY_STILL:
+        Sup_SwitchCalibAlign();
+        break;
+    case FLY_CATCH:
+        Sup_SwitchCalibSpin();
+        break;
+#if (STARTUP_MODE == STARTUP_IF)
+    case FLY_CATCH_IF:
+        Sup_SwitchCalibIF();
+        break;
+#endif
+    case FLY_TIMEOUT:
+        if (gSup.faultRestarts < 10) gSup.faultRestarts++;
+        Sup_RaiseFault(MC_FAULT_FLY_TIMEOUT);
+        break;
+    default:
+        gMeas.speedRaw = gFly.speed;        /* 只给 J-Scope / 滤波器看 */
+        break;
+    }
+}
+#else
 void Startup_CalibFast(void)
 {
     FlyStart_CalibFast();
@@ -207,6 +232,7 @@ void Startup_CalibFast(void)
         Sup_SwitchCalibAlign();
     }
 }
+#endif
 
 void Startup_CalibSlow(void)
 {

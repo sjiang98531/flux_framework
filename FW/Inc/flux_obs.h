@@ -44,6 +44,8 @@ void FluxObs_Init(void);
 void FluxObs_Reset(void);
 /* Align -> Startup：清观测器、PLL 速度和转速反馈，把 psi 种在 |psi_f|∠gFoc.theta 上 */
 void FluxObs_BeginStartup(void);
+/* 飞车接管（FLY_PHASOR）：清观测器，把定子磁链种在 psi_f∠theta + Lq*i（theta、i 都是本拍采样时刻） */
+void FluxObs_SeedCatch(int16_t theta);
 /* 快环入口：抓上一拍的 PWM 比较值、电流、母线 */
 void FluxObs_Capture(uint8_t valid);
 /* 跑本拍模型。调用前必须已算好 gMeas.iab（Clarke）。 */

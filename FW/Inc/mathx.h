@@ -37,6 +37,10 @@ MX_INLINE int32_t Mx_AddSat32(int32_t a, int32_t b)
     return a + b;
 }
 
+/* atan2(y, x)，CORDIC 20 次迭代，结果 2^32 = 一圈（误差 < 2^-20 rad）。x = y = 0 返回 0。
+ * 约 300 个周期，快环里只能偶尔用（飞车检测每 1 ms 一次）。 */
+uint32_t Mx_Atan2(int32_t y, int32_t x);
+
 /* 整数平方根 floor(sqrt(x))，逐位法约 16 次循环。只在慢环用。 */
 uint32_t Mx_Isqrt32(uint32_t x);
 uint32_t Mx_Isqrt64(uint64_t x);

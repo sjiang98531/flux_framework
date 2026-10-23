@@ -30,7 +30,7 @@
  * 0xF20E0006  去掉原厂闭源库 SOC_MCI_2R_V102.lib：库里的函数全部自写（mc_math、svpwm、
  *             meas、protect、flystart），行为与 0xF20E0005 逐位相同（仿真 40 组 + 逐函数对比）
  * -------------------------------------------------------------------------*/
-#define FW_BUILD_TAG            0xF20E0007UL
+#define FW_BUILD_TAG            0xF20E0008UL
 #define FLUXPLL_BUILD_TAG       FW_BUILD_TAG
 
 #define FW_PI                   3.14159265358979
@@ -125,6 +125,26 @@
 #define IF_HANDOVER_Q31         ((int32_t)(IF_HANDOVER_RPM / SPEED_MAX * 2147483648.0))
 #define IF_SPIN_MIN_Q15         Q15(IF_SPIN_MIN_RPM / SPEED_MAX)
 #define IF_FALLBACK_Q15         Q15(IF_FALLBACK_RPM / SPEED_MAX)
+
+/* ---- 飞车检测（FLY_PHASOR，flystart.c） ---- */
+#define FLY_BLOCK_TICKS         (PWM_FREQ / 1000)           /* 每块 1 ms */
+#define FLY_SETTLE_BLOCKS       ((uint16_t)(FLY_SETTLE_S * 1000.0 + 0.5))
+#define FLY_STILL_BLOCKS        ((uint16_t)(FLYBRAKE_TIME * 1000.0 + 0.5))
+#define FLY_TIMEOUT_BLOCKS      ((uint32_t)(FLY_BRAKE_TIMEOUT_S * 1000.0 + 0.5))
+#define FLY_CATCH_Q15           Q15(FLY_CATCH_RPM / SPEED_MAX)
+#if (FLY_LOW_MODE == FLY_LOW_IF) && (STARTUP_MODE == STARTUP_IF)
+#define FLY_STABLE_MIN_Q15      Q15(FLY_LOW_MIN_RPM / SPEED_MAX)    /* 从这个转速起就要测准（低速同向进 I/F） */
+#else
+#define FLY_STABLE_MIN_Q15      FLY_CATCH_Q15
+#endif
+/* 每块转过的电角度（2^32 = 一圈）-> Q15 转速：spd = dphi * K >> 32，
+ * K = 60 * 32768 / (Tblock * 极对数 * SPEED_MAX) */
+#define FLY_DPHI_K              ((int32_t)(60.0 * 32768.0 * PWM_FREQ / FLY_BLOCK_TICKS / MOTOR_POLE_PAIRS / SPEED_MAX + 0.5))
+/* Q15 转速 -> w*Lq/Rs（Q12）：阻抗角 = atan(w*Lq/Rs) */
+#define FLY_WLR_Q12             ((int32_t)(SPEED_MAX * 2 * FW_PI / 60.0 * MOTOR_POLE_PAIRS * MOTOR_LQ_H / MOTOR_RS_OHM * 4096.0 + 0.5))
+#if (PWM_FREQ % 1000) != 0
+#error "FLY_PHASOR 按 1 ms 分块，PWM_FREQ 要是 1 kHz 的整数倍"
+#endif
 #define IF_WARM_MAX_Q31         ((int32_t)(1.5 * IF_FALLBACK_RPM / SPEED_MAX * 2147483648.0))
 #define IF_AGREE_Q15            Q15(IF_AGREE_RATIO)
 #define IF_AGREE_TICKS          ((uint16_t)(IF_AGREE_S * SLOWLOOP_FREQ))

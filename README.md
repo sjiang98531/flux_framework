@@ -35,6 +35,7 @@
   - 0xF20E0006：去掉原厂闭源库，全部自写（行为不变）
 - **不依赖原厂闭源库**（0xF20E0006 起）：原来库里的函数全部自写，见 `FW/Inc/mc_types.h` 和 `重构说明.md` 第 0.2 节。还在用原厂的开源头文件（类型、内联 Clarke/Park、PI/PLL 结构体）。
 - **状态按模块组织**（0xF20E0007 起）：原厂的 `FOC` / `USER` / `FastBoot_Para` 拆成 `gMeas`、`gFoc`、`gEst`、`gSpd`、`gProt`、`gFly`、`gStartup`、`gSup`、`gHal`。Watch 里给速度指令改 `gSup.speedCmd`（原 `USER.s16VspCmd`）。新旧变量名对照见 `重构说明.md` 第 0.3 节。
+- **飞车检测自己设计**（0xF20E0008 起）：短接下桥，用短路电流矢量直接测转速、转向和转子角。同向 ≥ 250 rpm 直接接进闭环，40～250 rpm 接进 I/F，反向或更慢先刹停。见 `重构说明.md` 第 0.4 节。
 - **快环**：ADC 中断，16 kHz，预算 62.5 µs，不许有除法和 sqrt。**慢环**：main 轮询，1 kHz。
 
 ## git tag
