@@ -2,23 +2,28 @@
 
 在 PC 上把固件的快环/慢环、闭源库模型、电机模型接起来跑，用来：
 
-1. **证明重构没改行为**：test33 原代码和当前代码跑同一组输入，每拍状态哈希逐位比较。
-2. **在上台架之前试新功能**：弱磁、MTPA、IPM 观测器。
-3. **ARM 32 位语法检查**：clang 按 Cortex-M0+ 检查 Keil 工程里的全部 .c。
+1. **证明重构没改行为**：test33 原代码和"当前代码 + test33 参数"（`legacy_cfg.sh`）跑同一组输入，每拍状态哈希逐位比较。
+2. **比较参数/功能的效果**：`eval.py` 测阶跃、加载、低速角度误差、高速；`startup_eval.py` 测 128 组冷启动。
+3. **在上台架之前试新功能**：弱磁、MTPA、IPM 观测器。
+4. **ARM 32 位语法检查**：clang 按 Cortex-M0+ 检查 Keil 工程里的全部 .c。
 
 需要 Linux 或 WSL：gcc、clang、python3（画图要 matplotlib）、git。
 
 ## 用法
 
 ```bash
-tools/sim/build.sh            # 编 build/sim_old（test33，从 tag base-test33 导出）、sim_new、fz_*、gain_check
-tools/sim/run_equiv.sh        # 45 组逐位对比，最后一行 TOTAL 45 FAIL 0
-tools/sim/build/gain_check    # 物理规格算出的增益 vs test33 常量
+tools/sim/build.sh            # 编 sim_old（test33，从 tag base-test33 导出）、sim_new（当前）、
+                              #    sim_legacy（当前代码 + test33 参数）、fz_*、gain_check(_legacy)
+tools/sim/run_equiv.sh        # test33 vs sim_legacy 45 组逐位对比，最后一行 TOTAL 45 FAIL 0
+tools/sim/build/gain_check_legacy   # test33 参数算出的增益 vs test33 常量（13 项 OK）
+python3 tools/sim/eval.py tools/sim/build/sim_legacy tools/sim/build/sim_new      # 性能对比
+python3 tools/sim/startup_eval.py tools/sim/build/sim_legacy tools/sim/build/sim_new
 tools/sim/armchk/check.sh     # ARM 语法检查，最后一行 "checked 42 files, 0 with diagnostics"
 
 # 单次仿真：sim_new <工况> <csv> <hash文件|""> <秒数> <IPM电机0/1>
 tools/sim/build/sim_new 0 out.csv "" 28
-# 工况 0：293 -> 1172 -> 600 -> -400 -> 停 -> 1000；1：1000 rpm 加载；2：1800 -> 2600；3：1000；4：启停循环；5：±1000 硬换向
+# 工况 0：293 -> 1172 -> 600 -> -400 -> 停 -> 1000；1：1000 rpm 加载；2：1800 -> 2600；3：1000；4：启停循环；
+#      5：±1000 硬换向；6：1172 -> 600 -> 1172；7：300/150/80 rpm 平台；8：1000 rpm 突加 0.5 N·m
 # 环境变量改电机模型：SIM_TD（死区等效 s）SIM_TH0（初始机械角 rad）SIM_W0（初始转速 rpm，飞车）
 #                     SIM_FRIC（摩擦 N·m）SIM_VBUS SIM_LOAD SIM_LOAD_END
 

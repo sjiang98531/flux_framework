@@ -17,8 +17,18 @@
   - 调性能改 `FW/Inc/cfg_ctrl.h`，填带宽 Hz、阻尼。
   - 换驱动板改 `FW/Inc/cfg_board.h`、`Board/`、`FW/Src/hal_sc32r602.c`。
   - 定点增益在 `FW/Inc/fw_config.h` 里自动算。
-- **默认配置 = test33 行为**（主机仿真 45 组逐位相同）。MTPA、弱磁、IPM 有效磁链默认关闭。
-- **固件标识**：`gFluxDiag.buildTag`。0xF20E0001 是重构，0xF20E0002 加了 MTPA/弱磁。
+- **参数按理论取值（0xF20E0003）**：
+  - 电流环 300 Hz + dq 解耦
+  - 速度环 0.5 Hz / ζ0.7
+  - PLL 15 Hz / 0.707
+  - 观测器去直流相位补偿
+  - 自写防溢出 PI
+- **退回原厂参数**：每项都写了原厂值，全部改回去（`tools/sim/legacy_cfg.sh`）就与 test33 逐位相同（仿真 45 组）。
+- **默认关闭**：MTPA、弱磁、IPM 有效磁链。
+- **固件标识**：`gFluxDiag.buildTag`。
+  - 0xF20E0001：重构
+  - 0xF20E0002：加 MTPA / 弱磁
+  - 0xF20E0003：按理论取参
 - **闭源库约束**：
   - `FOC_TypeDef / USER_TypeDef` 的字段布局不能改。
   - `FOC / USER / FastBoot_Para / pwm_gen / eM1_RunSubState` 这些名字不能改。
@@ -31,4 +41,5 @@
 |---|---|
 | `base-test33` | test33 原样导出 |
 | `p1-refactor` | 模块化重构，行为不变 |
-| `p2-mtpa-fw` | MTPA / 弱磁 / IPM 有效磁链（默认关） |
+| `p2-mtpa-fw` | MTPA / 弱磁 / IPM 有效磁链（默认关），行为仍 = test33 |
+| `p3-theory` | 按理论取参（0xF20E0003） |
