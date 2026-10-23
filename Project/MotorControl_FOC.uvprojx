@@ -446,6 +446,11 @@
               <FilePath>..\FW\Src\speed_ctrl.c</FilePath>
             </File>
             <File>
+              <FileName>mtpa_fw.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\mtpa_fw.c</FilePath>
+            </File>
+            <File>
               <FileName>identify.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\identify.c</FilePath>

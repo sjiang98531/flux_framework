@@ -19,8 +19,9 @@
  * 0xF10E0001 ~ 0xF10E0012 是 flux_selfpll（test1~test33）的历史，见那边的
  * FluxConfig.h。重构后的框架从 0xF20E0001 开始。
  * 0xF20E0001  flux_framework P1+P2：模块化重构，默认行为与 test33（0xF10E0012）逐位相同
+ * 0xF20E0002  加 MTPA / 弱磁（默认关）与 IPM 有效磁链观测（MOTOR_IPM=1 时）；默认配置行为不变
  * -------------------------------------------------------------------------*/
-#define FW_BUILD_TAG            0xF20E0001UL
+#define FW_BUILD_TAG            0xF20E0002UL
 #define FLUXPLL_BUILD_TAG       FW_BUILD_TAG
 
 #define FW_PI                   3.14159265358979
@@ -57,6 +58,20 @@
 /* (Ld - Lq) 在"Q15 电流 -> Q15 磁链"单位下，有符号 Q15 */
 #define FLUX_KDL_Q15            Q15((MOTOR_LD_H - MOTOR_LQ_H) * I_MAX / FLUX_PSI_N)
 #endif
+
+/* ---- MTPA / 弱磁 ---------------------------------------------------------- */
+#if MOTOR_IPM
+/* a = (Ld - Lq) * I_MAX / psi_f（无量纲）。MTPA 在标幺下：
+ *   id_n = (sqrt(1 + (2a*iq_n)^2) - 1) / (2a)
+ * 定点：x = 2a*iq_n 用 Q16；id_q15 = (s - 65536) * MTPA_KINV >> 16，MTPA_KINV = 16384/a */
+#define MTPA_A                  ((MOTOR_LD_H - MOTOR_LQ_H) * I_MAX / MOTOR_PSI_F_WB)
+#define MTPA_K2A_Q16            ((int32_t)(2.0 * MTPA_A * 65536.0))
+#define MTPA_KINV               ((int32_t)(16384.0 / MTPA_A))
+#endif
+/* 弱磁积分增益：fwInteg（id 的 Q31）每慢环拍 += (FW_KI_Q20 * e_q15) >> 4 */
+#define FW_KI_Q20               ((int32_t)(FW_KI_A_PER_S / I_MAX / SLOWLOOP_FREQ * 1048576.0))
+#define FW_VLIM_Q15             Q15(1.0 - FW_VOLTAGE_MARGIN)
+#define FW_ID_MIN_Q15           Q15(FW_ID_MIN_A / I_MAX)
 
 /* ---- FluxPLL ------------------------------------------------------------- */
 /* err = |psi|*sin(dtheta)，鉴相增益 Kd = FLUX_NOMINAL_Q15（LSB/rad）；

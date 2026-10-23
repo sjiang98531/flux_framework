@@ -54,10 +54,35 @@ void FluxObs_Init(void)
     FluxObs_Reset();
 }
 
+#if MOTOR_IPM
+/* 内嵌式：有效磁链幅值目标 = psi_f + (Ld-Lq)*id。快环读这三个量（各是一次 32 位
+ * 读，主循环更新时最多有一拍新旧混用，无害）。 */
+static volatile int32_t s_target2 = FLUX_NOM2;
+static volatile int32_t s_nlfoNorm = 768;       /* 768 = 原来的 *3（fq 计算见 FluxObs_Run） */
+static volatile int16_t s_targetMag = FLUX_NOMINAL_Q15;
+
+void FluxObs_SetIdRef(int16_t idQ15)
+{
+    int32_t tgt = FLUX_NOMINAL_Q15 + (((int32_t)FLUX_KDL_Q15 * idQ15) >> 15);
+    int32_t t2;
+    if (tgt < FLUX_NOMINAL_Q15 / 2) tgt = FLUX_NOMINAL_Q15 / 2;   /* 限 norm <= 4*768，防溢出 */
+    if (tgt > PSI_LIMIT) tgt = PSI_LIMIT;
+    t2 = tgt * tgt;
+    s_targetMag = (int16_t)tgt;
+    s_target2 = t2;
+    s_nlfoNorm = (int32_t)(((int64_t)768 * FLUX_NOM2) / t2);       /* 慢环，允许除法 */
+}
+
+int16_t FluxObs_TargetMag(void)
+{
+    return s_targetMag;
+}
+#else
 int16_t FluxObs_TargetMag(void)
 {
     return FLUX_NOMINAL_Q15;
 }
+#endif
 
 void FluxObs_BeginStartup(FOC_TypeDef *f, MLIB_FILTER_MA_T *speedFilter)
 {
@@ -131,8 +156,14 @@ static void FluxObs_Run(const FOC_TypeDef *f)
         if (g0 < -PSI_LIMIT) g0 = -PSI_LIMIT;
         if (g1 > PSI_LIMIT) g1 = PSI_LIMIT;
         if (g1 < -PSI_LIMIT) g1 = -PSI_LIMIT;
+#if MOTOR_IPM
+        /* 目标与归一化随 id 变：fq = ferr/target^2（Q15），768/256 = 原来的 *3 */
+        ferr = s_target2 - ((int32_t)g0 * g0 + (int32_t)g1 * g1);
+        fq = ((ferr >> 12) * s_nlfoNorm) >> 8;
+#else
         ferr = FLUX_NOM2 - ((int32_t)g0 * g0 + (int32_t)g1 * g1);
         fq = (ferr >> 12) * 3;
+#endif
         if (fq > FLUX_NLFO_FQ_LIMIT) fq = FLUX_NLFO_FQ_LIMIT;
         if (fq < -FLUX_NLFO_FQ_LIMIT) fq = -FLUX_NLFO_FQ_LIMIT;
         corrA = ((int32_t)g0 * fq) >> FLUX_NLFO_SH;

@@ -6,6 +6,10 @@
  *   psi_s += 2*(e*KTs + corr)       corr = psi_r*(psi_f^2-|psi_r|^2)，纯径向
  *   psi_r = psi_s - Lq*i            -> FluxPLL 直接拿它鉴相
  *
+ * 内嵌式（MOTOR_IPM = 1）：psi_s - Lq*i 是"有效磁链"（active flux），方向仍是
+ * 转子 d 轴，幅值 = psi_f + (Ld-Lq)*id，所以 NLFO 的幅值目标随 id 变化
+ * （FluxObs_SetIdRef，慢环调用）。表贴式 Ld = Lq，目标恒为 psi_f。
+ *
  * 只用测量量和上一拍 PWM，不依赖任何 SMO 量。积分的是定子磁链 psi_s，
  * Lq*i 每拍现算，所以舍入误差和电感误差都不会被积分器累积。
  * ==========================================================================*/
@@ -46,5 +50,9 @@ void FluxObs_Capture(const FOC_TypeDef *f, uint8_t valid);
 void FluxObs_UpdateFeedback(FOC_TypeDef *f);
 /* 当前 |psi_r| 的目标值（Q15 磁链），诊断/置信度用 */
 int16_t FluxObs_TargetMag(void);
+#if MOTOR_IPM
+/* 内嵌式：按 d 轴电流指令更新有效磁链幅值目标（慢环调用，含除法） */
+void FluxObs_SetIdRef(int16_t idQ15);
+#endif
 
 #endif

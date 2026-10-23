@@ -15,6 +15,7 @@
 #include "startup.h"
 #include "speed_ctrl.h"
 #include "diag.h"
+#include "mtpa_fw.h"
 #include <stdlib.h>
 
 m1_app_mainstate_t eM1_MainState = MainState_Init;
@@ -93,6 +94,7 @@ void Ctrl_Init(void)
     FluxPLL_Init(&FOC.sPLL);
     Diag_Init();
     FluxObs_Init();
+    MtpaFw_Init();
 }
 
 void Ctrl_ResetRunVariables(void)
@@ -136,6 +138,7 @@ void Ctrl_ResetRunVariables(void)
     FOC.sProtect.bSpeed_OC = 0;
     FOC.sProtect.bPhaseless = 0;
     FOC.sProtect.u16PhaselessTimeCnt = 0;
+    MtpaFw_Reset();         /* MTPA/弱磁关闭时是空函数 */
 }
 
 void Ctrl_FastTick(void)
@@ -320,6 +323,7 @@ static void M1_RunSpinFast(void)
 static void M1_RunSpinSlow(void)
 {
     SpeedCtrl_SpinSlow();
+    MtpaFw_Slow();          /* id 指令（MTPA + 弱磁）与 iq 限幅；关闭时是空函数 */
 
     /* 指令反向：记下来（非 Fast Boot 模式用） */
     if ((MLIB_Mul_Q15(FOC.s16PreSpdCmd, FOC.s16SpdCmd)) < 0)
@@ -444,6 +448,7 @@ void Sup_SwitchTorqueloopSpin(void)
 
 void Sup_SwitchSpinStartup(void)
 {
+    MtpaFw_Reset();         /* 回到原厂启动：id = 0 */
     eM1_RunSubState = RunState_Startup;
     Est_OnEnterStartupFromSpin(&FOC);       /* 转子还在转：上报转速从当前值开始 */
     USER.sSpeedRamp.s32State = FOC.s16SpdFilt << 16;

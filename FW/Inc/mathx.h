@@ -39,5 +39,6 @@ MX_INLINE int32_t Mx_AddSat32(int32_t a, int32_t b)
 
 /* 整数平方根 floor(sqrt(x))，逐位法约 16 次循环。只在慢环用。 */
 uint32_t Mx_Isqrt32(uint32_t x);
+uint32_t Mx_Isqrt64(uint64_t x);
 
 #endif

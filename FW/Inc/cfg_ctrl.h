@@ -121,6 +121,23 @@
 #define FLUXPLL_WN_HZ           14.346
 #define FLUXPLL_ZETA            0.676628
 
+/* ===================== MTPA / 弱磁 ======================================== */
+/* 两个都默认关：关着时 mtpa_fw 模块不编译任何代码，行为与 test33 逐位相同。
+ * MTPA：id = (-psi_f + sqrt(psi_f^2 + 4(Ld-Lq)^2 iq^2)) / (2(Ld-Lq))，只对 IPM 有意义
+ *       （MOTOR_IPM = 0 时 id 恒为 0，开了也不起作用）。
+ * 弱磁：电压矢量 |V| 超过 (1 - FW_VOLTAGE_MARGIN) * VMAX 时积分出负 id，把电压压回去；
+ *       表贴和内嵌都能用。310 V 母线下本电机约 2088 rpm 到电压极限，再往上要弱磁。
+ * 两者都只在 Spin（闭环运行）里生效；回退 Startup / 停机时 id 清零。 */
+#define CTRL_MTPA_ENABLE        0
+#define CTRL_FW_ENABLE          0
+#define FW_VOLTAGE_MARGIN       0.08        /* 电压裕量（框架文档里定的 8%） */
+/* 弱磁积分速度：电压误差为 100% VMAX 时 id 每秒变化 FW_KI_A_PER_S 安培。
+ * 环路极点 ≈ FW_KI * omega*Ld / VMAX；本电机 2000 rpm 下 omega*Ld ≈ 48 V/A，
+ * VMAX ≈ 174 V，50 A/s -> 约 2 Hz（比速度环快、比电流环慢很多）。 */
+#define FW_KI_A_PER_S           50.0
+#define FW_ID_MIN_A             (-2.0)      /* 弱磁 id 下限，A（受退磁电流、效率约束，按电机定） */
+/* 电流圆：|i| <= SPD_PI_LIMIT。有 id 时 iq 上限自动缩成 sqrt(Imax^2 - id^2)。 */
+
 /* ===================== 其他 ============================================== */
 #define SPEEDUPDATE_FREQ        100         /* Hz */
 #define FG_NUM                  5
