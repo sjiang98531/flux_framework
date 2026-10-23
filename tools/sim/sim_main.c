@@ -1,4 +1,4 @@
-/* Closed-loop host simulation: firmware fast/slow loops + vendor lib model + plant.
+/* Closed-loop host simulation: firmware fast/slow loops + plant (+ vendor lib model for test33 only).
  * Usage: sim <scenario> <csv_out> <hash_out>
  * The same file is linked against the old (test33) or the new (flux_framework)
  * user code through glue_*.c. */
@@ -7,9 +7,8 @@
 #include <string.h>
 #include <math.h>
 #include "sc32_conf.h"
-#include "motor_structure.h"
-#include "pwm_gen.h"
 #include "plant.h"
+#include "sim_glue.h"
 
 EPWM_TypeDef sim_EPWM; TIM_TypeDef sim_TIM0, sim_TIM3; ADC_TypeDef sim_ADC; WDT_TypeDef sim_WDT; GPIO_TypeDef sim_GPIOA;
 FlagStatus ADC_GetFlagStatus(ADC_TypeDef *a, uint32_t f) { (void)a; (void)f; return SET; }
@@ -18,16 +17,6 @@ FlagStatus TIM_GetFlagStatus(TIM_TypeDef *t, uint32_t f) { (void)t; (void)f; ret
 void TIM_ClearFlag(TIM_TypeDef *t, uint32_t f) { (void)t; (void)f; }
 void TIM_PWMSetDuty(TIM_TypeDef *t, uint32_t ch, uint32_t d) { (void)t; (void)ch; (void)d; }
 
-extern USER_TypeDef USER;
-extern FOC_TypeDef FOC;
-extern volatile unsigned int eM1_MainState, eM1_RunSubState;
-
-void glue_init(void);
-void glue_isr(void);
-void glue_main_poll(void);
-size_t glue_export(uint8_t *buf);   /* observer/PLL canonical state */
-void glue_cfg(int scenario);        /* scenario-specific runtime config (new code only) */
-int16_t glue_psi_mag(void);
 
 static uint64_t fnv(uint64_t h, const void *p, size_t n)
 {
@@ -102,6 +91,7 @@ int main(int argc, char **argv)
     long k, nTicks = (long)(tEnd * 16000.0);
     const double dt = 1.0 / 16000.0;
     uint8_t buf[512];
+    int outHash = getenv("SIM_HASH") && strcmp(getenv("SIM_HASH"), "out") == 0;
 
     plant_init(&pl, ipm);
     if (sc == 2) pl.vbus = 310.0;
@@ -112,7 +102,7 @@ int main(int argc, char **argv)
     for (k = 0; k < nTicks; k++) {
         double t = k * dt;
         double cmd = profile(sc, t, &pl);
-        USER.s16VspCmd = rpmQ15(cmd);
+        glue_set_speed_cmd(rpmQ15(cmd));
         sim_TIM3.TIM_CNT = (uint32_t)(k * 7u) & 0xffffu;
         plant_step(&pl, dt);
         glue_isr();
@@ -120,29 +110,39 @@ int main(int argc, char **argv)
         if (hf) {
             uint64_t h = 1469598103934665603ULL;
             size_t n = glue_export(buf);
-            h = fnv(h, &FOC, sizeof FOC);
-            h = fnv(h, &USER, sizeof USER);
-            h = fnv(h, &pwm_gen, sizeof pwm_gen);
-            h = fnv(h, (const void *)&sim_EPWM, sizeof sim_EPWM);
-            h = fnv(h, (const void *)&eM1_MainState, 4);
-            h = fnv(h, (const void *)&eM1_RunSubState, 4);
-            h = fnv(h, buf, n);
+            if (outHash) {
+                /* 输出哈希：只看写进 PWM 寄存器的值（比较值、桥臂开关）+ 语义状态（glue_export）。
+                 * 与固件内部结构体布局无关，结构体重组前后可以直接对比。 */
+                h = fnv(h, (const void *)&sim_EPWM, sizeof sim_EPWM);
+                h = fnv(h, buf, n);
+            } else {
+                /* 全状态哈希：固件内部的全部状态（布局相同的两份代码之间才能比） */
+                int i;
+                for (i = 0; i < GLUE_STATE_BLOCKS; i++) h = fnv(h, glue_state_ptr(i), glue_state_size(i));
+                h = fnv(h, (const void *)&sim_EPWM, sizeof sim_EPWM);
+                h = fnv(h, buf, n);
+            }
             fwrite(&h, 8, 1, hf);
         }
-        if (getenv("SIM_DBG") && (k & 15) == 0 && t > atof(getenv("SIM_DBG")) && t < atof(getenv("SIM_DBG")) + 0.2)
+        if (getenv("SIM_DBG") && (k & 15) == 0 && t > atof(getenv("SIM_DBG")) && t < atof(getenv("SIM_DBG")) + 0.2) {
+            SimProbe q; glue_probe(&q);
             fprintf(stderr, "%.4f plant id %.3f iq %.3f we %.2f vd %.2f vq %.2f emf %.2f | fw cmdTh %d vdq %d %d idq %d %d\n", t, pl.id, pl.iq, pl.wm * pl.pp,
-                    pl.dbgVd, pl.dbgVq, pl.wm * pl.pp * pl.psi, FOC.s16CmdTheta, FOC.sVdq.s16D, FOC.sVdq.s16Q, FOC.sIdq.s16D, FOC.sIdq.s16Q);
+                    pl.dbgVd, pl.dbgVq, pl.wm * pl.pp * pl.psi, q.theta, q.vd, q.vq, q.id, q.iq);
+        }
         if ((k & 15) == 0) {
-            double thFw = (120.0 / 180.0 * M_PI) - plant_theta_e(&pl);
-            double thHat = (double)(uint16_t)FOC.s16CmdTheta / 65536.0 * 2 * M_PI;
-            double e = fmod(thHat - thFw + 9 * M_PI, 2 * M_PI) - M_PI;
+            SimProbe q;
+            double thFw, thHat, e;
+            glue_probe(&q);
+            thFw = (120.0 / 180.0 * M_PI) - plant_theta_e(&pl);
+            thHat = (double)(uint16_t)q.theta / 65536.0 * 2 * M_PI;
+            e = fmod(thHat - thFw + 9 * M_PI, 2 * M_PI) - M_PI;
             fprintf(csv, "%.4f,%u,%u,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f,%.4f,%.4f,%.2f,%d,%d,%d,%d\n", t,
-                    (unsigned)eM1_MainState, (unsigned)eM1_RunSubState, cmd,
-                    FOC.s16SpdFilt * 3200.0 / 32768.0, (FOC.sPLL.s32Speed >> 16) * 3200.0 / 32768.0,
+                    (unsigned)q.mainState, (unsigned)q.runState, cmd,
+                    q.spdFilt * 3200.0 / 32768.0, q.pllSpeed16 * 3200.0 / 32768.0,
                     -plant_rpm(&pl),
-                    FOC.sIdq.s16Q * 7.9643 / 32768.0, FOC.sIdq.s16D * 7.9643 / 32768.0,
-                    FOC.sIdq_cmd.s16Q * 7.9643 / 32768.0, FOC.sIdq_cmd.s16D * 7.9643 / 32768.0,
-                    e * 180.0 / M_PI, glue_psi_mag(), FOC.sVdq.s16D, FOC.sVdq.s16Q, 0);
+                    q.iq * 7.9643 / 32768.0, q.id * 7.9643 / 32768.0,
+                    q.iqRef * 7.9643 / 32768.0, q.idRef * 7.9643 / 32768.0,
+                    e * 180.0 / M_PI, glue_psi_mag(), q.vd, q.vq, 0);
         }
     }
     fclose(csv);
