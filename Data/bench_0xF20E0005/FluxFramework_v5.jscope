@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<JScopeProject>
+  <FileVersion major="1" minor="1" />
+  <Project>
+    <Configuration>
+      <JLink>
+        <Options Connection="1" IsRTTSession="0" IsRTTWithTimeStamp="0" IsRTTPlus="0" SamplingPeriod="10" SerialNo="0" JTAG_IRPre="0" JTAG_DRPre="0" IP="" TargetDevice="Cortex-M0" Nickname="" InterfaceSpeed="4000" TargetInterface="SWD" />
+      </JLink>
+      <ElfFile Name="C:\Users\SOC\Desktop\电机ppt\flux_framework\Output\SOC_FOC_SDK_V1_0.axf" />
+      <DataFile Name="" />
+      <Scope>
+        <Options TimeResolutionUs="100000" />
+      </Scope>
+      <Trigger>
+        <Options Level="0" Symbol="runState" On="0" Auto="0" Rise="0" Fall="0" />
+      </Trigger>
+    </Configuration>
+    <Windows>
+      <Graph Show="1" />
+      <Watch Show="1" />
+    </Windows>
+    <SelectedSymbols>
+      <Symbol>
+        <Options Name="runState" NameWithParents="gFluxDiag.runState" Address="0x20000086" Type="unsigned short" TypeID="7" Size="2" YResolution="1" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="255" GraphColorGreen="0" GraphColorBlue="0" Offset="4" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="stage" NameWithParents="gStartupIF.stage" Address="0x200002DC" Type="unsigned short" TypeID="7" Size="2" YResolution="1" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="255" GraphColorGreen="140" GraphColorBlue="0" Offset="6" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="olSpeed" NameWithParents="gStartupIF.olSpeed" Address="0x200002DE" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="0" GraphColorGreen="0" GraphColorBlue="255" Offset="8" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="pllFilt" NameWithParents="gStartupIF.pllFilt" Address="0x200002E0" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="0" GraphColorGreen="160" GraphColorBlue="255" Offset="10" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="s16D" NameWithParents="FOC.sIdq.s16D" Address="0x20000150" Type="short" TypeID="11" Size="2" YResolution="600" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="160" GraphColorGreen="0" GraphColorBlue="255" Offset="12" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="s16Q" NameWithParents="FOC.sIdq.s16Q" Address="0x20000152" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="0" GraphColorGreen="200" GraphColorBlue="0" Offset="14" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="s16Q" NameWithParents="FOC.sIdq_cmd.s16Q" Address="0x20000156" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="200" GraphColorGreen="0" GraphColorBlue="120" Offset="16" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="s16SpdFilt" NameWithParents="FOC.s16SpdFilt" Address="0x2000018C" Type="short" TypeID="11" Size="2" YResolution="800" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="120" GraphColorGreen="0" GraphColorBlue="200" Offset="18" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="s16SpeedRamp" NameWithParents="FOC.s16SpeedRamp" Address="0x20000194" Type="short" TypeID="11" Size="2" YResolution="800" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="255" GraphColorGreen="255" GraphColorBlue="0" Offset="20" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="isrMax" NameWithParents="gFluxDiag.isrMax" Address="0x2000007A" Type="unsigned short" TypeID="7" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="C:\Users\SOC\Desktop\电机ppt\flux\User\Inc\FluxObs.h" GraphColorRed="0" GraphColorGreen="255" GraphColorBlue="255" Offset="22" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+    </SelectedSymbols>
+  </Project>
+</JScopeProject>

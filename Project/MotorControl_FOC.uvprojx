@@ -416,6 +416,11 @@
               <FilePath>..\FW\Src\main.c</FilePath>
             </File>
             <File>
+              <FileName>diag.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\diag.c</FilePath>
+            </File>
+            <File>
               <FileName>supervisor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\supervisor.c</FilePath>
@@ -424,11 +429,6 @@
               <FileName>ctrl_globals.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\ctrl_globals.c</FilePath>
-            </File>
-            <File>
-              <FileName>diag.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\FW\Src\diag.c</FilePath>
             </File>
           </Files>
         </Group>

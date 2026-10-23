@@ -64,3 +64,6 @@ _reorg_new/
 _test28_new/
 tools/sim/build/
 __pycache__/
+
+# Keil 命令行编译日志
+Project/build_log.txt
