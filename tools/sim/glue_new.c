@@ -1,7 +1,14 @@
 /* Glue for the NEW (flux_framework) code. */
 #include <string.h>
 #include "sim_glue.h"
-#include "ctrl_globals.h"
+#include "meas.h"
+#include "foc_core.h"
+#include "est.h"
+#include "speed_ctrl.h"
+#include "protect.h"
+#include "flystart.h"
+#include "startup.h"
+#include "hal.h"
 #include "supervisor.h"
 #include "flux_obs.h"
 #include "flux_pll.h"
@@ -13,7 +20,7 @@ void glue_cfg(int sc) { (void)sc; }
 void glue_isr(void) { ADC_IRQHandler(); }
 void glue_main_poll(void)
 {
-    if (USER.bSlowLoopFlag == 1) { USER.bSlowLoopFlag = 0; Ctrl_SlowTick(); }
+    if (gHal.slowLoopFlag == 1) { gHal.slowLoopFlag = 0; Ctrl_SlowTick(); }
 }
 int16_t glue_psi_mag(void) { return sFluxObs.s16PsiRMag; }
 size_t glue_export(uint8_t *b)
@@ -32,24 +39,24 @@ size_t glue_export(uint8_t *b)
     PUT(gFluxDiag.mainState); PUT(gFluxDiag.runState);
     PUT(gFluxPLLDiag.errLast); PUT(gFluxPLLDiag.speedLast); PUT(gFluxPLLDiag.thetaLast);
     PUT(gFluxPLLDiag.satCount); PUT(gFluxPLLDiag.floorCount);
-    PUT(M1FaultID); PUT(M1FaultID_Record);
+    PUT(gSup.fault); PUT(gSup.faultRecord);
     return n;
 }
 
-void glue_set_speed_cmd(int16_t q15) { USER.s16VspCmd = q15; }
+void glue_set_speed_cmd(int16_t q15) { gSup.speedCmd = q15; }
 void glue_probe(SimProbe *p)
 {
-    p->theta = FOC.s16CmdTheta; p->vd = FOC.sVdq.s16D; p->vq = FOC.sVdq.s16Q;
-    p->id = FOC.sIdq.s16D; p->iq = FOC.sIdq.s16Q; p->idRef = FOC.sIdq_cmd.s16D; p->iqRef = FOC.sIdq_cmd.s16Q;
-    p->spdFilt = FOC.s16SpdFilt; p->pllSpeed16 = (int16_t)(FOC.sPLL.s32Speed >> 16);
-    p->mainState = (unsigned)eM1_MainState; p->runState = (unsigned)eM1_RunSubState;
+    p->theta = gFoc.theta; p->vd = gFoc.vdq.s16D; p->vq = gFoc.vdq.s16Q;
+    p->id = gFoc.idq.s16D; p->iq = gFoc.idq.s16Q; p->idRef = gFoc.idqRef.s16D; p->iqRef = gFoc.idqRef.s16Q;
+    p->spdFilt = gMeas.speed; p->pllSpeed16 = (int16_t)(gEst.pll.s32Speed >> 16);
+    p->mainState = (unsigned)gSup.mainState; p->runState = (unsigned)gSup.runState;
 }
 const void *glue_state_ptr(int i)
 {
     static const unsigned z = 0;
-    switch (i) { case 0: return &FOC; case 1: return &USER; case 2: return &pwm_gen; default: return &z; }
+    switch (i) { case 0: return &gMeas; case 1: return &gFoc; case 2: return &pwm_gen; case 3: return &gSpd; default: return &z; }
 }
 size_t glue_state_size(int i)
 {
-    switch (i) { case 0: return sizeof FOC; case 1: return sizeof USER; case 2: return sizeof pwm_gen; default: return sizeof(unsigned); }
+    switch (i) { case 0: return sizeof gMeas; case 1: return sizeof gFoc; case 2: return sizeof pwm_gen; case 3: return sizeof gSpd; default: return sizeof(unsigned); }
 }

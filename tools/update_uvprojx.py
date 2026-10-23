@@ -16,7 +16,7 @@ INCLUDE_PATH = r'..\FW\Inc;..\Device\src;..\MCI\Inc;..\User\Inc;..\Board\Inc;..\
 # (group name, [paths relative to Project/])
 GROUPS = [
     ('Config',     [r'..\FW\Inc\cfg_motor.h', r'..\FW\Inc\cfg_ctrl.h', r'..\FW\Inc\cfg_board.h', r'..\FW\Inc\fw_config.h']),
-    ('App',        [r'..\FW\Src\main.c', r'..\FW\Src\supervisor.c', r'..\FW\Src\ctrl_globals.c', r'..\FW\Src\diag.c',
+    ('App',        [r'..\FW\Src\main.c', r'..\FW\Src\supervisor.c', r'..\FW\Src\diag.c',
                     r'..\FW\Src\protect.c']),
     ('Control',    [r'..\FW\Src\startup.c', r'..\FW\Src\flystart.c', r'..\FW\Src\speed_ctrl.c', r'..\FW\Src\mtpa_fw.c',
                     r'..\FW\Src\identify.c']),

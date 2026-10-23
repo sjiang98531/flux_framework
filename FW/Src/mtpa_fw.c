@@ -1,6 +1,7 @@
 /* MTPA + 弱磁，见 mtpa_fw.h。全部在慢环里算，允许除法和开方。 */
 #include "mtpa_fw.h"
-#include "ctrl_globals.h"
+#include "foc_core.h"
+#include "speed_ctrl.h"
 #include "flux_obs.h"
 #include "mathx.h"
 
@@ -15,12 +16,12 @@ MtpaFw_TypeDef gMtpaFw;
 static void setIqLimit(int32_t lim)
 {
 #if (CLOSE_LOOP == SPEED_LOOP)
-    FOC.Speed.qOutMax = lim;
-    FOC.Speed.qOutMin = -lim;
+    gSpd.pi.qOutMax = lim;
+    gSpd.pi.qOutMin = -lim;
 #elif (CLOSE_LOOP == POWER_LOOP)
-    FOC.Power.qOutMax = lim;
-    FOC.Power.qOutMin = -lim;
-    FOC.Speed.qOutMin = -lim;
+    gSpd.piPower.qOutMax = lim;
+    gSpd.piPower.qOutMin = -lim;
+    gSpd.pi.qOutMin = -lim;
 #else
     (void)lim;
 #endif
@@ -31,7 +32,7 @@ void MtpaFw_Init(void)
     gMtpaFw.idMtpa = 0;
     gMtpaFw.idFw = 0;
     gMtpaFw.idCmd = 0;
-    gMtpaFw.iqLimit = USER.s16IqLimitMax;
+    gMtpaFw.iqLimit = gSpd.iqLimit;
     gMtpaFw.vRatio = 0;
     gMtpaFw.fwInteg = 0;
 }
@@ -39,8 +40,8 @@ void MtpaFw_Init(void)
 void MtpaFw_Reset(void)
 {
     MtpaFw_Init();
-    FOC.sIdq_cmd.s16D = 0;
-    setIqLimit(USER.s16IqLimitMax);
+    gFoc.idqRef.s16D = 0;
+    setIqLimit(gSpd.iqLimit);
 #if MOTOR_IPM
     FluxObs_SetIdRef(0);
 #endif
@@ -64,7 +65,7 @@ static int16_t mtpaId(int16_t iq)
 static int16_t fwId(void)
 {
 #if CTRL_FW_ENABLE
-    int32_t vd = FOC.sVdq.s16D, vq = FOC.sVdq.s16Q, vmax = FOC.s16VMAX;
+    int32_t vd = gFoc.vdq.s16D, vq = gFoc.vdq.s16Q, vmax = gFoc.vmax;
     int32_t vmag, ratio, err, lo = (int32_t)FW_ID_MIN_Q15 * 65536;
     if (vmax <= 0) return gMtpaFw.idFw;
     vmag = (int32_t)Mx_Isqrt32((uint32_t)(vd * vd + vq * vq));
@@ -83,9 +84,9 @@ static int16_t fwId(void)
 
 void MtpaFw_Slow(void)
 {
-    int32_t imax = USER.s16IqLimitMax, id, iqLim, iq;
+    int32_t imax = gSpd.iqLimit, id, iqLim, iq;
 
-    gMtpaFw.idMtpa = mtpaId(FOC.sIdq_cmd.s16Q);
+    gMtpaFw.idMtpa = mtpaId(gFoc.idqRef.s16Q);
     gMtpaFw.idFw = fwId();
     id = (int32_t)gMtpaFw.idMtpa + gMtpaFw.idFw;
     if (id < -imax) id = -imax;
@@ -93,14 +94,14 @@ void MtpaFw_Slow(void)
 
     /* 电流圆：iq 上限 sqrt(Imax^2 - id^2)，同时作为速度 PI 的输出限幅 */
     iqLim = (int32_t)Mx_Isqrt32((uint32_t)(imax * imax - id * id));
-    iq = FOC.sIdq_cmd.s16Q;
+    iq = gFoc.idqRef.s16Q;
     if (iq > iqLim) iq = iqLim;
     if (iq < -iqLim) iq = -iqLim;
 
     gMtpaFw.idCmd = (int16_t)id;
     gMtpaFw.iqLimit = (int16_t)iqLim;
-    FOC.sIdq_cmd.s16D = (int16_t)id;
-    FOC.sIdq_cmd.s16Q = (int16_t)iq;
+    gFoc.idqRef.s16D = (int16_t)id;
+    gFoc.idqRef.s16Q = (int16_t)iq;
     setIqLimit(iqLim);
 #if MOTOR_IPM
     FluxObs_SetIdRef((int16_t)id);

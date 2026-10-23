@@ -42,12 +42,12 @@ extern FluxInput_TypeDef gFluxInput;
 
 void FluxObs_Init(void);
 void FluxObs_Reset(void);
-/* Align -> Startup：清观测器和 PLL 速度，把 psi 种在 |psi_f|∠s16CmdTheta 上 */
-void FluxObs_BeginStartup(FOC_TypeDef *f, MLIB_FILTER_MA_T *speedFilter);
+/* Align -> Startup：清观测器、PLL 速度和转速反馈，把 psi 种在 |psi_f|∠gFoc.theta 上 */
+void FluxObs_BeginStartup(void);
 /* 快环入口：抓上一拍的 PWM 比较值、电流、母线 */
-void FluxObs_Capture(const FOC_TypeDef *f, uint8_t valid);
-/* 跑本拍模型。调用前必须已算好 f->sIAlBe（Clarke）。 */
-void FluxObs_UpdateFeedback(FOC_TypeDef *f);
+void FluxObs_Capture(uint8_t valid);
+/* 跑本拍模型。调用前必须已算好 gMeas.iab（Clarke）。 */
+void FluxObs_UpdateFeedback(void);
 /* 当前 |psi_r| 的目标值（Q15 磁链），诊断/置信度用 */
 int16_t FluxObs_TargetMag(void);
 /* 按 PLL 估计转速更新去直流的相位补偿（慢环调用；CTRL_OBS_HPF_COMP = 0 时空函数） */

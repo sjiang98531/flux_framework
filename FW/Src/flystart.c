@@ -1,9 +1,12 @@
 /* 飞车检测，见 flystart.h。 */
 #include "flystart.h"
-#include "ctrl_globals.h"
+#include "meas.h"
+#include "est.h"
 #include "hal.h"
 #include "mc_math.h"
 #include "mathx.h"
+
+FlyStart_TypeDef gFly;
 
 /* 带移位的乘：sh >= 0 左移，< 0 右移 */
 static __forceinline int32_t shiftBi(int32_t v, int16_t sh)
@@ -29,23 +32,23 @@ static int16_t trackPll(int16_t err, PLL_TypeDef *p)
     return (int16_t)(p->s32Theta >> 16);
 }
 
-void FlyStart_CalibFast(FOC_TypeDef *f)
+void FlyStart_CalibFast(void)
 {
-    FLY_START *fs = &f->sFly_Start;
+    FlyStart_TypeDef *fs = &gFly;
     int16_t err;
     sAngle_Trig a;
 
-    HAL_PwmShortLowSides(USER.u16CaliPWMDuty);         /* 三相下桥短接 */
+    HAL_PwmShortLowSides(gHal.caliDuty);         /* 三相下桥短接 */
 
-    MCFLIB_Clark_Sat_S16(&f->sIabc, &f->sIAlBe);
-    fs->s32BemfAmp2 = (int32_t)f->sIAlBe.s16Alpha * f->sIAlBe.s16Alpha + (int32_t)f->sIAlBe.s16Beta * f->sIAlBe.s16Beta;
+    MCFLIB_Clark_Sat_S16(&gMeas.iabc, &gMeas.iab);
+    fs->s32BemfAmp2 = (int32_t)gMeas.iab.s16Alpha * gMeas.iab.s16Alpha + (int32_t)gMeas.iab.s16Beta * gMeas.iab.s16Beta;
     fs->s16BemfAmp = (int16_t)Mx_Isqrt32((uint32_t)fs->s32BemfAmp2);    /* 每拍一次逐位开方，约 16 次循环 */
 
     /* 鉴相：短路电流矢量与估计角的叉积 */
     a = Mc_SinCos(fs->s16PosElEst_fly);
     fs->sAngle_fly.s16Cos = a.s16Cos;
     fs->sAngle_fly.s16Sin = a.s16Sin;
-    err = (int16_t)(MLIB_Mul_Q15((int16_t)-f->sIAlBe.s16Alpha, a.s16Cos) - MLIB_Mul_Q15(f->sIAlBe.s16Beta, a.s16Sin));
+    err = (int16_t)(MLIB_Mul_Q15((int16_t)-gMeas.iab.s16Alpha, a.s16Cos) - MLIB_Mul_Q15(gMeas.iab.s16Beta, a.s16Sin));
     fs->s16ThetaErr_fly = err;
-    fs->s16PosElEst_fly = trackPll(err, &f->sPLL);
+    fs->s16PosElEst_fly = trackPll(err, &gEst.pll);
 }

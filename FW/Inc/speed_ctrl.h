@@ -12,12 +12,29 @@
 #include "fw_config.h"
 #include "mc_types.h"
 
-extern int16_t s16PowerFdk;     /* 实测功率（Q15，POWER_MAX 基准），慢环更新 */
+/* 外环状态 */
+typedef struct {
+    int16_t  cmd;               /* 本拍的外环指令（转速 / 电流 / 功率，Q15），= gSup.speedCmd */
+    int16_t  ref;               /* 外环给定（= cmd） */
+    int32_t  rampQ31;           /* 速度斜坡输出 Q31 */
+    int16_t  ramp;              /* 速度斜坡输出 Q15 */
+    int32_t  iqRampQ31;         /* 转矩环斜坡（TORQUE_LOOP） */
+    int16_t  iqRamp;
+    int32_t  pRampQ31;          /* 功率斜坡（POWER_LOOP） */
+    int16_t  pRamp;
+    int16_t  iqLimit;           /* iq 上限 Q15（SPD_PI_LIMIT） */
+    int16_t  powerFdk;          /* 实测功率（Q15，POWER_MAX 基准），慢环更新 */
+    MLIB_RAMP_T_Q31 speedRampSt, iqRampSt, pRampSt;   /* 三个斜坡的步长和状态 */
+    tPIParm  pi;                /* 速度 PI */
+    tPIParm  piPower;           /* 功率 PI（SPEED_LOOP 下作母线电流限） */
+} SpeedCtrl_TypeDef;
+
+extern SpeedCtrl_TypeDef gSpd;
 
 void SpeedCtrl_Init(void);
 /* 每个 Run 慢环拍开头：更新功率反馈 */
 void SpeedCtrl_UpdatePowerFdk(void);
-/* Spin 慢环：斜坡 + PI + 前馈，写 FOC.sIdq_cmd.s16Q */
+/* Spin 慢环：斜坡 + PI + 前馈，写 gFoc.idqRef.s16Q */
 void SpeedCtrl_SpinSlow(void);
 /* 进入 Spin（从 Startup 或 Torqueloop）：恢复运行斜坡率，按当前状态预置斜坡与 PI 积分器 */
 void SpeedCtrl_OnEnterSpin(void);

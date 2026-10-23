@@ -5,7 +5,7 @@
  * Startup / Spin / Torqueloop（编号与原厂相同，J-Scope 的 runState 照旧看）。
  *
  * 快环：hal 的 ADC 中断每拍调 Ctrl_FastTick()。
- * 慢环：main() 轮询，USER.bSlowLoopFlag 置位时调 Ctrl_SlowTick()。
+ * 慢环：main() 轮询，gHal.slowLoopFlag 置位时调 Ctrl_SlowTick()。
  * ==========================================================================*/
 #ifndef SUPERVISOR_H
 #define SUPERVISOR_H
@@ -44,8 +44,19 @@ typedef enum _m1_run_substate_t {
 #define MC_FAULT_CHECK(faults, faultid) ((faults & ((mcdef_fault_t)1 << faultid)) >> faultid)
 #define MC_FAULT_CLEAR_ALL(faults)      (faults = 0)
 
-extern m1_app_mainstate_t eM1_MainState;
-extern m1_run_substate_t  eM1_RunSubState;
+/* 状态机、速度指令、故障 */
+typedef struct {
+    m1_app_mainstate_t mainState;       /* 主状态 */
+    m1_run_substate_t  runState;        /* Run 子状态 */
+    volatile int16_t   speedCmd;        /* 外环指令 Q15（速度 / 电流 / 功率，看 CLOSE_LOOP）。
+                                           Watch 窗口或通信写这里；SPEED_LOOP 时 = rpm * 32768 / SPEED_MAX */
+    int16_t            fault;           /* 当前故障位（bit n = MC_FAULT_x） */
+    int16_t            faultRecord;     /* 上电以来出现过的故障位 */
+    uint8_t            faultRestarts;   /* 连续故障/启动失败次数；>= 5 不再自动重启，指令回零后清 */
+    uint16_t           faultReleaseTicks;   /* 故障后自动恢复的等待时间（慢环拍） */
+} Supervisor_TypeDef;
+
+extern Supervisor_TypeDef gSup;
 extern const pfcn_void_void s_STATE_FAST[4];
 extern const pfcn_void_void s_STATE_SLOW[4];
 

@@ -8,7 +8,7 @@
 typedef struct {
     uint16_t isrLast, isrMax;          /* 快环耗时，TIM3 counts（2250 = 62.5 us = 一个 PWM 周期） */
     uint32_t overBudget, sampleCount;  /* 超预算次数 / 总拍数 */
-    uint16_t mainState, runState;      /* eM1_MainState / eM1_RunSubState 的拷贝 */
+    uint16_t mainState, runState;      /* gSup.mainState / runState 的拷贝 */
     int16_t  voltageAlpha, voltageBeta;/* 观测器用的重构电压（Q15，475 V 基准） */
     uint32_t inputSatCount, fluxSatCount;
     uint32_t buildTag;                 /* = FW_BUILD_TAG */

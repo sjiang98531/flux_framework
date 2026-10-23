@@ -1,7 +1,11 @@
 #include "speed_ctrl.h"
-#include "ctrl_globals.h"
+#include "meas.h"
+#include "foc_core.h"
+#include "hal.h"
 #include "ctrl_pi.h"
 #include <stdlib.h>
+
+SpeedCtrl_TypeDef gSpd;
 
 int16_t s16PowerFdk;
 
@@ -11,129 +15,129 @@ int16_t s16PowerFdk;
 
 void SpeedCtrl_Init(void)
 {
-    USER.sCurrentRamp.s32RampUp   = RAMP_Q31(TORQUE_RAMP_UP, I_MAX);
-    USER.sCurrentRamp.s32RampDown = RAMP_Q31(TORQUE_RAMP_DOWN, I_MAX);
-    USER.sSpeedRamp.s32RampUp     = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX);
-    USER.sSpeedRamp.s32RampDown   = RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
-    USER.sPowerRamp.s32RampUp     = RAMP_Q31(POWER_RAMP_UP, POWER_MAX);
-    USER.sPowerRamp.s32RampDown   = RAMP_Q31(POWER_RAMP_DOWN, POWER_MAX);
+    gSpd.iqRampSt.s32RampUp   = RAMP_Q31(TORQUE_RAMP_UP, I_MAX);
+    gSpd.iqRampSt.s32RampDown = RAMP_Q31(TORQUE_RAMP_DOWN, I_MAX);
+    gSpd.speedRampSt.s32RampUp     = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX);
+    gSpd.speedRampSt.s32RampDown   = RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
+    gSpd.pRampSt.s32RampUp     = RAMP_Q31(POWER_RAMP_UP, POWER_MAX);
+    gSpd.pRampSt.s32RampDown   = RAMP_Q31(POWER_RAMP_DOWN, POWER_MAX);
 
-    USER.s16IqLimitMax = Q15(SPD_PI_LIMIT / I_MAX);
+    gSpd.iqLimit = Q15(SPD_PI_LIMIT / I_MAX);
 
-    FOC.Speed.qKp = SPEED_KP;
-    FOC.Speed.qKi = SPEED_KI;
-    FOC.Speed.qdSum = 0;
-    FOC.Speed.qInMeas = 0;
-    FOC.Speed.qOut = 0;
+    gSpd.pi.qKp = SPEED_KP;
+    gSpd.pi.qKi = SPEED_KI;
+    gSpd.pi.qdSum = 0;
+    gSpd.pi.qInMeas = 0;
+    gSpd.pi.qOut = 0;
 
-    FOC.Power.qKp = POWER_KP;
-    FOC.Power.qKi = POWER_KI;
-    FOC.Power.qdSum = 0;
-    FOC.Power.qInMeas = 0;
-    FOC.Power.qOut = 0;
+    gSpd.piPower.qKp = POWER_KP;
+    gSpd.piPower.qKi = POWER_KI;
+    gSpd.piPower.qdSum = 0;
+    gSpd.piPower.qInMeas = 0;
+    gSpd.piPower.qOut = 0;
 
 #if (CLOSE_LOOP == SPEED_LOOP)
-    FOC.Speed.qOutMax = USER.s16IqLimitMax;
-    FOC.Speed.qOutMin = -USER.s16IqLimitMax;
-    FOC.Power.qOutMax = 0;                      /* 功率环只做母线电流限：只许往下拉 */
-    FOC.Power.qOutMin = -USER.s16IqLimitMax;
+    gSpd.pi.qOutMax = gSpd.iqLimit;
+    gSpd.pi.qOutMin = -gSpd.iqLimit;
+    gSpd.piPower.qOutMax = 0;                      /* 功率环只做母线电流限：只许往下拉 */
+    gSpd.piPower.qOutMin = -gSpd.iqLimit;
 #elif (CLOSE_LOOP == POWER_LOOP)
-    FOC.Speed.qOutMax = 0;                      /* 速度环只做限速 */
-    FOC.Speed.qOutMin = -USER.s16IqLimitMax;
-    FOC.Power.qOutMax = USER.s16IqLimitMax;
-    FOC.Power.qOutMin = -USER.s16IqLimitMax;
+    gSpd.pi.qOutMax = 0;                      /* 速度环只做限速 */
+    gSpd.pi.qOutMin = -gSpd.iqLimit;
+    gSpd.piPower.qOutMax = gSpd.iqLimit;
+    gSpd.piPower.qOutMin = -gSpd.iqLimit;
 #endif
 }
 
 void SpeedCtrl_UpdatePowerFdk(void)
 {
-    s16PowerFdk = 2 * MLIB_Mul_Q15(Q15(0.866), MLIB_Mul_Q15(FOC.s16VbusAvg, FOC.s16IbusAvg));
+    s16PowerFdk = 2 * MLIB_Mul_Q15(Q15(0.866), MLIB_Mul_Q15(gMeas.vbusAvg, gMeas.ibusAvg));
 }
 
 void SpeedCtrl_SpinSlow(void)
 {
-    FOC.s16SpdRef = FOC.s16SpdCmd;
+    gSpd.ref = gSpd.cmd;
 
 #if (CLOSE_LOOP == TORQUE_LOOP)
-    FOC.s32CurRamp = Mc_RampQ31(FOC.s16SpdRef << 16, &USER.sCurrentRamp);
-    FOC.s16CurRamp = FOC.s32CurRamp >> 16;
-    FOC.sIdq_cmd.s16Q = FOC.s16CurRamp;
+    gSpd.iqRampQ31 = Mc_RampQ31(gSpd.ref << 16, &gSpd.iqRampSt);
+    gSpd.iqRamp = gSpd.iqRampQ31 >> 16;
+    gFoc.idqRef.s16Q = gSpd.iqRamp;
 
 #elif (CLOSE_LOOP == SPEED_LOOP)
     {
         int32_t s32RampPrev, s32IqCmd;
         int16_t s16AccFF;
 
-        s32RampPrev = FOC.s32SpeedRamp;
-        FOC.s32SpeedRamp = Mc_RampQ31(FOC.s16SpdRef << 16, &USER.sSpeedRamp);
-        FOC.s16SpeedRamp = FOC.s32SpeedRamp >> 16;
+        s32RampPrev = gSpd.rampQ31;
+        gSpd.rampQ31 = Mc_RampQ31(gSpd.ref << 16, &gSpd.speedRampSt);
+        gSpd.ramp = gSpd.rampQ31 >> 16;
 
         /* 加速度前馈：只在 |斜坡| 增大时加；减速保持原厂行为 */
         s16AccFF = 0;
 #if (SPEED_ACC_FF_ENABLE)
-        if ((FOC.s32SpeedRamp > s32RampPrev) && (FOC.s32SpeedRamp > 0))
+        if ((gSpd.rampQ31 > s32RampPrev) && (gSpd.rampQ31 > 0))
             s16AccFF = SPEED_ACC_FF_IQ;
-        else if ((FOC.s32SpeedRamp < s32RampPrev) && (FOC.s32SpeedRamp < 0))
+        else if ((gSpd.rampQ31 < s32RampPrev) && (gSpd.rampQ31 < 0))
             s16AccFF = -SPEED_ACC_FF_IQ;
 #endif
-        FOC.Speed.qInRef = FOC.s16SpeedRamp;
-        FOC.Speed.qInMeas = FOC.s16SpdFilt;
-        RUN_PI(&FOC.Speed);
+        gSpd.pi.qInRef = gSpd.ramp;
+        gSpd.pi.qInMeas = gMeas.speed;
+        RUN_PI(&gSpd.pi);
 
-        FOC.Power.qInRef = IBUS_LIMIT_VALUE;    /* 母线电流限 */
-        FOC.Power.qInMeas = FOC.s16IbusAvg;
-        RUN_PI(&FOC.Power);
+        gSpd.piPower.qInRef = IBUS_LIMIT_VALUE;    /* 母线电流限 */
+        gSpd.piPower.qInMeas = gMeas.ibusAvg;
+        RUN_PI(&gSpd.piPower);
 
-        s32IqCmd = (int32_t)FOC.Speed.qOut + FOC.Power.qOut + s16AccFF;
-        if (s32IqCmd > USER.s16IqLimitMax)  s32IqCmd = USER.s16IqLimitMax;
-        if (s32IqCmd < -USER.s16IqLimitMax) s32IqCmd = -USER.s16IqLimitMax;
-        FOC.sIdq_cmd.s16Q = (int16_t)s32IqCmd;
+        s32IqCmd = (int32_t)gSpd.pi.qOut + gSpd.piPower.qOut + s16AccFF;
+        if (s32IqCmd > gSpd.iqLimit)  s32IqCmd = gSpd.iqLimit;
+        if (s32IqCmd < -gSpd.iqLimit) s32IqCmd = -gSpd.iqLimit;
+        gFoc.idqRef.s16Q = (int16_t)s32IqCmd;
     }
 #else
-    FOC.s32PowerRamp = Mc_RampQ31(FOC.s16SpdRef << 16, &USER.sPowerRamp);
-    FOC.s16PowerRamp = FOC.s32PowerRamp >> 16;
+    gSpd.pRampQ31 = Mc_RampQ31(gSpd.ref << 16, &gSpd.pRampSt);
+    gSpd.pRamp = gSpd.pRampQ31 >> 16;
 
-    FOC.Speed.qInRef = SPEED_LIMIT_VALUE;       /* 限速 */
-    FOC.Speed.qInMeas = FOC.s16SpdFilt;
-    RUN_PI(&FOC.Speed);
+    gSpd.pi.qInRef = SPEED_LIMIT_VALUE;       /* 限速 */
+    gSpd.pi.qInMeas = gMeas.speed;
+    RUN_PI(&gSpd.pi);
 
-    FOC.Power.qInRef = FOC.s16PowerRamp;
-    FOC.Power.qInMeas = s16PowerFdk;
-    RUN_PI(&FOC.Power);
+    gSpd.piPower.qInRef = gSpd.pRamp;
+    gSpd.piPower.qInMeas = s16PowerFdk;
+    RUN_PI(&gSpd.piPower);
 
-    FOC.sIdq_cmd.s16Q = FOC.Power.qOut + FOC.Speed.qOut;
+    gFoc.idqRef.s16Q = gSpd.piPower.qOut + gSpd.pi.qOut;
 #endif
 }
 
 /* test30：进入 Spin 后第一拍会加的前馈。原厂把速度 PI 积分器预置成当前整个
  * Iq 指令；再叠加前馈就会把加速电流算两遍（启动 Iq 本身已经在加速转子）。
- * Spin 的斜坡从 s16SpdFilt 开始，所以指令离 0 比 filt 更远时就是在加速。 */
+ * Spin 的斜坡从 gMeas.speed 开始，所以指令离 0 比 filt 更远时就是在加速。 */
 static int16_t accFFAtSpinEntry(void)
 {
 #if (SPEED_ACC_FF_ENABLE) && (CLOSE_LOOP == SPEED_LOOP)
-    if ((FOC.s16SpdFilt >= 0) && (FOC.s16SpdCmd > FOC.s16SpdFilt)) return SPEED_ACC_FF_IQ;
-    if ((FOC.s16SpdFilt <= 0) && (FOC.s16SpdCmd < FOC.s16SpdFilt)) return -SPEED_ACC_FF_IQ;
+    if ((gMeas.speed >= 0) && (gSpd.cmd > gMeas.speed)) return SPEED_ACC_FF_IQ;
+    if ((gMeas.speed <= 0) && (gSpd.cmd < gMeas.speed)) return -SPEED_ACC_FF_IQ;
 #endif
     return 0;
 }
 
 void SpeedCtrl_OnEnterSpin(void)
 {
-    USER.sCurrentRamp.s32RampUp   = RAMP_Q31(TORQUE_RAMP_UP, I_MAX);
-    USER.sCurrentRamp.s32RampDown = RAMP_Q31(TORQUE_RAMP_DOWN, I_MAX);
-    USER.sSpeedRamp.s32RampUp     = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX);
-    USER.sSpeedRamp.s32RampDown   = RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
-    USER.sPowerRamp.s32RampUp     = RAMP_Q31(POWER_RAMP_UP, POWER_MAX);
-    USER.sPowerRamp.s32RampDown   = RAMP_Q31(POWER_RAMP_DOWN, POWER_MAX);
-    USER.sSpeedRamp.s32State      = FOC.s16SpdFilt << 16;
-    USER.sPowerRamp.s32State      = s16PowerFdk << 16;
-    USER.sCurrentRamp.s32State    = FOC.sIdq_cmd.s16Q << 16;
-    FOC.Speed.qdSum               = ((int32_t)FOC.sIdq_cmd.s16Q - accFFAtSpinEntry()) * 32768;
-    FOC.Power.qdSum               = FOC.sIdq_cmd.s16Q << 15;
+    gSpd.iqRampSt.s32RampUp   = RAMP_Q31(TORQUE_RAMP_UP, I_MAX);
+    gSpd.iqRampSt.s32RampDown = RAMP_Q31(TORQUE_RAMP_DOWN, I_MAX);
+    gSpd.speedRampSt.s32RampUp     = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX);
+    gSpd.speedRampSt.s32RampDown   = RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
+    gSpd.pRampSt.s32RampUp     = RAMP_Q31(POWER_RAMP_UP, POWER_MAX);
+    gSpd.pRampSt.s32RampDown   = RAMP_Q31(POWER_RAMP_DOWN, POWER_MAX);
+    gSpd.speedRampSt.s32State      = gMeas.speed << 16;
+    gSpd.pRampSt.s32State      = s16PowerFdk << 16;
+    gSpd.iqRampSt.s32State    = gFoc.idqRef.s16Q << 16;
+    gSpd.pi.qdSum               = ((int32_t)gFoc.idqRef.s16Q - accFFAtSpinEntry()) * 32768;
+    gSpd.piPower.qdSum               = gFoc.idqRef.s16Q << 15;
 }
 
 void SpeedCtrl_UseStartupRamp(void)
 {
-    USER.sSpeedRamp.s32RampUp   = RAMP_Q31(STARTUP_SPEED_RAMP, SPEED_MAX);
-    USER.sSpeedRamp.s32RampDown = RAMP_Q31(STARTUP_SPEED_RAMP, SPEED_MAX);
+    gSpd.speedRampSt.s32RampUp   = RAMP_Q31(STARTUP_SPEED_RAMP, SPEED_MAX);
+    gSpd.speedRampSt.s32RampDown = RAMP_Q31(STARTUP_SPEED_RAMP, SPEED_MAX);
 }

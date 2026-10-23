@@ -2,6 +2,9 @@
  * 实验记录.md / README.md 里（test4~test33）。 */
 #include "flux_obs.h"
 #include "foc_core.h"
+#include "meas.h"
+#include "est.h"
+#include "svpwm.h"
 #include "diag.h"
 #include "mathx.h"
 
@@ -25,11 +28,11 @@ static __forceinline int32_t addFlux(int32_t x, int32_t dx)
     return Mx_Clamp(sum, FMAX);
 }
 
-void FluxObs_Capture(const FOC_TypeDef *f, uint8_t valid)
+void FluxObs_Capture(uint8_t valid)
 {
-    const PWM_GEN_T *p = &pwm_gen;
-    gFluxInput.ia = f->sIabc.s16A; gFluxInput.ib = f->sIabc.s16B; gFluxInput.ic = f->sIabc.s16C;
-    gFluxInput.bus = f->s16Vbus;
+    const Svpwm_TypeDef *p = &pwm_gen;
+    gFluxInput.ia = gMeas.iabc.s16A; gFluxInput.ib = gMeas.iabc.s16B; gFluxInput.ic = gMeas.iabc.s16C;
+    gFluxInput.bus = gMeas.vbus;
     gFluxInput.compareA = p->CompA; gFluxInput.compareB = p->CompB; gFluxInput.compareC = p->CompC;
     gFluxInput.period = p->N_halfPeriod; gFluxInput.pwmMode = p->Mode; gFluxInput.pwmValid = valid;
 }
@@ -109,27 +112,26 @@ int16_t FluxObs_TargetMag(void)
 }
 #endif
 
-void FluxObs_BeginStartup(FOC_TypeDef *f, MLIB_FILTER_MA_T *speedFilter)
+void FluxObs_BeginStartup(void)
 {
-    /* 只在冷启动 Align -> Startup 调用。之前的飞车检测也用过同一个 sPLL，
+    /* 只在冷启动 Align -> Startup 调用。之前的飞车检测也用过同一个 gEst.pll，
      * 它残留的速度不能带进新观测器。调用方已对齐的角度、PLL 增益和所有 PI 保留。 */
     FluxObs_Reset();
-    f->sPLL.s32Speed = 0; f->sPLL.s32I_1 = 0;
-    f->FluxFeedback.s16Speed = 0;
-    f->FluxFeedback.s16Ealpha_est = 0; f->FluxFeedback.s16Ebeta_est = 0;
-    f->s16SpdFilt = 0; speedFilter->s32Acc = 0;
+    gEst.pll.s32Speed = 0; gEst.pll.s32I_1 = 0;
+    gMeas.speedRaw = 0;
+    gMeas.speed = 0; gMeas.speedFilt.s32Acc = 0;
     /* test23：psi 初值种在 |psi_f|∠theta_hat，而不是 0。psi 从 0 起步时 NLFO
      * 约 30 ms 把幅值拉起来，但方向随 Rs/死区误差走，PLL 误差接近满量程，
      * theta_hat 甩半圈，造成 32~34 ms 后的 177~191 rpm 假转速和假切 Spin。
-     * 调用方已设 sPLL.s32Theta = s16CmdTheta<<16，所以第一拍 PLL 误差正好为 0。 */
+     * 调用方已设 gEst.pll.s32Theta = gFoc.theta<<16，所以第一拍 PLL 误差正好为 0。 */
     {
-        sAngle_Trig a = Mc_SinCos(f->s16CmdTheta);
+        sAngle_Trig a = Mc_SinCos(gFoc.theta);
         sFluxObs.s32PsiAlF = (int32_t)Mx_MulQ15(FLUX_NOMINAL_Q15, a.s16Cos) << 16;
         sFluxObs.s32PsiBeF = (int32_t)Mx_MulQ15(FLUX_NOMINAL_Q15, a.s16Sin) << 16;
     }
 }
 
-static void FluxObs_Run(const FOC_TypeDef *f)
+static void FluxObs_Run(void)
 {
     MCFLIB_2_ALBE_T_S16 current;
     int16_t va, vb, ea, eb, ia, ib;
@@ -141,7 +143,7 @@ static void FluxObs_Run(const FOC_TypeDef *f)
         FluxObs_Reset();
         return;
     }
-    current = f->sIAlBe;
+    current = gMeas.iab;
     FocCore_VoltageFromCompares(gFluxInput.compareA, gFluxInput.compareB, gFluxInput.compareC,
                                 gFluxInput.bus, &va, &vb);
     gFluxDiag.voltageAlpha = va; gFluxDiag.voltageBeta = vb;
@@ -220,11 +222,7 @@ static void FluxObs_Run(const FOC_TypeDef *f)
     }
 }
 
-void FluxObs_UpdateFeedback(FOC_TypeDef *f)
+void FluxObs_UpdateFeedback(void)
 {
-    FluxObs_Run(f);
-    /* FluxFeedback 只有 s16Speed 还在用（Meas_SlowFilter 读）；两个 EMF 字段没有
-     * 读者，保持 0（test27 反汇编核实）。 */
-    f->FluxFeedback.s16Ealpha_est = 0;
-    f->FluxFeedback.s16Ebeta_est = 0;
+    FluxObs_Run();
 }

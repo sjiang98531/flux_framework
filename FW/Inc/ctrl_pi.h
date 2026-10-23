@@ -11,7 +11,7 @@
  * Pi_Run32：快环用。误差限在 ±32767、Kp/Ki <= 65535 时乘积不会溢出，积分用
  *           饱和加法。正常工作范围内与 CalcPI 逐位相同。
  * Pi_Run64：慢环用（速度环/功率环），64 位乘法，Kp/Ki 可以超过 65535。
- * 存储仍用原厂开源头文件里的 tPIParm（FOC.CurID/CurIQ/Speed/Power）。
+ * 存储仍用原厂开源头文件里的 tPIParm（gFoc.piD/piQ、gSpd.pi/piPower）。
  * ==========================================================================*/
 #ifndef CTRL_PI_H
 #define CTRL_PI_H

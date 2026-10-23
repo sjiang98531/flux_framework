@@ -1,9 +1,9 @@
 /* 空间矢量调制，见 svpwm.h。 */
 #include "svpwm.h"
 
-PWM_GEN_T pwm_gen;
+Svpwm_TypeDef pwm_gen;
 
-void Svpwm_Init(PWM_GEN_T *u, int16_t halfPeriod)
+void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod)
 {
     u->Alpha = 0;
     u->Beta = 0;
@@ -15,7 +15,7 @@ void Svpwm_Init(PWM_GEN_T *u, int16_t halfPeriod)
     u->N_halfPeriod = halfPeriod;
 }
 
-void Svpwm_Calc(PWM_GEN_T *u, const MCFLIB_3_ABC_T_S16 *iabc, int16_t *ibusRec)
+void Svpwm_Calc(Svpwm_TypeDef *u, const MCFLIB_3_ABC_T_S16 *iabc, int16_t *ibusRec)
 {
     /* X = Vβ，Y = (Vβ + √3Vα)/2，Z = (Vβ − √3Vα)/2（28378 = √3/2 的 Q15） */
     int32_t r3 = (u->Alpha * 28378) >> 15;

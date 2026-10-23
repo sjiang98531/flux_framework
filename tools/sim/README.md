@@ -49,10 +49,10 @@ CSV 每 1 ms 一行，列含义：
 | 文件 | 内容 |
 |---|---|
 | vendor_lib.c、vendor_tables.h | 原厂闭源库 SOC_MCI_2R_V102.lib 的参考模型（按 test33 AXF 反汇编逐条翻译）。**只给 test33（sim_old）和逐函数对比（libcheck）用**；0xF20E0006 起框架不再用原厂库，sim_new / sim_legacy 不链接它 |
-| libcheck.c | 逐函数对比：自写替代函数 vs 原厂库模型，随机输入，`build/libcheck` 最后一行 `LIBCHECK OK` |
+| libcheck.c | 逐函数对比：自写替代函数 vs 原厂库模型，随机输入，`build/libcheck` 最后一行 `LIBCHECK OK`。0xF20E0007 起新代码的状态在 gMeas / gProt / gFly 等模块变量里，原厂模型仍读写 FOC / USER：文件里的 `FIELDS` 表是两边字段的对应，每次用例按表搬运后整块比较 |
 | plant.c/h | PMSM dq 模型 + 逆变器（板级相序、死区误差）+ ADC（量化、噪声、零点），默认参数 = 本风机（501 rpm/s/A 辨识值、风阻按 1172 rpm/0.292 A 标定） |
 | sim_main.c | 主循环、工况、CSV、每拍哈希 |
-| glue_old.c / glue_new.c | 接 test33 / 新代码 |
+| glue_old.c / glue_new.c | 接 test33 / 新代码（`glue_export` 导出与结构体布局无关的语义状态，输出哈希用） |
 | fuzz.c | 观测器 + PLL 随机输入对比 |
 | shim/ | 主机上代替器件头文件、armcc 关键字 |
 | armchk/ | clang ARM 检查用的最小 libc 头和大小写转接 |

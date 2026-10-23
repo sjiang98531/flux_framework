@@ -37,6 +37,26 @@
 #error "只支持原厂快速启动（FAST_BOOT_METHOD = 1）。原厂的 0 分支在 test33 里本来就是半截注释掉的，已删除。"
 #endif
 
+/* 启动各子状态的计数和参数（原 USER / FastBoot_Para 里的启动部分，整数类型保持原样） */
+typedef struct {
+    uint16_t preChargeCmd;      /* 预充时长（快环拍） */
+    uint16_t preChargeCnt;      /* 预充计时 */
+    uint8_t  preChargePhase;    /* 预充轮流开 A/B/C 下桥：0/1/2 */
+    uint16_t alignTimeCmd;      /* 原厂定位时长（慢环拍） */
+    uint16_t alignTimeCnt;
+    uint16_t alignCurAcc;       /* 原厂启动电流斜坡（每慢环拍） */
+    int16_t  iqCmd;             /* 原厂启动 iq Q15 */
+    uint16_t spdMax;            /* 原厂启动斜坡的转速上限 Q15 */
+    uint16_t timeCmd;           /* 启动超时（慢环拍） */
+    uint16_t timeCnt;           /* 原厂 Startup->Spin 判据的轮询计数 */
+    uint16_t tqTimeCmd;         /* Torqueloop 时长（慢环拍） */
+    uint16_t tqTimeCnt;
+    int16_t  detSpd;            /* Startup->Spin 的转速门限 Q15（STARTUP_TO_SPIN_SPEED）；Spin 回退用它的一半 */
+    uint16_t detTime;           /* 上面判据的轮询间隔（慢环拍） */
+} Startup_TypeDef;
+
+extern Startup_TypeDef gStartup;
+
 void Startup_Init(void);
 
 /* 进入 Calib 时清飞车检测计数 */
@@ -58,7 +78,7 @@ void Startup_TorqueloopSlow(void);
 
 /* 子状态切换时由 supervisor 调用（原厂模式下是空函数） */
 void Startup_OnEnterAlign(void);
-/* warm = 0：定位后冷启动（从当前 s16CmdTheta、零速开始）；1：从 Spin 回退（从 PLL 角和转速开始） */
+/* warm = 0：定位后冷启动（从当前 gFoc.theta、零速开始）；1：从 Spin 回退（从 PLL 角和转速开始） */
 void Startup_OnEnterIF(uint8_t warm);
 
 #if (STARTUP_MODE == STARTUP_IF)

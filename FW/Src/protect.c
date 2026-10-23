@@ -1,23 +1,28 @@
 /* 运行中保护，见 protect.h。 */
 #include "protect.h"
+#include "meas.h"
+#include "foc_core.h"
+#include "speed_ctrl.h"
 
-void Protect_SpinSlow(FOC_TypeDef *f)
+Protect_TypeDef gProt;
+
+void Protect_SpinSlow(void)
 {
-    ADV_PROTECT *p = &f->sProtect;
+    Protect_TypeDef *p = &gProt;
     uint32_t mn, mx;
 
     /* |Vdq|^2（Q15）：电压很小说明反电势很小，即转子基本没转起来 */
-    p->u16VoltageTemp = (uint16_t)(MLIB_Mul_Q15(f->sVdq.s16D, f->sVdq.s16D) + MLIB_Mul_Q15(f->sVdq.s16Q, f->sVdq.s16Q));
+    p->u16VoltageTemp = (uint16_t)(MLIB_Mul_Q15(gFoc.vdq.s16D, gFoc.vdq.s16D) + MLIB_Mul_Q15(gFoc.vdq.s16Q, gFoc.vdq.s16Q));
 
     /* 堵转 */
-    if (MLIB_Abs_Q15(f->s16SpdFilt) < (int32_t)p->u16BlockSpeed && p->u16VoltageTemp < p->u16BlockVoltageAmp_square) {
+    if (MLIB_Abs_Q15(gMeas.speed) < (int32_t)p->u16BlockSpeed && p->u16VoltageTemp < p->u16BlockVoltageAmp_square) {
         if (++p->u16BlockCounter > p->u16BlockTimeCmd) { p->u16BlockCounter = 0; p->bRotor_block = 1; }
     } else {
         p->u16BlockCounter = 0;
     }
 
     /* 反转失控：估计转速和指令方向相反，而且电压也小 */
-    if (MLIB_Mul_Q15(f->s16SpeedRamp, f->s16SpdFilt) < 0 && p->u16VoltageTemp < p->u16BlockVoltageAmp_square) {
+    if (MLIB_Mul_Q15(gSpd.ramp, gMeas.speed) < 0 && p->u16VoltageTemp < p->u16BlockVoltageAmp_square) {
         if (++p->u16FspinCounter > p->u16BlockTimeCmd) { p->bErr_Spin = 1; p->u16FspinCounter = 0; }
     } else {
         p->u16FspinCounter = 0;
@@ -39,5 +44,5 @@ void Protect_SpinSlow(FOC_TypeDef *f)
     }
 
     /* 超速 */
-    if (MLIB_Abs_Q15(f->s16SpdFilt) > (int32_t)p->u16Speed_OC_cmd) p->bSpeed_OC = 1;
+    if (MLIB_Abs_Q15(gMeas.speed) > (int32_t)p->u16Speed_OC_cmd) p->bSpeed_OC = 1;
 }

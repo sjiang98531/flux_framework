@@ -25,7 +25,7 @@ build_new() {
   gcc "$W"/*.o -lm -o "$B/$OUT"
   if [ "$OUT" = sim_new ]; then
     echo 'void HAL_PwmWriteCompares(const void *u){(void)u;}' > "$W/stub.c"
-    gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -include stdlib.h -I$T/shim -I$T $I "$T/fuzz.c" "$T/vendor_lib.c" "$W/stub.c" \
+    gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -include stdlib.h -I$T/shim -I$T $I "$T/fuzz.c" "$W/stub.c" \
       $N/FW/Src/flux_obs.c $N/FW/Src/flux_pll.c $N/FW/Src/diag.c $N/FW/Src/mathx.c $N/FW/Src/foc_core.c $N/FW/Src/svpwm.c $N/FW/Src/mc_tables.c -lm -o "$B/fz_new"
     gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -I$T/shim -I$T $I "$T/libcheck.c" "$T/vendor_lib.c" \
       $N/FW/Src/svpwm.c $N/FW/Src/mc_tables.c $N/FW/Src/meas.c $N/FW/Src/protect.c $N/FW/Src/flystart.c $N/FW/Src/mathx.c -lm -o "$B/libcheck"
@@ -39,7 +39,7 @@ build_legacy() {
   NEWDIR="$L" OUTNAME=sim_legacy build_new
   echo 'void HAL_PwmWriteCompares(const void *u){(void)u;}' > "$B/stub_legacy.c"
   I="-I$L/FW/Inc -I$L/MCI/Inc -I$L/User/Inc -I$L/Board/Inc -I$L/User/HeadFiles"
-  gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -include stdlib.h -I$T/shim -I$T $I "$T/fuzz.c" "$T/vendor_lib.c" "$B/stub_legacy.c" \
+  gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -include stdlib.h -I$T/shim -I$T $I "$T/fuzz.c" "$B/stub_legacy.c" \
     $L/FW/Src/flux_obs.c $L/FW/Src/flux_pll.c $L/FW/Src/diag.c $L/FW/Src/mathx.c $L/FW/Src/foc_core.c $L/FW/Src/svpwm.c $L/FW/Src/mc_tables.c -lm -o "$B/fz_legacy"
   gcc -include $T/shim/armcc_compat.h -I$T/shim $I "$T/gain_check.c" -o "$B/gain_check_legacy"
 }

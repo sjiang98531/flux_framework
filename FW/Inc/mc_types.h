@@ -13,21 +13,33 @@
  *   CalcPI / Fast_Boot_Current_Controller   -> ctrl_pi.h、foc_core.c（早已自写，原厂路径已删）
  *
  * 仍然使用原厂的"开源"部分（头文件，源码可见）：
- *   mlib_types.h / mlib.h   Q15 类型、内联的 MLIB_Mul_Q15、MLIB_FilterMA_Q15 等
+ *   mlib_types.h / mlib.h   Q15 类型、内联的 MLIB_Mul_Q15、MLIB_FilterMA_Q15，
+ *                           以及 tPIParm（PI）、PLL_TypeDef（PLL）两个结构体
  *   mcflib.h                内联的 Clarke / Park / 反 Park
- *   pwm_gen.h               PWM_GEN_T 结构体、SEVENMODE / FIVEMODE
- *   motor_structure.h       FOC_TypeDef / USER_TypeDef（原厂用户代码里的结构体）
- * 这些头文件里还留着闭源函数的声明（MLIB_SinCos、Var_Filt……），没有实现，
+ * 这些头文件里还留着闭源函数的声明（MLIB_SinCos……），没有实现，
  * 谁再调用就会链接失败——这正是想要的。
  *
- * pwm_gen.h 没有 include guard，所以只能通过本文件包含。
- * 结构体布局暂时没动（J-Scope 地址不变）；不再受闭源库约束，以后可以重新整理。
+ * 从 0xF20E0007 起不再使用原厂的 FOC / USER / FastBoot_Para 大结构体（motor_structure.h）
+ * 和 pwm_gen.h：状态按模块分开，每个模块一个全局变量，定义在模块自己的 .c 里：
+ *   gMeas   meas.h        电流、母线、转速反馈及滤波
+ *   gFoc    foc_core.h    电流环（角度、dq 电流/电压、PI）
+ *   gEst    est.h         磁链 PLL
+ *   gSpd    speed_ctrl.h  外环指令、斜坡、速度/功率 PI
+ *   gProt   protect.h     保护门限和标志
+ *   gFly    flystart.h    飞车检测
+ *   gStartup startup.h    预充、定位、启动、Torqueloop 的计数和参数
+ *   gSup    supervisor.h  状态机、速度指令、故障
+ *   gHal    hal.h         PWM 周期、慢环分频
+ *   pwm_gen svpwm.h       调制器
+ * 新旧变量名对照见 重构说明.md。
  * ==========================================================================*/
 #ifndef MC_TYPES_H
 #define MC_TYPES_H
-#include "motor_structure.h"
+#include <stdint.h>
+/* 芯片头文件（经 includes.h -> sc32_conf.h）必须先于 mlib_types.h：后者在没定义时会
+ * #define TRUE/FALSE，再包含芯片头文件就和它的 boolType 枚举冲突。 */
+#include "includes.h"
 #include "mlib.h"
 #include "mcflib.h"
-#include "pwm_gen.h"
 #include "mc_math.h"
 #endif

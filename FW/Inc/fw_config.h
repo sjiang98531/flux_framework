@@ -30,7 +30,7 @@
  * 0xF20E0006  去掉原厂闭源库 SOC_MCI_2R_V102.lib：库里的函数全部自写（mc_math、svpwm、
  *             meas、protect、flystart），行为与 0xF20E0005 逐位相同（仿真 40 组 + 逐函数对比）
  * -------------------------------------------------------------------------*/
-#define FW_BUILD_TAG            0xF20E0006UL
+#define FW_BUILD_TAG            0xF20E0007UL
 #define FLUXPLL_BUILD_TAG       FW_BUILD_TAG
 
 #define FW_PI                   3.14159265358979

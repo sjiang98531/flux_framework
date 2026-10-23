@@ -421,11 +421,6 @@
               <FilePath>..\FW\Src\supervisor.c</FilePath>
             </File>
             <File>
-              <FileName>ctrl_globals.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\FW\Src\ctrl_globals.c</FilePath>
-            </File>
-            <File>
               <FileName>diag.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\diag.c</FilePath>

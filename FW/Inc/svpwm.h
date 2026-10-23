@@ -15,12 +15,27 @@
 #define SVPWM_H
 #include "mc_types.h"
 
-/* 调制器状态（原厂名 pwm_gen，PWM_GEN_T 定义在开源头文件 pwm_gen.h） */
-extern PWM_GEN_T pwm_gen;
+#define SEVENMODE   1           /* 七段式 */
+#define FIVEMODE    0           /* 五段式 */
 
-void Svpwm_Init(PWM_GEN_T *u, int16_t halfPeriod);
+/* 调制器状态。布局与原厂开源头文件 pwm_gen.h 的 PWM_GEN_T 相同（仿真里和原厂模型逐位对比要用），
+ * 变量名沿用原厂的 pwm_gen（J-Scope 照旧看）。 */
+typedef struct {
+    int32_t Alpha;              /* 输入 αβ 电压，Q15，32768 = Vbus/√3 */
+    int32_t Beta;
+    int16_t CompA;              /* 输出三相比较值 */
+    int16_t CompB;
+    int16_t CompC;
+    uint8_t Sector;             /* 扇区 1..6 */
+    uint8_t Mode;               /* SEVENMODE / FIVEMODE */
+    int16_t N_halfPeriod;       /* PWM 半周期计数 */
+} Svpwm_TypeDef;
+
+extern Svpwm_TypeDef pwm_gen;
+
+void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod);
 
 /* 算比较值。iabc：本拍三相电流（Q15），用于重构母线电流，结果写到 *ibusRec。 */
-void Svpwm_Calc(PWM_GEN_T *u, const MCFLIB_3_ABC_T_S16 *iabc, int16_t *ibusRec);
+void Svpwm_Calc(Svpwm_TypeDef *u, const MCFLIB_3_ABC_T_S16 *iabc, int16_t *ibusRec);
 
 #endif

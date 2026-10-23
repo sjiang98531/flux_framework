@@ -27,7 +27,7 @@
 #define R_SHUNT                 (0.1)                      /* ohm */
 #define CURRENT_OPA_GAIN        (3.139)
 /* 电流 Q15 满量程。注意：= 5/2/3.139/0.1 = 7.964 A（原 mc_customize.h 注释里的
- * "3.93A" 是旧板子的值，早已过时）。FOC.sIabc / sIdq / sIdq_cmd 都是这个口径。 */
+ * "3.93A" 是旧板子的值，早已过时）。gMeas.iabc、gFoc.idq / idqRef 都是这个口径。 */
 #define I_MAX                   (ADC_REFV / 2 / CURRENT_OPA_GAIN / R_SHUNT)
 #define IBUS_RECONSTRUCTED      1                          /* 1 = 母线电流用 SVPWM 重构值 */
 

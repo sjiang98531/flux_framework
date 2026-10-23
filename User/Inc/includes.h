@@ -18,7 +18,9 @@
 
 /*------------------------头文件包含相关定义------------------------*/
 #include "sc32_conf.h"
-#include "motor_structure.h"
+/* flux_framework 0xF20E0007: motor_structure.h (vendor FOC/USER structs) is no longer used by
+ * the firmware; only the ADC DMA buffer declaration is kept (defined in FW/Src/hal_sc32r602.c). */
+extern __align(4) u16 ADC_DMABuff[14];
 #include "Hardware_config.h"
 #include "SC_Init.h"
 
