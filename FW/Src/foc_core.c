@@ -2,9 +2,6 @@
 #include "hal.h"
 #include "ctrl_globals.h"
 
-/* 比较值 -> 占空比（Q15）的系数：2^30 / PWM_PERIOD */
-#define COUNT_SCALE ((int32_t)(1073741824.0f / PWM_PERIOD))
-
 void FocCore_Init(void)
 {
     /* 电压限幅：VMAX = MAX_DUTY * Vbus * 2/3（FOC_Current_Controller 里每拍算） */
@@ -34,11 +31,6 @@ void FocCore_Init(void)
     FOC.FluxFeedback.s16Ealpha_est = 0;
     FOC.FluxFeedback.s16Ebeta_est = 0;
     FOC.FluxFeedback.s16Speed = 0;
-}
-
-void FocCore_Clarke(FOC_TypeDef *f)
-{
-    MCFLIB_Clark_Sat_S16(&f->sIabc, &f->sIAlBe);
 }
 
 void FOC_Current_Controller(FOC_TypeDef *pFOC)
@@ -75,20 +67,4 @@ void FocCore_ModulateZero(void)
     pwm_gen.Beta = 0;
     PWM_GEN_calc(&pwm_gen);
     Update_PWM(&pwm_gen);
-}
-
-/* "比较值越小，相电压越高"。重建上一 PWM 周期的平均相电压：
- *   pole_x = (PERIOD - cmp_x)/PERIOD * Vbus
- *   v_alpha = (2a - b - c)/3，v_beta = (b - c)/sqrt(3) */
-void FocCore_VoltageFromCompares(int16_t cmpA, int16_t cmpB, int16_t cmpC, int16_t bus,
-                                 int16_t *va, int16_t *vb)
-{
-    int32_t a, b, c, t;
-    a = ((int32_t)(PWM_PERIOD - cmpA) * COUNT_SCALE) >> 15;
-    b = ((int32_t)(PWM_PERIOD - cmpB) * COUNT_SCALE) >> 15;
-    c = ((int32_t)(PWM_PERIOD - cmpC) * COUNT_SCALE) >> 15;
-    a = (a * bus) >> 15; b = (b * bus) >> 15; c = (c * bus) >> 15;
-    t = 2 * a - b - c;
-    *va = (int16_t)((t * 21846 + 32768) >> 16);
-    *vb = (int16_t)(((b - c) * 18919) >> 15);
 }

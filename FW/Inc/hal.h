@@ -24,8 +24,11 @@
 
 /* 三相比较值都设成半周期（50% 占空比） */
 void HAL_PwmSetHalfDuty(void);
-/* 三相上下桥是否全部使能（观测器只在真正输出 PWM 时信任重构电压） */
-uint8_t HAL_PwmAllEnabled(void);
+/* 三相上下桥是否全部使能（观测器只在真正输出 PWM 时信任重构电压）。快环热路径，内联。 */
+static __forceinline uint8_t HAL_PwmAllEnabled(void)
+{
+    return (uint8_t)((EPWM->EPWM_CHN & 0x3fU) == 0x3fU);
+}
 /* 把 pwm_gen.CompA/B/C 写进比较寄存器（相序由 RUN_DIR 决定）。
  * 名字保留原厂的 Update_PWM，因为 pwm_gen.h 里有它的声明。 */
 void Update_PWM(PWM_GEN_T *u1);

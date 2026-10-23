@@ -110,11 +110,6 @@ void HAL_PwmSetHalfDuty(void)
     EPWM->EPWM_DT[4] = USER.u16PWMPeriod >> 1;
 }
 
-uint8_t HAL_PwmAllEnabled(void)
-{
-    return (uint8_t)((EPWM->EPWM_CHN & 0x3fU) == 0x3fU);
-}
-
 void Update_PWM(PWM_GEN_T *u1)
 {
     (void)u1;
