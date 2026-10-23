@@ -7,8 +7,6 @@
 
 SpeedCtrl_TypeDef gSpd;
 
-int16_t s16PowerFdk;
-
 #define RUN_PI(p)   Pi_Run64(p)     /* 64 位，增益可以超过 65535 */
 
 #define RAMP_Q31(rate, base)    Q31((rate) / (base) / SLOWLOOP_FREQ)
@@ -51,7 +49,7 @@ void SpeedCtrl_Init(void)
 
 void SpeedCtrl_UpdatePowerFdk(void)
 {
-    s16PowerFdk = 2 * MLIB_Mul_Q15(Q15(0.866), MLIB_Mul_Q15(gMeas.vbusAvg, gMeas.ibusAvg));
+    gSpd.powerFdk = 2 * MLIB_Mul_Q15(Q15(0.866), MLIB_Mul_Q15(gMeas.vbusAvg, gMeas.ibusAvg));
 }
 
 void SpeedCtrl_SpinSlow(void)
@@ -102,7 +100,7 @@ void SpeedCtrl_SpinSlow(void)
     RUN_PI(&gSpd.pi);
 
     gSpd.piPower.qInRef = gSpd.pRamp;
-    gSpd.piPower.qInMeas = s16PowerFdk;
+    gSpd.piPower.qInMeas = gSpd.powerFdk;
     RUN_PI(&gSpd.piPower);
 
     gFoc.idqRef.s16Q = gSpd.piPower.qOut + gSpd.pi.qOut;
@@ -130,7 +128,7 @@ void SpeedCtrl_OnEnterSpin(void)
     gSpd.pRampSt.s32RampUp     = RAMP_Q31(POWER_RAMP_UP, POWER_MAX);
     gSpd.pRampSt.s32RampDown   = RAMP_Q31(POWER_RAMP_DOWN, POWER_MAX);
     gSpd.speedRampSt.s32State      = gMeas.speed << 16;
-    gSpd.pRampSt.s32State      = s16PowerFdk << 16;
+    gSpd.pRampSt.s32State      = gSpd.powerFdk << 16;
     gSpd.iqRampSt.s32State    = gFoc.idqRef.s16Q << 16;
     gSpd.pi.qdSum               = ((int32_t)gFoc.idqRef.s16Q - accFFAtSpinEntry()) * 32768;
     gSpd.piPower.qdSum               = gFoc.idqRef.s16Q << 15;
