@@ -25,8 +25,10 @@
  * 0xF20E0004  代码审核后的修复：I/F 开环启动（STARTUP_MODE，可切回原厂）、相位补偿只在
  *             Spin、角度时序补偿、PLL 增益溢出检查、POWER_LOOP 下 MTPA/弱磁限幅、
  *             解耦切换移进快环、反转五段式
+ * 0xF20E0005  I/F 定位改成一段（0°，最短 0.8 s，等停稳），IF_ALIGN_STAGES = 2 可切回两段；
+ *             停稳门限 5 -> 8 rpm
  * -------------------------------------------------------------------------*/
-#define FW_BUILD_TAG            0xF20E0004UL
+#define FW_BUILD_TAG            0xF20E0005UL
 #define FLUXPLL_BUILD_TAG       FW_BUILD_TAG
 
 #define FW_PI                   3.14159265358979

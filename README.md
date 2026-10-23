@@ -31,6 +31,7 @@
   - 0xF20E0002：加 MTPA / 弱磁
   - 0xF20E0003：按理论取参
   - 0xF20E0004：代码审核后的修复（I/F 启动、角度时序等，见 `重构说明.md` 第 0.1 节）
+  - 0xF20E0005：I/F 定位改成一段
 - **闭源库约束**：
   - `FOC_TypeDef / USER_TypeDef` 的字段布局不能改。
   - `FOC / USER / FastBoot_Para / pwm_gen / eM1_RunSubState` 这些名字不能改。
@@ -46,3 +47,4 @@
 | `p2-mtpa-fw` | MTPA / 弱磁 / IPM 有效磁链（默认关），行为仍 = test33 |
 | `p3-theory` | 按理论取参（0xF20E0003） |
 | `p4-review` | 代码审核后的修复（0xF20E0004） |
+| `p5-align1` | I/F 一段定位（0xF20E0005） |

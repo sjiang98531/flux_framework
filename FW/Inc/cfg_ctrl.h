@@ -97,20 +97,25 @@
 #define STARTUP_MODE            STARTUP_IF
 
 /* ---- I/F 参数（STARTUP_MODE = STARTUP_IF 时用） ---- */
-/* 定位：d 轴电流斜坡到 IF_ALIGN_A，先在 120° 打 IF_ALIGN1_S（转子从任意位置被拉过来），
- * 再把定位角在 IF_ALIGN_SWEEP_S 内慢慢转到 0°（转子跟着走，不像 90° 阶跃那样再激起
- * 摆动），最后在 0° 等转子停稳。两段是为了避开转子正好在 180° 的死点。
+/* 定位段数：
+ *   1（默认）：d 轴电流直接加在 0°，等转子停稳。转子正好停在 180°（死点）附近时转矩
+ *     几乎为零、看起来和"已对准"一样，这一次启动会失步、报堵转后自动重启（小概率）。
+ *   2：先在 120° 打 IF_ALIGN1_S，再在 IF_ALIGN_SWEEP_S 内慢慢转到 0°。两次定位角差 120°，
+ *     转子不可能同时在两个死点上，所以没有死点问题，代价是多约 0.6 s，且第二段转子会
+ *     朝 0° 方向移动 120° 电角度（正转时看起来像先倒退一下）。
  * 本电机 J ≈ 0.02 kg·m²，0.6 A 下转子摆动周期约 0.5 s。 */
+#define IF_ALIGN_STAGES         1
 #define IF_ALIGN_A              0.6         /* A */
 #define IF_ALIGN_RAMP_A_S       3.0         /* A/s，定位电流上升斜率 */
-#define IF_ALIGN1_S             0.6         /* s */
-#define IF_ALIGN_SWEEP_S        0.3         /* s，120° -> 0° 的转动时间 */
-#define IF_ALIGN2_S             0.2         /* s，转到 0° 之后最短保持时间 */
-/* 第二段结束条件：打满 IF_ALIGN2_S 后，转子转速（由反电势估计）低于 IF_ALIGN_STILL_RPM
- * 持续 IF_ALIGN_STILL_S 才开始拖；最长 IF_ALIGN2_MAX_S（到了就直接拖）。 */
-#define IF_ALIGN_STILL_RPM      5.0
+#define IF_ALIGN1_S             0.8         /* s：一段时 = 最短定位时间（0.5 s 时死点附近 2/36 会失败一次，0.8 s 仿真里 36/36）；两段时 = 第一段时间（原 0.6） */
+#define IF_ALIGN_SWEEP_S        0.3         /* s，两段时 120° -> 0° 的转动时间 */
+#define IF_ALIGN2_S             0.2         /* s，两段时转到 0° 之后最短保持时间 */
+/* 定位结束条件：打满最短时间后，转子转速（由反电势估计）低于 IF_ALIGN_STILL_RPM
+ * 持续 IF_ALIGN_STILL_S 才开始拖；最长 IF_ALIGN2_MAX_S（到了就直接拖）。
+ * 门限原来是 5 rpm：台架 4 次里有 1 次 q 轴有约 6 rpm 当量的固定偏置，等满了 2 s。 */
+#define IF_ALIGN_STILL_RPM      8.0
 #define IF_ALIGN_STILL_S        0.1
-#define IF_ALIGN2_MAX_S         2.0         /* s，第二段（含转动）最长时间 */
+#define IF_ALIGN2_MAX_S         2.0         /* s，一段时 = 定位最长时间；两段时 = 第二段（含转动）最长时间 */
 /* 定位阻尼：电流闭环的定位等于一个无阻尼单摆（本电机周期约 0.5 s，风机低速几乎没有
  * 摩擦），转子会一直来回摆，拖动开始时转子还在动就容易失步（仿真：8 个初始角里 3 个
  * 必失败）。q 轴反电势正比于转子转速，按它反向给一点 q 轴电流就是阻尼器。

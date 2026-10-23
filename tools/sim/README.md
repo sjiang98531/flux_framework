@@ -23,7 +23,7 @@ tools/sim/armchk/check.sh     # ARM 语法检查，最后一行 "checked 42 file
 # 单次仿真：sim_new <工况> <csv> <hash文件|""> <秒数> <IPM电机0/1>
 tools/sim/build/sim_new 0 out.csv "" 28
 # 工况 0：293 -> 1172 -> 600 -> -400 -> 停 -> 1000；1：1000 rpm 加载；2：1800 -> 2600；3：1000；4：启停循环；
-#      5：±1000 硬换向；6：1172 -> 600 -> 1172；7：300/150/80 rpm 平台；8：1000 rpm 突加 0.5 N·m
+#      5：±1000 硬换向；6：1172 -> 600 -> 1172；7：300/150/80 rpm 平台；8：1000 rpm 突加 0.5 N·m；9：-1000 反转冷启动
 # 环境变量改电机模型：SIM_TD（死区等效 s）SIM_TH0（初始机械角 rad）SIM_W0（初始转速 rpm，飞车）
 #                     SIM_FRIC（摩擦 N·m）SIM_VBUS SIM_LOAD SIM_LOAD_END
 

@@ -11,7 +11,8 @@
  *     运行，PLL 12.8 rpm 下限推着走）-> Fast_Boot_StartUp 判 80 rpm -> Spin
  *
  *   STARTUP_IF（开环拖动）：
- *     Align：d 轴电流斜坡到 IF_ALIGN_A，120° 打 IF_ALIGN1_S，再慢慢转到 0° 等转子停稳；
+ *     Align：d 轴电流斜坡到 IF_ALIGN_A，在 0° 等转子停稳（IF_ALIGN_STAGES = 2 时先在 120°
+ *       再慢慢转到 0°，避开死点）；
  *       定位期间按 q 轴反电势加阻尼电流（转子是个无阻尼单摆）
  *     Startup：电流 IF_CURRENT_A 沿开环角方向（与定位电流连续），开环角按
  *       IF_ACC_RPM_S 加速到 IF_HANDOVER_RPM 并保持；观测器+PLL 同时跟踪（不参与控制）。
@@ -71,7 +72,7 @@ int16_t Startup_IfSpeedQ15(void);
 uint8_t Startup_IfWantsFallback(void);
 
 typedef struct {
-    uint16_t stage;         /* 1 定位 120°，2 转到 0° 并等停稳，3 开环加速/保持，5 已切闭环，6 超时故障 */
+    uint16_t stage;         /* 1 定位（一段时只有这一步；两段时为 120°），2 两段时转到 0° 并等停稳，3 开环加速/保持，5 已切闭环，6 超时故障 */
     int16_t  olSpeed;       /* 开环转速 Q15 */
     int16_t  pllFilt;       /* PLL 转速（滤波）Q15 */
     uint16_t agreeCnt;      /* 一致计数（慢环拍） */

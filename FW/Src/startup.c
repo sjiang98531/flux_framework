@@ -61,7 +61,7 @@ void Startup_OnEnterAlign(void)
     s_alignTicks = 0;
     s_emfFilt = 0;
     s_still = 0;
-    s_alignTheta = IF_ALIGN1_THETA;
+    s_alignTheta = (IF_ALIGN_STAGES == 2) ? IF_ALIGN1_THETA : 0;
     FOC.sIdq_cmd.s16D = 0;
     FOC.sIdq_cmd.s16Q = 0;
     gStartupIF.stage = 1;
@@ -246,6 +246,17 @@ void Startup_AlignSlow(void)
     iq = Mx_Clamp(iq, IF_ALIGN_ID_Q15);
     FOC.sIdq_cmd.s16Q = (int16_t)iq;
     ++s_alignTicks;
+#if (IF_ALIGN_STAGES == 1)
+    {   /* 一段：0° 定位，打满最短时间后等停稳 */
+        int32_t e = s_emfFilt >> 3;
+        if (e < 0) e = -e;
+        if (s_alignTicks > IF_ALIGN1_TICKS && e < IF_ALIGN_STILL_EMF_Q15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
+        if ((s_alignTicks >= IF_ALIGN1_TICKS && s_still >= IF_ALIGN_STILL_TICKS) || s_alignTicks >= IF_ALIGN2_MAX_TICKS) {
+            gStartupIF.alignTime = s_alignTicks;
+            Sup_SwitchAlignStartup();       /* 观测器种在 |psi_f|∠0 */
+        }
+    }
+#else
     if (s_alignTicks > IF_ALIGN1_TICKS) {
         uint16_t k = s_alignTicks - IF_ALIGN1_TICKS;            /* 第二段已过的拍数 */
         int32_t e = s_emfFilt >> 3;
@@ -260,6 +271,7 @@ void Startup_AlignSlow(void)
             Sup_SwitchAlignStartup();       /* 观测器种在 |psi_f|∠0（转子已被定住） */
         }
     }
+#endif
     Var_Filt();
     FOC.s16SpdFilt = 0;
 #else

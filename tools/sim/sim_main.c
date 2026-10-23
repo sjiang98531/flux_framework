@@ -82,6 +82,8 @@ static double profile(int sc, double t, Plant *pl)
         pl->loadStep = (t > 15.0 && t < 30.0) ? 0.5 : 0.0;
         if (t < 0.2) return 0;
         return 1000;
+    case 9: /* reverse cold start: -1000 rpm */
+        return t < 0.2 ? 0 : -1000;
     default:
         return t < 0.2 ? 0 : 1000;
     }
