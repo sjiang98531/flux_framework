@@ -53,7 +53,15 @@ void FOC_Current_Controller(FOC_TypeDef *pFOC)
     Fast_Boot_Current_Controller(pFOC);
 #endif
 
+#if CTRL_ANGLE_COMP
+    /* 反 Park 角（s16CmdTheta_Update）由估计模块按时序补偿给出；相同时省一次查表 */
+    if (pFOC->s16CmdTheta_Update != pFOC->s16CmdTheta)
+        pFOC->sAngle_cmd_update = MLIB_SinCos(pFOC->s16CmdTheta_Update);
+    else
+        pFOC->sAngle_cmd_update = pFOC->sAngle_cmd;
+#else
     pFOC->sAngle_cmd_update = pFOC->sAngle_cmd;
+#endif
     MCFLIB_InvPark_S16(&pFOC->sVdq, &pFOC->sAngle_cmd_update, &pFOC->sVAlBe);
     DcBus_Ripple_suppress(&pFOC->sVAlBe, pFOC->s16VbusAvg, &pFOC->sVAlBe_cmd);
 }
@@ -63,7 +71,9 @@ void FOC_Current_Controller(FOC_TypeDef *pFOC)
  *                   相当于给一个 -omega*Lq*iq 量级的 Vd，保留）
  *   d 轴输出限 ±VMAX；q 轴限 ±sqrt(VMAX^2 - Vd^2)（电压圆，d 轴优先） */
 #if CTRL_DQ_DECOUPLE
-static uint8_t s_decOn;
+/* 开关请求由慢环发出（s_decReq：0 无，1 关，2 开），快环在 PI 之前执行：把前馈量
+ * 搬进/搬出积分器和"前馈开关"在同一拍里完成，不会被中断打断成半截。 */
+static volatile uint8_t s_decOn, s_decReq;
 /* vd_ff = -w*Lq*iq，vq_ff = w*psi_f + w*Ld*id（指令电流，Q15 电压） */
 static __forceinline void decoupleFF(const FOC_TypeDef *f, int32_t *ffd, int32_t *ffq)
 {
@@ -76,7 +86,17 @@ static __forceinline void decoupleFF(const FOC_TypeDef *f, int32_t *ffd, int32_t
 
 void FocCore_SetDecouple(FOC_TypeDef *f, uint8_t on)
 {
+    (void)f;
+    s_decReq = on ? 2 : 1;
+}
+
+static __forceinline void applyDecoupleRequest(FOC_TypeDef *f)
+{
+    uint8_t on;
     int32_t ffd, ffq;
+    if (!s_decReq) return;
+    on = (uint8_t)(s_decReq - 1);
+    s_decReq = 0;
     if (on == s_decOn) return;
     decoupleFF(f, &ffd, &ffq);
     if (on) { f->CurID.qdSum -= ffd << 15; f->CurIQ.qdSum -= ffq << 15; }
@@ -84,7 +104,7 @@ void FocCore_SetDecouple(FOC_TypeDef *f, uint8_t on)
     s_decOn = on;
 }
 
-void FocCore_ResetDecouple(void) { s_decOn = 0; }
+void FocCore_ResetDecouple(void) { s_decReq = 0; s_decOn = 0; }
 #else
 void FocCore_SetDecouple(FOC_TypeDef *f, uint8_t on) { (void)f; (void)on; }
 void FocCore_ResetDecouple(void) { }
@@ -94,14 +114,17 @@ void FocCore_DqPI(FOC_TypeDef *f)
 {
     int32_t t, ffd = 0, ffq = 0, vd, lim;
 #if CTRL_DQ_DECOUPLE
+    applyDecoupleRequest(f);
     if (s_decOn) decoupleFF(f, &ffd, &ffq);
 #endif
+#if (STARTUP_MODE == STARTUP_VENDOR)
     if (eM1_RunSubState == RunState_Startup) {
         t = (int32_t)f->sIdq_cmd.s16Q * -2000;
         if (t < -32767000) t = -32767000;
         else if (t > 32767000) t = 32767000;
         f->CurID.qdSum = t;
     }
+#endif
     /* 前馈为 0 时与原厂逐位相同：PI 输出范围 = 电压限幅 - 前馈 */
     f->CurID.qOutMax = f->s16VMAX - ffd;
     f->CurID.qOutMin = -f->s16VMAX - ffd;

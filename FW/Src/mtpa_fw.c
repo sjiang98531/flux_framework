@@ -8,6 +8,24 @@ MtpaFw_TypeDef gMtpaFw;
 
 #if MTPA_FW_ACTIVE
 
+/* 电流圆给出的 iq 上限，写到"产生 iq 的那个环"的输出限幅上（防积分饱和）：
+ *   SPEED_LOOP：速度 PI（功率环在这里只是母线电流限，只许往下拉，不动它的上限）
+ *   POWER_LOOP：功率 PI；速度环在这里只是限速器（输出上限保持 0，只改下限）
+ *   TORQUE_LOOP：没有 PI，iq 直接限幅即可 */
+static void setIqLimit(int32_t lim)
+{
+#if (CLOSE_LOOP == SPEED_LOOP)
+    FOC.Speed.qOutMax = lim;
+    FOC.Speed.qOutMin = -lim;
+#elif (CLOSE_LOOP == POWER_LOOP)
+    FOC.Power.qOutMax = lim;
+    FOC.Power.qOutMin = -lim;
+    FOC.Speed.qOutMin = -lim;
+#else
+    (void)lim;
+#endif
+}
+
 void MtpaFw_Init(void)
 {
     gMtpaFw.idMtpa = 0;
@@ -22,8 +40,7 @@ void MtpaFw_Reset(void)
 {
     MtpaFw_Init();
     FOC.sIdq_cmd.s16D = 0;
-    FOC.Speed.qOutMax = USER.s16IqLimitMax;
-    FOC.Speed.qOutMin = -USER.s16IqLimitMax;
+    setIqLimit(USER.s16IqLimitMax);
 #if MOTOR_IPM
     FluxObs_SetIdRef(0);
 #endif
@@ -84,8 +101,7 @@ void MtpaFw_Slow(void)
     gMtpaFw.iqLimit = (int16_t)iqLim;
     FOC.sIdq_cmd.s16D = (int16_t)id;
     FOC.sIdq_cmd.s16Q = (int16_t)iq;
-    FOC.Speed.qOutMax = iqLim;
-    FOC.Speed.qOutMin = -iqLim;
+    setIqLimit(iqLim);
 #if MOTOR_IPM
     FluxObs_SetIdRef((int16_t)id);
 #endif

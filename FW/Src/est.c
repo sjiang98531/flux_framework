@@ -5,8 +5,29 @@
 
 static int32_t s32StartupSpdRep;    /* test31：Startup 期间上报的限速转速（Q31） */
 
+/* 观测器 + 运行期 PLL 跟踪一拍。返回 PLL 对本拍（采样时刻 k）的角度（鉴相用的
+ * 就是它）；返回时 PLL 已推进到 k+1（f->s16ThetaPLL）。用 s32Theta 而不是
+ * s16ThetaPLL 取 k 时刻角：从原厂 Startup 切进来时 s16ThetaPLL 没有更新过。 */
+int16_t Est_TrackTick(FOC_TypeDef *f)
+{
+    int16_t thK = (int16_t)(f->sPLL.s32Theta >> 16), err;
+    FluxObs_UpdateFeedback(f);
+    err = FluxPLL_PhaseError(sFluxObs.s16PsiRAl, sFluxObs.s16PsiRBe, thK);
+    f->s16ThetaPLL = FluxPLL_Run(err, &f->sPLL);
+    return thK;
+}
+
 void Est_SpinTick(FOC_TypeDef *f)
 {
+#if CTRL_ANGLE_COMP
+    /* Park 用 k 时刻角；反 Park 用 k + CTRL_INVPARK_ADVANCE 拍（电压在下一个 PWM 周期生效） */
+    int16_t thK = Est_TrackTick(f);
+    f->s16ThetaComp = 0;
+    f->s16CmdTheta = thK + f->s16ErrTheta;
+    f->s16CmdTheta_Update = f->s16CmdTheta + FluxPLL_StepQ15(&f->sPLL, INVPARK_ADV_Q8);
+    f->FluxFeedback.s16Speed = f->sPLL.s32Speed >> 16;
+#else
+    /* 原厂时序：Park 和反 Park 都用 PLL 推进到 k+1 的角度 */
     int16_t err;
 
     FluxObs_UpdateFeedback(f);
@@ -21,6 +42,7 @@ void Est_SpinTick(FOC_TypeDef *f)
 
     f->s16CmdTheta_Update = f->s16CmdTheta + MLIB_Mul_Q15(f->s16SpdFilt, SPEED_TO_THETA);
     f->FluxFeedback.s16Speed = f->sPLL.s32Speed >> 16;
+#endif
 }
 
 void Est_StartupTick(FOC_TypeDef *f)

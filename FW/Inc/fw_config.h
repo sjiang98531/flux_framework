@@ -22,8 +22,11 @@
  * 0xF20E0002  加 MTPA / 弱磁（默认关）与 IPM 有效磁链观测（MOTOR_IPM=1 时）；默认配置行为不变
  * 0xF20E0003  按理论取参：电流环 300 Hz + dq 解耦，速度环 0.5 Hz/ζ0.7，PLL 15 Hz/0.707，
  *             自写防溢出 PI，观测器去直流相位补偿，电流零点 256 点。不再与 test33 逐位相同
+ * 0xF20E0004  代码审核后的修复：I/F 开环启动（STARTUP_MODE，可切回原厂）、相位补偿只在
+ *             Spin、角度时序补偿、PLL 增益溢出检查、POWER_LOOP 下 MTPA/弱磁限幅、
+ *             解耦切换移进快环、反转五段式
  * -------------------------------------------------------------------------*/
-#define FW_BUILD_TAG            0xF20E0003UL
+#define FW_BUILD_TAG            0xF20E0004UL
 #define FLUXPLL_BUILD_TAG       FW_BUILD_TAG
 
 #define FW_PI                   3.14159265358979
@@ -87,6 +90,41 @@
 /* 去直流高通的截止角频率 wc = fs / 2^SH（rad/s），换成 Q15 速度单位；补偿起点 */
 #define HPF_WC_Q15SPD           ((int32_t)((double)PWM_FREQ / (double)(1L << FLUX_HPF_SH) / W_EMAX_RAD_S * 32768.0 + 0.5))
 #define HPF_COMP_W0_Q15SPD      ((int32_t)(FLUX_HPF_COMP_MIN_RPM / SPEED_MAX * 32768.0))
+
+/* ---- 角度时序补偿 --------------------------------------------------------- */
+#define INVPARK_ADV_Q8          ((int32_t)(CTRL_INVPARK_ADVANCE * 256.0 + 0.5))
+
+/* ---- I/F 开环启动 ---------------------------------------------------------- */
+#define IF_ALIGN_ID_Q15         Q15(IF_ALIGN_A / I_MAX)
+#define IF_ALIGN_STEP_Q15       ((int16_t)(IF_ALIGN_RAMP_A_S / I_MAX / SLOWLOOP_FREQ * 32768.0 + 0.5))   /* 每慢环拍 */
+/* 定位阻尼增益（A/V）：摆的刚度 K = 1.5*p^2*psi_f*I（N·m/rad，机械角），
+ * J = 1.5*p*psi_f*60/(2*pi*b)；B = 2*zeta*sqrt(K*J)；iq = -B*w_m/(1.5*p*psi_f)，
+ * 反电势 e_q = p*psi_f*w_m  ->  iq = -[B/(1.5*p^2*psi_f^2)] * e_q。换成 Q15 电流/Q15 电压，Q8 */
+#define IF_ALIGN_K_NM           (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * IF_ALIGN_A)
+#define IF_ALIGN_J              (1.5 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * 60.0 / (2 * FW_PI * MOTOR_ACC_RPM_S_PER_A))
+/* sqrt(K*J) 要开方，在 Startup_Init 里算一次：gain_q8 = IF_ALIGN_C1 * sqrt(K*J) */
+#define IF_ALIGN_C1             (2 * IF_ALIGN_ZETA / (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * MOTOR_PSI_F_WB) \
+                                 * UDC_MAX / I_MAX * 256.0)
+#define IF_ALIGN1_TICKS         ((uint16_t)(IF_ALIGN1_S * SLOWLOOP_FREQ))
+#define IF_ALIGN2_TICKS         ((uint16_t)(IF_ALIGN2_S * SLOWLOOP_FREQ))
+/* 第一段定位角 120°（Q15 角度）。必须落在某一相的轴线上（0/60/120°...）：在 30/90/150°
+ * 等位置有一相电流正好为 0，死区让这一相的电压来回跳（零电流钳位），正好吞掉 q 轴上的
+ * 反电势，阻尼环看不到转子在动（仿真里 90° 时阻尼完全失效）。 */
+#define IF_ALIGN1_THETA         21845
+#define IF_ALIGN_SWEEP_TICKS    ((uint16_t)(IF_ALIGN_SWEEP_S * SLOWLOOP_FREQ))
+#define IF_ALIGN2_MAX_TICKS     ((uint16_t)(IF_ALIGN2_MAX_S * SLOWLOOP_FREQ))
+#define IF_ALIGN_STILL_TICKS    ((uint16_t)(IF_ALIGN_STILL_S * SLOWLOOP_FREQ))
+/* "静止"门限：反电势 p*psi_f*w_m（Q15 电压） */
+#define IF_ALIGN_STILL_EMF_Q15  ((int32_t)(IF_ALIGN_STILL_RPM * 2 * FW_PI / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB / UDC_MAX * 32768.0 + 0.5))
+#define IF_IQ_Q15               Q15(IF_CURRENT_A / I_MAX)
+#define IF_ACC_STEP_Q31         ((int32_t)(IF_ACC_RPM_S / SPEED_MAX / PWM_FREQ * 2147483648.0))      /* 每快环拍 */
+#define IF_HANDOVER_Q31         ((int32_t)(IF_HANDOVER_RPM / SPEED_MAX * 2147483648.0))
+#define IF_SPIN_MIN_Q15         Q15(IF_SPIN_MIN_RPM / SPEED_MAX)
+#define IF_FALLBACK_Q15         Q15(IF_FALLBACK_RPM / SPEED_MAX)
+#define IF_WARM_MAX_Q31         ((int32_t)(1.5 * IF_FALLBACK_RPM / SPEED_MAX * 2147483648.0))
+#define IF_AGREE_Q15            Q15(IF_AGREE_RATIO)
+#define IF_AGREE_TICKS          ((uint16_t)(IF_AGREE_S * SLOWLOOP_FREQ))
+#define IF_TIMEOUT_TICKS        ((uint16_t)(IF_TIMEOUT_S * SLOWLOOP_FREQ))
 
 /* ---- FluxPLL ------------------------------------------------------------- */
 /* err = |psi|*sin(dtheta)，鉴相增益 Kd = FLUX_NOMINAL_Q15（LSB/rad）；

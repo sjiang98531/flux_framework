@@ -11,6 +11,10 @@
 #include "fw_config.h"
 #include "vendor_lib.h"
 
+/* 观测器 + 运行期 PLL 跟踪一拍，不写 s16CmdTheta（I/F 拖动期间用）。
+ * 返回采样时刻 k 的 PLL 角；返回时 PLL 已推进到 k+1。 */
+int16_t Est_TrackTick(FOC_TypeDef *f);
+
 /* Spin（闭环运行）：观测器 + 运行期 PLL + 角度合成（原 PMSM_Obs） */
 void Est_SpinTick(FOC_TypeDef *f);
 

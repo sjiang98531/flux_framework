@@ -39,6 +39,13 @@
  * 只是带宽只比电机自身极点 R/L ≈ 51 Hz 快一点，高速和弱磁时不够）。 */
 #define CURRENT_BW_HZ           300.0
 #define CURRENT_OUTMAX          (3000)      /* 原厂初值（运行中被 VMAX 覆盖） */
+/* 角度时序补偿（只在闭环 Spin / 飞车 Torqueloop 里）：
+ *   Park 用采样时刻 k 的估计角；反 Park 用 k + CTRL_INVPARK_ADVANCE 拍的角度
+ *   （本拍算的电压下一个 PWM 周期才生效，作用区间中点在 k+1.5）。
+ * 0 = 原厂：两者都用 PLL 已经推进到 k+1 的角度（Park 超前一拍、反 Park 滞后半拍，
+ *   2600 rpm 时一拍 = 4.9°）。 */
+#define CTRL_ANGLE_COMP         1
+#define CTRL_INVPARK_ADVANCE    1.5         /* PWM 周期 */
 /* dq 解耦前馈（只在 Spin 里）：vd_ff = -w*Lq*iq，vq_ff = w*(Ld*id + psi_f)。
  * 电流环只需要处理残差，高速/弱磁时 d、q 不再互相拖。进出 Spin 时把前馈量
  * 搬进/搬出积分器，无扰切换。0 = 原厂（无前馈）。 */
@@ -47,7 +54,9 @@
 /* ===================== 速度环 ============================================ */
 /* 被控对象 d(rpm)/dt = MOTOR_ACC_RPM_S_PER_A * iq，PI 闭环成二阶：
  *   Kp = 2*zeta*wn / b，Ki = wn^2 / b（b = MOTOR_ACC_RPM_S_PER_A）。
- * 理论取值：zeta = 0.7（过冲约 5%）；带宽受 PLL（15 Hz）、转速滤波（8 ms）限制，
+ * 注意闭环传函带一个零点（Ki/Kp = wn/(2*zeta)），阶跃给定时过冲比"纯二阶 zeta=0.7
+ * 的 5%"大，约 20%；实际给定走斜坡 + 加速度前馈，过冲几乎看不到（仿真 < 1 rpm）。
+ * 理论取值：zeta = 0.7；带宽受 PLL（15 Hz）、转速滤波（8 ms）限制，
  * 上限约 3 Hz，风机负载平稳取 0.5 Hz（Kp 115582、Ki 259，需要 CTRL_OWN_PI = 1）。
  * 原厂/test33：0.3105 Hz / 0.078025（8000/100）—— 阻尼极小，台架上 3.2 s 周期
  * 振荡、+80~110 rpm 过冲就是它（smo_baseline 同样如此）。
@@ -74,6 +83,62 @@
 #define SPEED_RAMP_DOWN         200.0
 #define POWER_RAMP_UP           100.0       /* W/s */
 #define POWER_RAMP_DOWN         100.0
+
+/* ===================== 启动方式 ============================================ */
+/* STARTUP_VENDOR：原厂 Fast Boot。Align 只打 1 ms（转子其实没被定住），观测器从
+ *   Startup 第一拍就闭环。零速附近反电势（10 rpm 约 0.7 V）远小于死区/电阻误差
+ *   （约 3 V），能不能起来取决于这些误差恰好怎么抵消（仿真：随死区 0~1.2 us、Rs ±10%
+ *   成功率在 0/8 ~ 8/8 之间跳）。test33 用的就是它。
+ * STARTUP_IF：两段定位 -> 开环 I/F 拖动（电流矢量按给定加速度旋转，不看观测器）
+ *   -> 拖到 IF_HANDOVER_RPM，观测器转速与开环转速一致后，按"转矩不变"切到闭环 Spin。
+ *   观测器在拖动期间一直在跑（只是不用），切换时已经收敛。 */
+#define STARTUP_VENDOR          0
+#define STARTUP_IF              1
+#define STARTUP_MODE            STARTUP_IF
+
+/* ---- I/F 参数（STARTUP_MODE = STARTUP_IF 时用） ---- */
+/* 定位：d 轴电流斜坡到 IF_ALIGN_A，先在 120° 打 IF_ALIGN1_S（转子从任意位置被拉过来），
+ * 再把定位角在 IF_ALIGN_SWEEP_S 内慢慢转到 0°（转子跟着走，不像 90° 阶跃那样再激起
+ * 摆动），最后在 0° 等转子停稳。两段是为了避开转子正好在 180° 的死点。
+ * 本电机 J ≈ 0.02 kg·m²，0.6 A 下转子摆动周期约 0.5 s。 */
+#define IF_ALIGN_A              0.6         /* A */
+#define IF_ALIGN_RAMP_A_S       3.0         /* A/s，定位电流上升斜率 */
+#define IF_ALIGN1_S             0.6         /* s */
+#define IF_ALIGN_SWEEP_S        0.3         /* s，120° -> 0° 的转动时间 */
+#define IF_ALIGN2_S             0.2         /* s，转到 0° 之后最短保持时间 */
+/* 第二段结束条件：打满 IF_ALIGN2_S 后，转子转速（由反电势估计）低于 IF_ALIGN_STILL_RPM
+ * 持续 IF_ALIGN_STILL_S 才开始拖；最长 IF_ALIGN2_MAX_S（到了就直接拖）。 */
+#define IF_ALIGN_STILL_RPM      5.0
+#define IF_ALIGN_STILL_S        0.1
+#define IF_ALIGN2_MAX_S         2.0         /* s，第二段（含转动）最长时间 */
+/* 定位阻尼：电流闭环的定位等于一个无阻尼单摆（本电机周期约 0.5 s，风机低速几乎没有
+ * 摩擦），转子会一直来回摆，拖动开始时转子还在动就容易失步（仿真：8 个初始角里 3 个
+ * 必失败）。q 轴反电势正比于转子转速，按它反向给一点 q 轴电流就是阻尼器。
+ * IF_ALIGN_ZETA 是摆的阻尼比，0 = 不加。不能太大：反电势要减 Rs*iq，Rs 配置误差
+ * 构成正反馈，环路增益 ≈ 10*zeta*(Rs 误差)，0.25 时能容忍约 ±40% 的 Rs 误差。 */
+#define IF_ALIGN_ZETA           0.25
+/* 拖动：电流 IF_CURRENT_A 沿开环角方向，开环转速以 IF_ACC_RPM_S 加速到 IF_HANDOVER_RPM 后保持。
+ * 加速度要留够余量：0.6 A 最多产生约 300 rpm/s（MOTOR_ACC_RPM_S_PER_A * 0.6）。
+ * 切换转速要让反电势远大于电压误差：150 rpm 时约 11 V。 */
+#define IF_CURRENT_A            0.6         /* A */
+#define IF_ACC_RPM_S            100.0       /* rpm/s */
+#define IF_HANDOVER_RPM         150.0       /* rpm */
+/* 闭环运行的最低指令转速：|指令| 低于它时电机以指令转速开环（I/F）运行。
+ * 闭环可以跑到比切换转速更低（仿真 80 rpm 角度误差约 2°），所以这里比 IF_HANDOVER_RPM 低。 */
+#define IF_SPIN_MIN_RPM         60.0        /* rpm */
+/* 闭环 -> I/F 的回退转速：指令反向或 |指令| < IF_SPIN_MIN_RPM 时，Spin 减速到这里就交给
+ * I/F（此时观测器还锁着，交接角准），由开环带过零、反向后再切回闭环。
+ * 为什么比切换转速高：减速制动时反电势和 Rs*i 方向相反、端电压只有几伏，死区误差
+ * （约 3 V）占比大，观测器在 200 rpm 以下就开始失准（仿真：反向制动到 160 rpm 时磁链
+ * 幅值掉一半、角度误差 9°）；加速时两者同向，150 rpm 没问题。
+ * 回退只看指令（反向 / 低于 IF_SPIN_MIN_RPM），切换只在指令同向且 >= IF_SPIN_MIN_RPM
+ * 时发生，两者互斥，阈值高低不会来回跳。 */
+#define IF_FALLBACK_RPM         250.0       /* rpm */
+/* 切换判据：|观测器转速(滤波) - 开环转速| < IF_AGREE_RATIO * 开环转速，连续 IF_AGREE_S */
+#define IF_AGREE_RATIO          0.15
+#define IF_AGREE_S              0.1         /* s */
+/* 到达切换转速后 IF_TIMEOUT_S 内还没一致 -> 报堵转故障（之后按原厂规则自动重启） */
+#define IF_TIMEOUT_S            2.0         /* s */
 
 /* ===================== 启动（原厂 Fast Boot 流程，参数全是原厂值） ======= */
 #define FAST_BOOT_METHOD        1           /* 1 = 原厂快速启动（观测器从 Startup 第一拍就闭环） */
@@ -137,6 +202,9 @@
  * 不补，到 2 倍该转速线性补满。0 = 不补（test33）。 */
 #define CTRL_OBS_HPF_COMP       1
 #define FLUX_HPF_COMP_MIN_RPM   20.0
+/* 补偿用的转速：只在 Spin 用 PLL 转速；I/F 拖动时用开环转速（转子同步，比估计可靠）；
+ * 原厂 Startup / Torqueloop 不补。原因：Startup 期间 PLL 转速可能虚高（实测仿真
+ * 55 rpm 对真实 10 rpm），按它算的补偿角是错的，会把启动拖差（0xF20E0003 的问题）。 */
 
 /* ===================== FluxPLL =========================================== */
 /* 二阶锁相环：wn、zeta 是"按 MOTOR_PSI_F_WB 计算"的真实环路参数。
@@ -162,6 +230,10 @@
 #define FW_KI_A_PER_S           50.0
 #define FW_ID_MIN_A             (-2.0)      /* 弱磁 id 下限，A（受退磁电流、效率约束，按电机定） */
 /* 电流圆：|i| <= SPD_PI_LIMIT。有 id 时 iq 上限自动缩成 sqrt(Imax^2 - id^2)。 */
+
+/* ===================== 原厂 bug 修复（0 = 保持原厂行为） ===================== */
+/* 七段/五段式切换：原厂用 s16SpdFilt < 640 rpm 判断，没取绝对值，反转时永远七段式 */
+#define CTRL_FIX_PWMMODE_ABS    1
 
 /* ===================== 其他 ============================================== */
 #define SPEEDUPDATE_FREQ        100         /* Hz */

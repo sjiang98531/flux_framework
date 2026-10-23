@@ -13,7 +13,9 @@ typedef struct {
     uint32_t inputSatCount, fluxSatCount;
     uint32_t buildTag;                 /* = FW_BUILD_TAG */
     /* ---- flux_framework 新增 ---- */
-    uint16_t cfgWarn;                  /* 配置检查：bit0 = MOTOR_IPM=0 但 Ld != Lq；bit1 = 电流环增益超 65535 被封顶 */
+    uint16_t cfgWarn;                  /* 配置检查：bit0 = MOTOR_IPM=0 但 Ld != Lq；bit1 = 电流环增益超 65535 被封顶；
+                                        * bit2 = PLL 增益/角度增益超 int16 被封顶（PLL 带宽太高或 psi_f 太小）；
+                                        * bit3 = SPEED_MAX 下反电势超过电压基准（DEC_K_EMF 饱和） */
     int16_t  confidence;               /* 观测器置信度 Q15：1 - | |psi_r| - 目标 | / 目标（慢环算） */
 } FluxDiag_TypeDef;
 

@@ -34,6 +34,9 @@ void FluxPLL_Init(PLL_TypeDef *p);
 /* 鉴相：转子磁链与当前估计角的叉积 */
 int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta);
 
+/* 按当前 PLL 转速，advQ8/256 拍对应的角度增量（Q15 角度，带符号）。角度时序补偿用 */
+int16_t FluxPLL_StepQ15(const PLL_TypeDef *p, int32_t advQ8);
+
 /* 运行期 PLL，返回 Q15 角度 */
 int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p);
 

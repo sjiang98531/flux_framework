@@ -2,6 +2,7 @@
 #include "fw_config.h"
 #include "Hardware_config.h"
 #include "flux_obs.h"
+#include "foc_core.h"
 
 volatile FluxDiag_TypeDef gFluxDiag;
 
@@ -18,6 +19,10 @@ void Diag_Init(void)
 #endif
     if (CURRENT_KP_D > 65535 || CURRENT_KP_Q > 65535 || CURRENT_KI_D > 65535 || CURRENT_KI_Q > 65535)
         gFluxDiag.cfgWarn |= 2u;        /* 电流环带宽太高，增益被封顶 */
+    if (FLUXPLL_KP_Q31_PER_ERR > 32767 || FLUXPLL_KI_Q31_PER_ERR > 32767 || SPEED_TO_THETA >= 32767)
+        gFluxDiag.cfgWarn |= 4u;        /* PLL 增益放不进 int16（FluxPLL_Init 已封顶，带宽会变低） */
+    if (W_EMAX_RAD_S * MOTOR_PSI_F_WB / UDC_MAX >= 1.0)
+        gFluxDiag.cfgWarn |= 8u;
 }
 
 void Diag_IsrTiming(uint32_t start, uint32_t end)

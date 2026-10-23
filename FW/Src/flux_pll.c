@@ -19,8 +19,10 @@ volatile FluxPLL_Diag_TypeDef gFluxPLLDiag;
 
 void FluxPLL_Init(PLL_TypeDef *p)
 {
-    p->s16PGain    = FLUXPLL_KP_Q31_PER_ERR;
-    p->s16IGain    = FLUXPLL_KI_Q31_PER_ERR;
+    /* 字段是 int16：超了就封顶（不封顶会回绕成负增益，PLL 正反馈发散）。
+     * 封顶时 gFluxDiag.cfgWarn bit2 置位（diag.c）。 */
+    p->s16PGain    = FLUXPLL_KP_Q31_PER_ERR > 32767 ? 32767 : FLUXPLL_KP_Q31_PER_ERR;
+    p->s16IGain    = FLUXPLL_KI_Q31_PER_ERR > 32767 ? 32767 : FLUXPLL_KI_Q31_PER_ERR;
     p->i16PGainSh  = 0;
     p->i16IGainSh  = 0;
     p->s16ThGain   = (int16_t)SPEED_TO_THETA;
@@ -72,6 +74,13 @@ static __forceinline int16_t advance(PLL_TypeDef *p, int32_t kpTerm, int32_t kiT
     gFluxPLLDiag.speedLast = (int16_t)(p->s32Speed >> 16);
     gFluxPLLDiag.thetaLast = (uint16_t)(p->s32Theta >> 16);
     return (int16_t)(p->s32Theta >> 16);
+}
+
+int16_t FluxPLL_StepQ15(const PLL_TypeDef *p, int32_t advQ8)
+{
+    /* 一拍角度增量（Q16.16）* advQ8/256，取高 16 位。先 >>8 防溢出 */
+    int32_t step = angleStep(p->s32Speed, p->s16ThGain);
+    return (int16_t)(((step >> 8) * advQ8) >> 16);
 }
 
 int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p)

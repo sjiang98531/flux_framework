@@ -155,11 +155,22 @@ void Ctrl_FastTick(void)
     gFluxDiag.runState = (uint16_t)eM1_RunSubState;
 }
 
+/* 观测器去直流相位补偿用的转速：Spin 用 PLL 转速；I/F 拖动用开环转速（转子同步）；
+ * 其余（原厂 Startup、飞车 Torqueloop、停机）不补——那时 PLL 转速不可信。 */
+static int16_t compSpeed(void)
+{
+    if (eM1_MainState != MainState_Run) return 0;
+    if (eM1_RunSubState == RunState_Spin) return (int16_t)(FOC.sPLL.s32Speed >> 16);
+#if (STARTUP_MODE == STARTUP_IF)
+    if (eM1_RunSubState == RunState_Startup) return Startup_IfSpeedQ15();
+#endif
+    return 0;
+}
+
 void Ctrl_SlowTick(void)
 {
     s_STATE_SLOW[eM1_MainState]();
-    /* 观测器去直流的相位补偿跟随 PLL 转速（关闭时空函数） */
-    FluxObs_SetSpeed(eM1_MainState == MainState_Run ? (int16_t)(FOC.sPLL.s32Speed >> 16) : 0);
+    FluxObs_SetSpeed(compSpeed());      /* 关闭补偿时是空函数 */
     Diag_SlowTick();
 }
 
@@ -320,7 +331,11 @@ static void M1_RunSpinFast(void)
     FOC.sProtect.u32Ic_Integral += MLIB_Abs_Q15(FOC.sIabc.s16C);
 
     /* 低速七段式，高速（> 0.2 * SPEED_MAX = 640 rpm）五段式 */
-    FocCore_Modulate(&FOC, (FOC.s16SpdFilt < Q15(0.2)) ? SEVENMODE : FIVEMODE);
+#if CTRL_FIX_PWMMODE_ABS
+    FocCore_Modulate(&FOC, (abs(FOC.s16SpdFilt) < Q15(0.2)) ? SEVENMODE : FIVEMODE);
+#else
+    FocCore_Modulate(&FOC, (FOC.s16SpdFilt < Q15(0.2)) ? SEVENMODE : FIVEMODE);   /* 原厂：反转永远七段 */
+#endif
 }
 
 static void M1_RunSpinSlow(void)
@@ -336,6 +351,12 @@ static void M1_RunSpinSlow(void)
     /* 回退到 Startup 的两条路：
      *  1) 同向时每 DetcTime 拍查一次 Fast_Boot_Spin（filt 掉到 40 rpm 以下）
      *  2) 反向（指令与 filt 异号）且 |filt| < 50 rpm：立即回退 */
+#if (STARTUP_MODE == STARTUP_IF)
+    /* I/F 模式：低速区（含过零反向）归开环管，在观测器还锁着的转速就交回去 */
+    if (Startup_IfWantsFallback()) {
+        Sup_SwitchSpinStartup();
+    } else
+#endif
     if (MLIB_Mul_Q15(FOC.s16SpdCmd, FOC.s16SpdFilt) > 0) {
         if (++s_u16SpinCheckTime >= FastBoot_Para.DetcTime) {
             s_u16SpinCheckTime = 0;
@@ -396,6 +417,7 @@ void Sup_SwitchChargeCalib(void)
 
 void Sup_SwitchCalibAlign(void)
 {
+    Startup_OnEnterAlign();         /* I/F：定位计时、角度清零；原厂模式空函数 */
     eM1_RunSubState = RunState_Align;
     DISABLE_PWMOUT();
     PWMABC_Enb;
@@ -425,6 +447,7 @@ void Sup_SwitchCalibTorqueloop(void)
 void Sup_SwitchAlignStartup(void)
 {
     Est_OnEnterStartupCold(&FOC);
+    Startup_OnEnterIF(0);           /* I/F：从定位角、零速开始拖；原厂模式空函数 */
     eM1_RunSubState = RunState_Startup;
     SpeedCtrl_UseStartupRamp();
 }
@@ -432,29 +455,32 @@ void Sup_SwitchAlignStartup(void)
 void Sup_SwitchStartupSpin(void)
 {
     SpeedCtrl_OnEnterSpin();
-    FocCore_SetDecouple(&FOC, 1);
     FOC.sProtect.u16PhaselessTimeCnt = 0;
     FOC.s16PreSpdCmd = FOC.s16SpdCmd;
     eM1_RunSubState = RunState_Spin;
     s_u16SpinCheckTime = 0;
+    /* 先切状态再请求解耦：快环在 Spin 的第一拍里搬前馈量。反过来的话，请求可能在
+     * 还是 Startup 的那一拍执行，d 轴积分器随即被原厂启动预置覆盖，搬进去的量丢掉。 */
+    FocCore_SetDecouple(&FOC, 1);
 }
 
 void Sup_SwitchTorqueloopSpin(void)
 {
     SpeedCtrl_OnEnterSpin();
-    FocCore_SetDecouple(&FOC, 1);
     FOC.s16ErrTheta = 0;
     FOC.sProtect.u16PhaselessTimeCnt = 0;
     FOC.s16PreSpdCmd = FOC.s16SpdCmd;
     if ((MLIB_Mul_Q15(FOC.s16SpdFilt, FOC.s16SpdCmd)) < 0)
         USER.u16SpinToStartCnt = 20000;
     eM1_RunSubState = RunState_Spin;
+    FocCore_SetDecouple(&FOC, 1);
 }
 
 void Sup_SwitchSpinStartup(void)
 {
     MtpaFw_Reset();         /* 回到原厂启动：id = 0 */
     FocCore_SetDecouple(&FOC, 0);
+    Startup_OnEnterIF(1);           /* I/F：从当前估计角/转速接管开环拖动（必须在切状态之前）；原厂模式空函数 */
     eM1_RunSubState = RunState_Startup;
     Est_OnEnterStartupFromSpin(&FOC);       /* 转子还在转：上报转速从当前值开始 */
     USER.sSpeedRamp.s32State = FOC.s16SpdFilt << 16;
