@@ -17,6 +17,7 @@
   - 调性能改 `FW/Inc/cfg_ctrl.h`，填带宽 Hz、阻尼。
   - 换驱动板改 `FW/Inc/cfg_board.h`、`Board/`、`FW/Src/hal_sc32r602.c`。
   - 定点增益在 `FW/Inc/fw_config.h` 里自动算。
+- **启动（0xF20E0004）**：默认 I/F 开环启动（定位 → 开环拖到 150 rpm → 转矩不变切闭环）；低速区和过零反向也交给 I/F。`STARTUP_MODE = STARTUP_VENDOR` 退回原厂 Fast Boot。
 - **参数按理论取值（0xF20E0003）**：
   - 电流环 300 Hz + dq 解耦
   - 速度环 0.5 Hz / ζ0.7
@@ -29,6 +30,7 @@
   - 0xF20E0001：重构
   - 0xF20E0002：加 MTPA / 弱磁
   - 0xF20E0003：按理论取参
+  - 0xF20E0004：代码审核后的修复（I/F 启动、角度时序等，见 `重构说明.md` 第 0.1 节）
 - **闭源库约束**：
   - `FOC_TypeDef / USER_TypeDef` 的字段布局不能改。
   - `FOC / USER / FastBoot_Para / pwm_gen / eM1_RunSubState` 这些名字不能改。
@@ -43,3 +45,4 @@
 | `p1-refactor` | 模块化重构，行为不变 |
 | `p2-mtpa-fw` | MTPA / 弱磁 / IPM 有效磁链（默认关），行为仍 = test33 |
 | `p3-theory` | 按理论取参（0xF20E0003） |
+| `p4-review` | 代码审核后的修复（0xF20E0004） |

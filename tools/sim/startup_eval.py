@@ -9,7 +9,7 @@ def one(b, th, td, ofs):
     r = list(csv.DictReader(open(fn))); os.remove(fn)
     spin = [float(x['t']) for x in r if x['run'] == '4' and x['main'] == '3']
     fault = any(x['main'] == '0' for x in r if float(x['t']) > 0.3)
-    return (spin[0] - 0.2) if (spin and spin[0] < 3.0 and not fault) else None
+    return (spin[0] - 0.2) if (spin and spin[0] < 5.0 and not fault) else None
 for b in sys.argv[1:]:
     res = [one(b, th / 16 * 6.2832, td, ofs) for th, td, ofs in itertools.product(range(16), [0, 0.1e-6, 0.2e-6, 0.3e-6], [0, 3])]
     ok = [x for x in res if x is not None]

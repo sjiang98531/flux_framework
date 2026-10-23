@@ -89,6 +89,7 @@ void plant_step(Plant *p, double dt)
             double va = vu - vn, vb = (vv - vw) / sqrt(3.0);
             double valpha = va, vbeta = vb;
             double vd = valpha * c + vbeta * s, vq = -valpha * s + vbeta * c;
+            p->dbgVd = vd; p->dbgVq = vq;
             double did = (vd - p->res * p->id + we * p->lQ * p->iq) / p->lD;
             double diq = (vq - p->res * p->iq - we * (p->lD * p->id + p->psi)) / p->lQ;
             p->id += did * h; p->iq += diq * h;

@@ -69,3 +69,6 @@ CSV 每 1 ms 一行，列含义：
 | `SIM_NOISE=4` | ADC 噪声幅值，LSB（默认 1） |
 | `SIM_TD=1.0e-6` | 等效死区，秒（默认 0.2 µs，板子名义 1.2 µs） |
 | `SIM_KR` / `SIM_KL` / `SIM_KPSI` / `SIM_KJ` | 电机实际 Rs / L / ψf / J = 标称 × 系数（控制器仍按标称） |
+| `SIM_DBG=<秒>` | 从该时刻起 0.2 s，每 1 ms 往 stderr 打电机侧 dq 电流/电压/反电势和固件侧角度、dq 电压电流 |
+
+`python3 tools/sim/startup_stress.py build/sim_legacy build/sim_new` 跑 0xF20E0004 的启动压力扫描：上面这些条件各取几档 × 8 个初始角（`SIM_TH0`），全部带 `SIM_PWMDLY=1`，看 8 s 内是否进闭环、无故障、转速到 900 rpm 以上。

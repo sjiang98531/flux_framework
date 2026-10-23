@@ -16,7 +16,7 @@ def startup(binp, ipm=0):
         d = run(binp, 3, 6, {'SIM_TH0': str(th), 'SIM_TD': str(td)}, ipm); n += 1
         spin = [t for t, r, m in zip(d['t'], d['run'], d['main']) if r == 4 and m == 3]
         fault = any(m == 0 for t, m in zip(d['t'], d['main']) if t > 0.3)
-        if spin and spin[0] < 3.0 and not fault:
+        if spin and spin[0] < 5.0 and not fault:
             ok += 1; times.append(spin[0] - 0.2)
             after = [r for t, r in zip(d['t'], d['run']) if t > spin[0]]
             if 3 in after: fb += 1

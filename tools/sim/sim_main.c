@@ -127,6 +127,9 @@ int main(int argc, char **argv)
             h = fnv(h, buf, n);
             fwrite(&h, 8, 1, hf);
         }
+        if (getenv("SIM_DBG") && (k & 15) == 0 && t > atof(getenv("SIM_DBG")) && t < atof(getenv("SIM_DBG")) + 0.2)
+            fprintf(stderr, "%.4f plant id %.3f iq %.3f we %.2f vd %.2f vq %.2f emf %.2f | fw cmdTh %d vdq %d %d idq %d %d\n", t, pl.id, pl.iq, pl.wm * pl.pp,
+                    pl.dbgVd, pl.dbgVq, pl.wm * pl.pp * pl.psi, FOC.s16CmdTheta, FOC.sVdq.s16D, FOC.sVdq.s16Q, FOC.sIdq.s16D, FOC.sIdq.s16Q);
         if ((k & 15) == 0) {
             double thFw = (120.0 / 180.0 * M_PI) - plant_theta_e(&pl);
             double thHat = (double)(uint16_t)FOC.s16CmdTheta / 65536.0 * 2 * M_PI;
