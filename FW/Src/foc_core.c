@@ -3,12 +3,13 @@
 #include "ctrl_globals.h"
 #include "ctrl_pi.h"
 #include "supervisor.h"
+#include "svpwm.h"
 
 void FocCore_Init(void)
 {
     /* 电压限幅：VMAX = MAX_DUTY * Vbus * 2/3（FOC_Current_Controller 里每拍算） */
     USER.s16DutyLimitCmd = Q15(MAX_DUTY);
-    /* 母线纹波补偿系数初值（运行中 Var_Filt 用 58116276/VbusAvg 覆盖） */
+    /* 母线归一化系数初值（运行中 Meas_SlowFilter 按 VbusAvg 更新） */
     FOC.s16KVbus = Q15(0.866 * UDC_MAX / UDC_RATE / 4);
 
     /* d 轴电流环（用 Ld） */
@@ -30,7 +31,7 @@ void FocCore_Init(void)
     FOC.CurIQ.qOut = 0;
 
     FOC.s16ThetaComp = 0;
-    /* 原厂 SMO 留下的存储，库只读 s16Speed（Var_Filt） */
+    /* 原厂 SMO 留下的存储，只有 s16Speed 还在用（Meas_SlowFilter 滤成 s16SpdFilt） */
     FOC.FluxFeedback.s16Ealpha_est = 0;
     FOC.FluxFeedback.s16Ebeta_est = 0;
     FOC.FluxFeedback.s16Speed = 0;
@@ -40,33 +41,28 @@ void FOC_Current_Controller(FOC_TypeDef *pFOC)
 {
     int16_t s16Temp;
 
-    pFOC->sAngle_cmd = MLIB_SinCos(pFOC->s16CmdTheta);
+    pFOC->sAngle_cmd = Mc_SinCos(pFOC->s16CmdTheta);
     MCFLIB_Park_S16(&pFOC->sIAlBe, &pFOC->sAngle_cmd, &pFOC->sIdq);
 
     s16Temp = MLIB_Mul_Q15(USER.s16DutyLimitCmd, pFOC->s16VbusAvg);
     pFOC->s16VMAX = MLIB_Mul_Q15(s16Temp, Q15(0.6667));     /* 幅值不变变换 */
 
-#if CTRL_OWN_PI
     FocCore_DqPI(pFOC);
-#else
-    /* 原厂库：d/q 两个 CalcPI + Vq 圆限幅；Startup 子状态下预置 d 轴积分器 */
-    Fast_Boot_Current_Controller(pFOC);
-#endif
 
 #if CTRL_ANGLE_COMP
     /* 反 Park 角（s16CmdTheta_Update）由估计模块按时序补偿给出；相同时省一次查表 */
     if (pFOC->s16CmdTheta_Update != pFOC->s16CmdTheta)
-        pFOC->sAngle_cmd_update = MLIB_SinCos(pFOC->s16CmdTheta_Update);
+        pFOC->sAngle_cmd_update = Mc_SinCos(pFOC->s16CmdTheta_Update);
     else
         pFOC->sAngle_cmd_update = pFOC->sAngle_cmd;
 #else
     pFOC->sAngle_cmd_update = pFOC->sAngle_cmd;
 #endif
     MCFLIB_InvPark_S16(&pFOC->sVdq, &pFOC->sAngle_cmd_update, &pFOC->sVAlBe);
-    DcBus_Ripple_suppress(&pFOC->sVAlBe, pFOC->s16VbusAvg, &pFOC->sVAlBe_cmd);
+    FocCore_BusNormalize(&pFOC->sVAlBe, pFOC->s16KVbus, &pFOC->sVAlBe_cmd);
 }
 
-/* d/q 电流 PI（替代原厂 Fast_Boot_Current_Controller，逻辑按反汇编逐条对应）：
+/* d/q 电流 PI（原厂 Fast_Boot_Current_Controller 的逻辑，自写、防溢出）：
  *   Startup 子状态：d 轴积分器每拍预置成 -2000*iq_cmd（原厂的启动经验值，
  *                   相当于给一个 -omega*Lq*iq 量级的 Vd，保留）
  *   d 轴输出限 ±VMAX；q 轴限 ±sqrt(VMAX^2 - Vd^2)（电压圆，d 轴优先） */
@@ -135,7 +131,7 @@ void FocCore_DqPI(FOC_TypeDef *f)
     f->sVdq.s16D = (int16_t)vd;
 
     t = (int32_t)f->s16VMAX * f->s16VMAX - (int32_t)f->sVdq.s16D * f->sVdq.s16D;
-    lim = Sqrt_Q15(t);
+    lim = Mc_SqrtQ15(t);
     f->CurIQ.qOutMax = lim - ffq;
     f->CurIQ.qOutMin = -lim - ffq;
     f->CurIQ.qInRef = f->sIdq_cmd.s16Q;
@@ -149,8 +145,8 @@ void FocCore_Modulate(const FOC_TypeDef *f, uint8_t mode)
     pwm_gen.Mode = mode;
     pwm_gen.Alpha = f->sVAlBe_cmd.s16Alpha;
     pwm_gen.Beta = f->sVAlBe_cmd.s16Beta;
-    PWM_GEN_calc(&pwm_gen);
-    Update_PWM(&pwm_gen);
+    Svpwm_Calc(&pwm_gen, &f->sIabc, (int16_t *)&FOC.s16Ibusreconstructed);
+    HAL_PwmWriteCompares(&pwm_gen);
 }
 
 void FocCore_ModulateZero(void)
@@ -158,6 +154,6 @@ void FocCore_ModulateZero(void)
     pwm_gen.Mode = SEVENMODE;
     pwm_gen.Alpha = 0;
     pwm_gen.Beta = 0;
-    PWM_GEN_calc(&pwm_gen);
-    Update_PWM(&pwm_gen);
+    Svpwm_Calc(&pwm_gen, &FOC.sIabc, (int16_t *)&FOC.s16Ibusreconstructed);
+    HAL_PwmWriteCompares(&pwm_gen);
 }

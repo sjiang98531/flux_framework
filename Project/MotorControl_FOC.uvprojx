@@ -416,11 +416,6 @@
               <FilePath>..\FW\Src\main.c</FilePath>
             </File>
             <File>
-              <FileName>diag.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\FW\Src\diag.c</FilePath>
-            </File>
-            <File>
               <FileName>supervisor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\supervisor.c</FilePath>
@@ -429,6 +424,16 @@
               <FileName>ctrl_globals.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\ctrl_globals.c</FilePath>
+            </File>
+            <File>
+              <FileName>diag.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\diag.c</FilePath>
+            </File>
+            <File>
+              <FileName>protect.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\protect.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -439,6 +444,11 @@
               <FileName>startup.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\startup.c</FilePath>
+            </File>
+            <File>
+              <FileName>flystart.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\flystart.c</FilePath>
             </File>
             <File>
               <FileName>speed_ctrl.c</FileName>
@@ -486,9 +496,24 @@
               <FilePath>..\FW\Src\foc_core.c</FilePath>
             </File>
             <File>
+              <FileName>svpwm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\svpwm.c</FilePath>
+            </File>
+            <File>
+              <FileName>meas.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\meas.c</FilePath>
+            </File>
+            <File>
               <FileName>mathx.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\mathx.c</FilePath>
+            </File>
+            <File>
+              <FileName>mc_tables.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\mc_tables.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -659,16 +684,6 @@
               <FileName>system_sc32m15xx.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\CMSIS\system_sc32m15xx.c</FilePath>
-            </File>
-          </Files>
-        </Group>
-        <Group>
-          <GroupName>MCI</GroupName>
-          <Files>
-            <File>
-              <FileName>SOC_MCI_2R_V102.lib</FileName>
-              <FileType>4</FileType>
-              <FilePath>..\MCI\Src\SOC_MCI_2R_V102.lib</FilePath>
             </File>
           </Files>
         </Group>

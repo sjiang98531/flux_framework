@@ -16,14 +16,17 @@ INCLUDE_PATH = r'..\FW\Inc;..\Device\src;..\MCI\Inc;..\User\Inc;..\Board\Inc;..\
 # (group name, [paths relative to Project/])
 GROUPS = [
     ('Config',     [r'..\FW\Inc\cfg_motor.h', r'..\FW\Inc\cfg_ctrl.h', r'..\FW\Inc\cfg_board.h', r'..\FW\Inc\fw_config.h']),
-    ('App',        [r'..\FW\Src\main.c', r'..\FW\Src\supervisor.c', r'..\FW\Src\ctrl_globals.c', r'..\FW\Src\diag.c']),
-    ('Control',    [r'..\FW\Src\startup.c', r'..\FW\Src\speed_ctrl.c', r'..\FW\Src\mtpa_fw.c', r'..\FW\Src\identify.c']),
+    ('App',        [r'..\FW\Src\main.c', r'..\FW\Src\supervisor.c', r'..\FW\Src\ctrl_globals.c', r'..\FW\Src\diag.c',
+                    r'..\FW\Src\protect.c']),
+    ('Control',    [r'..\FW\Src\startup.c', r'..\FW\Src\flystart.c', r'..\FW\Src\speed_ctrl.c', r'..\FW\Src\mtpa_fw.c',
+                    r'..\FW\Src\identify.c']),
     ('Observer',   [r'..\FW\Src\est.c', r'..\FW\Src\flux_obs.c', r'..\FW\Src\flux_pll.c']),
-    ('FOC_Core',   [r'..\FW\Src\foc_core.c', r'..\FW\Src\mathx.c']),
+    ('FOC_Core',   [r'..\FW\Src\foc_core.c', r'..\FW\Src\svpwm.c', r'..\FW\Src\meas.c', r'..\FW\Src\mathx.c',
+                    r'..\FW\Src\mc_tables.c']),
     ('HAL_Board',  [r'..\FW\Src\hal_sc32r602.c', r'..\Board\Src\SC_Init.c', r'..\Board\Inc\Hardware_config.h']),
     ('Device',     None),   # None = keep the existing group unchanged
     ('Startup',    None),
-    ('MCI',        None),
+    # 原来的 'MCI' 组（原厂闭源库 SOC_MCI_2R_V102.lib）在 0xF20E0006 删除
 ]
 
 FILETYPE = {'.c': '1', '.s': '2', '.lib': '4', '.h': '5'}

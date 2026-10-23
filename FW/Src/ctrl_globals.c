@@ -1,4 +1,4 @@
-/* 与闭源库共享的全局对象。名字、类型、字段布局都是 ABI，见 vendor_lib.h。 */
+/* 全局控制对象，见 ctrl_globals.h。 */
 #include "ctrl_globals.h"
 
 USER_TypeDef     USER;

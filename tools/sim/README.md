@@ -1,6 +1,6 @@
 # tools/sim —— 主机仿真与验证
 
-在 PC 上把固件的快环/慢环、闭源库模型、电机模型接起来跑，用来：
+在 PC 上把固件的快环/慢环、电机模型接起来跑（test33 那份还要接原厂库模型），用来：
 
 1. **证明重构没改行为**：test33 原代码和"当前代码 + test33 参数"（`legacy_cfg.sh`）跑同一组输入，每拍状态哈希逐位比较。
 2. **比较参数/功能的效果**：`eval.py` 测阶跃、加载、低速角度误差、高速；`startup_eval.py` 测 128 组冷启动。
@@ -48,7 +48,8 @@ CSV 每 1 ms 一行，列含义：
 
 | 文件 | 内容 |
 |---|---|
-| vendor_lib.c、vendor_tables.h | 闭源库 SOC_MCI_2R_V102.lib 的 C 版本。按 test33 AXF 反汇编逐条翻译；正余弦表、开方表直接从 AXF 取。**只用于仿真**，固件仍链接原厂 .lib |
+| vendor_lib.c、vendor_tables.h | 原厂闭源库 SOC_MCI_2R_V102.lib 的参考模型（按 test33 AXF 反汇编逐条翻译）。**只给 test33（sim_old）和逐函数对比（libcheck）用**；0xF20E0006 起框架不再用原厂库，sim_new / sim_legacy 不链接它 |
+| libcheck.c | 逐函数对比：自写替代函数 vs 原厂库模型，随机输入，`build/libcheck` 最后一行 `LIBCHECK OK` |
 | plant.c/h | PMSM dq 模型 + 逆变器（板级相序、死区误差）+ ADC（量化、噪声、零点），默认参数 = 本风机（501 rpm/s/A 辨识值、风阻按 1172 rpm/0.292 A 标定） |
 | sim_main.c | 主循环、工况、CSV、每拍哈希 |
 | glue_old.c / glue_new.c | 接 test33 / 新代码 |

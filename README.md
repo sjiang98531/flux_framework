@@ -32,10 +32,8 @@
   - 0xF20E0003：按理论取参
   - 0xF20E0004：代码审核后的修复（I/F 启动、角度时序等，见 `重构说明.md` 第 0.1 节）
   - 0xF20E0005：I/F 定位改成一段
-- **闭源库约束**：
-  - `FOC_TypeDef / USER_TypeDef` 的字段布局不能改。
-  - `FOC / USER / FastBoot_Para / pwm_gen / eM1_RunSubState` 这些名字不能改。
-  - 详见 `FW/Inc/vendor_lib.h`。
+  - 0xF20E0006：去掉原厂闭源库，全部自写（行为不变）
+- **不依赖原厂闭源库**（0xF20E0006 起）：原来库里的函数全部自写，见 `FW/Inc/mc_types.h` 和 `重构说明.md` 第 0.2 节。还在用原厂的开源头文件（类型、内联 Clarke/Park）和 `motor_structure.h` 里的结构体。
 - **快环**：ADC 中断，16 kHz，预算 62.5 µs，不许有除法和 sqrt。**慢环**：main 轮询，1 kHz。
 
 ## git tag
@@ -48,3 +46,5 @@
 | `p3-theory` | 按理论取参（0xF20E0003） |
 | `p4-review` | 代码审核后的修复（0xF20E0004） |
 | `p5-align1` | I/F 一段定位（0xF20E0005） |
+| `bench-0xF20E0005` | 0xF20E0005 + 台架数据（还在用原厂库的最后一版） |
+| `p6-nolib` | 去掉原厂闭源库（0xF20E0006） |

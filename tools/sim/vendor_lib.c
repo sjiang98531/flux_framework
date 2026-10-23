@@ -1,8 +1,12 @@
 /* Host re-implementation of the closed-source SOC_MCI_2R_V102.lib, translated
  * instruction by instruction from the test33 AXF disassembly (llvm-objdump,
- * thumbv6m). Used ONLY by the host simulation; the firmware links the real lib.
- * Old (test33) and new (flux_framework) builds link this same file, so any
- * difference between their traces comes from the user code. */
+ * thumbv6m). Used ONLY by the host simulation as the REFERENCE model of the
+ * vendor library:
+ *   - sim_old (test33) links it, exactly like the old firmware linked the real lib;
+ *   - since 0xF20E0006 the framework does not use the vendor library at all, so
+ *     sim_new / sim_legacy do NOT link this file. run_equiv.sh (test33 + this model
+ *     vs. our own code) and libcheck.c (function by function) prove that our
+ *     replacements behave bit-for-bit like the vendor library. */
 #include <stdint.h>
 #include <math.h>
 #include "mlib.h"
@@ -16,7 +20,9 @@ extern FOC_TypeDef FOC;
 extern FastBoot_TypeDef FastBoot_Para;
 extern volatile unsigned int eM1_RunSubState;   /* enum, 4 bytes, Startup == 3 */
 
+#ifndef NEWCODE        /* 新代码自己定义 pwm_gen（svpwm.c），只有 test33 构建用这里的 */
 PWM_GEN_T pwm_gen;
+#endif
 
 static int16_t mulq15(int16_t a, int16_t b) { return (int16_t)(((int32_t)a * b) >> 15); }
 

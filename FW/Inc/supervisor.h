@@ -10,12 +10,12 @@
 #ifndef SUPERVISOR_H
 #define SUPERVISOR_H
 #include "fw_config.h"
-#include "vendor_lib.h"
+#include "mc_types.h"
 
 typedef void (*pfcn_void_void)(void);
 typedef uint16_t mcdef_fault_t;
 
-/* 编号不能改：闭源库 Fast_Boot_Current_Controller 用 eM1_RunSubState == 3 判 Startup */
+/* 编号与原厂相同（J-Scope 的 runState 照旧看）。不再有闭源库依赖它。 */
 typedef enum _m1_app_mainstate_t {
     MainState_Fault = 0,
     MainState_Init  = 1,

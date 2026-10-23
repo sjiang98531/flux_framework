@@ -9,7 +9,7 @@
 #define HAL_H
 #include "fw_config.h"
 #include "includes.h"          /* sc32_conf.h、Hardware_config.h（桥臂开关宏） */
-#include "vendor_lib.h"
+#include "mc_types.h"
 
 /* ---- 桥臂开关（直接映射 Hardware_config.h 的宏，零开销） -------------------- */
 #define HAL_PwmAllOff()         do { DISABLE_PWMOUT(); } while (0)   /* 上下桥全关 */
@@ -29,9 +29,10 @@ static __forceinline uint8_t HAL_PwmAllEnabled(void)
 {
     return (uint8_t)((EPWM->EPWM_CHN & 0x3fU) == 0x3fU);
 }
-/* 把 pwm_gen.CompA/B/C 写进比较寄存器（相序由 RUN_DIR 决定）。
- * 名字保留原厂的 Update_PWM，因为 pwm_gen.h 里有它的声明。 */
-void Update_PWM(PWM_GEN_T *u1);
+/* 把 pwm_gen.CompA/B/C 写进比较寄存器（相序由 RUN_DIR 决定） */
+void HAL_PwmWriteCompares(const PWM_GEN_T *u);
+/* 飞车检测：上桥全关、下桥全开（三相对地短接），三相比较值 = cmp */
+void HAL_PwmShortLowSides(uint16_t cmp);
 /* FG 输出（TIM0 PWMA）占空比 */
 void HAL_FgSetDuty(uint32_t duty);
 /* 快环计时用的自由计数器（TIM3，36 MHz） */

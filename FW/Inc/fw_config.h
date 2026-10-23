@@ -27,8 +27,10 @@
  *             解耦切换移进快环、反转五段式
  * 0xF20E0005  I/F 定位改成一段（0°，最短 0.8 s，等停稳），IF_ALIGN_STAGES = 2 可切回两段；
  *             停稳门限 5 -> 8 rpm
+ * 0xF20E0006  去掉原厂闭源库 SOC_MCI_2R_V102.lib：库里的函数全部自写（mc_math、svpwm、
+ *             meas、protect、flystart），行为与 0xF20E0005 逐位相同（仿真 40 组 + 逐函数对比）
  * -------------------------------------------------------------------------*/
-#define FW_BUILD_TAG            0xF20E0005UL
+#define FW_BUILD_TAG            0xF20E0006UL
 #define FLUXPLL_BUILD_TAG       FW_BUILD_TAG
 
 #define FW_PI                   3.14159265358979
@@ -38,14 +40,14 @@
 /* Q15 速度 -> 每拍角度增量（原厂定义） */
 #define SPEED_TO_THETA          Q15(2 * SPEED_MAX * POLEPAIRS / 60.0 / PWM_FREQ)
 
-/* ---- 电流环（CalcPI：out[Q15 V] = Kp*e>>15 + sum(Ki*e)>>15，e 为 Q15 电流） */
+/* ---- 电流环（Pi_Run32：out[Q15 V] = Kp*e>>15 + sum(Ki*e)>>15，e 为 Q15 电流） */
 #define CUR_GAIN_SCALE          (I_MAX / UDC_MAX * 32768.0)
 #define CURRENT_KP_D            ((int32_t)(2 * FW_PI * CURRENT_BW_HZ * MOTOR_LD_H * CUR_GAIN_SCALE))
 #define CURRENT_KI_D            ((int32_t)(2 * FW_PI * CURRENT_BW_HZ * MOTOR_RS_OHM * CUR_GAIN_SCALE / PWM_FREQ))
 #define CURRENT_KP_Q            ((int32_t)(2 * FW_PI * CURRENT_BW_HZ * MOTOR_LQ_H * CUR_GAIN_SCALE))
 #define CURRENT_KI_Q            ((int32_t)(2 * FW_PI * CURRENT_BW_HZ * MOTOR_RS_OHM * CUR_GAIN_SCALE / PWM_FREQ))
 
-/* ---- 速度环（CalcPI，慢环；e 为 Q15 速度，out 为 Q15 电流） --------------- */
+/* ---- 速度环（Pi_Run64，慢环；e 为 Q15 速度，out 为 Q15 电流） --------------- */
 #define SPD_GAIN_SCALE          (SPEED_MAX / I_MAX * 32768.0 / MOTOR_ACC_RPM_S_PER_A)
 #define SPEED_KP                ((int32_t)(2 * SPEED_ZETA * 2 * FW_PI * SPEED_WN_HZ * SPD_GAIN_SCALE))
 #define SPEED_KI                ((int32_t)((2 * FW_PI * SPEED_WN_HZ) * (2 * FW_PI * SPEED_WN_HZ) * SPD_GAIN_SCALE / SLOWLOOP_FREQ))

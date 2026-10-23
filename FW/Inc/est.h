@@ -3,13 +3,13 @@
  *
  *   flux_obs（磁链） -> FluxPLL_PhaseError -> flux_pll -> FOC.s16CmdTheta
  *
- * 也负责把 PLL 转速写进 FOC.FluxFeedback.s16Speed（闭源库 Var_Filt 从这里读，
+ * 也负责把 PLL 转速写进 FOC.FluxFeedback.s16Speed（Meas_SlowFilter 从这里读，
  * 滤波后得到 s16SpdFilt，速度环和 Fast_Boot 都用它）。
  * ==========================================================================*/
 #ifndef EST_H
 #define EST_H
 #include "fw_config.h"
-#include "vendor_lib.h"
+#include "mc_types.h"
 
 /* 观测器 + 运行期 PLL 跟踪一拍，不写 s16CmdTheta（I/F 拖动期间用）。
  * 返回采样时刻 k 的 PLL 角；返回时 PLL 已推进到 k+1。 */

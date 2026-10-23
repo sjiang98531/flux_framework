@@ -20,13 +20,15 @@ build_new() {
   N="${NEWDIR:-$R}"; OUT="${OUTNAME:-sim_new}"; I="-I$N/FW/Inc -I$N/MCI/Inc -I$N/User/Inc -I$N/Board/Inc -I$N/User/HeadFiles"
   W="$B/obj_$OUT"; rm -rf "$W"; mkdir -p "$W"
   gcc $CF $I -c "$T/sim_main.c" -o "$W/sim_main.o"; gcc $CF $I -c "$T/plant.c" -o "$W/plant.o"; gcc $CF $I -c "$T/glue_new.c" -o "$W/glue.o"
-  gcc $CF -w $I -c "$T/vendor_lib.c" -o "$W/vendor_lib.o"
+  # 0xF20E0006 起框架不再用原厂库：新代码只链接自己的 FW/Src，不链接 vendor_lib.c（原厂库模型）
   for f in $N/FW/Src/*.c; do [ "$(basename $f)" = main.c ] && continue; gcc $CF $I -c "$f" -o "$W/fw_$(basename $f .c).o"; done
   gcc "$W"/*.o -lm -o "$B/$OUT"
   if [ "$OUT" = sim_new ]; then
-    echo 'void Update_PWM(void *u){(void)u;}' > "$W/stub.c"
+    echo 'void HAL_PwmWriteCompares(const void *u){(void)u;}' > "$W/stub.c"
     gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -include stdlib.h -I$T/shim -I$T $I "$T/fuzz.c" "$T/vendor_lib.c" "$W/stub.c" \
-      $N/FW/Src/flux_obs.c $N/FW/Src/flux_pll.c $N/FW/Src/diag.c $N/FW/Src/mathx.c $N/FW/Src/foc_core.c -lm -o "$B/fz_new"
+      $N/FW/Src/flux_obs.c $N/FW/Src/flux_pll.c $N/FW/Src/diag.c $N/FW/Src/mathx.c $N/FW/Src/foc_core.c $N/FW/Src/svpwm.c $N/FW/Src/mc_tables.c -lm -o "$B/fz_new"
+    gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -I$T/shim -I$T $I "$T/libcheck.c" "$T/vendor_lib.c" \
+      $N/FW/Src/svpwm.c $N/FW/Src/mc_tables.c $N/FW/Src/meas.c $N/FW/Src/protect.c $N/FW/Src/flystart.c $N/FW/Src/mathx.c -lm -o "$B/libcheck"
     gcc -include $T/shim/armcc_compat.h -I$T/shim $I "$T/gain_check.c" -o "$B/gain_check"
   fi
 }
@@ -35,10 +37,10 @@ build_legacy() {
   L="$B/var_legacy"; rm -rf "$L"; mkdir -p "$L"; cp -r "$R"/{FW,MCI,User,Board} "$L"/
   "$T/legacy_cfg.sh" "$L"
   NEWDIR="$L" OUTNAME=sim_legacy build_new
-  echo 'void Update_PWM(void *u){(void)u;}' > "$B/stub_legacy.c"
+  echo 'void HAL_PwmWriteCompares(const void *u){(void)u;}' > "$B/stub_legacy.c"
   I="-I$L/FW/Inc -I$L/MCI/Inc -I$L/User/Inc -I$L/Board/Inc -I$L/User/HeadFiles"
   gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -include stdlib.h -I$T/shim -I$T $I "$T/fuzz.c" "$T/vendor_lib.c" "$B/stub_legacy.c" \
-    $L/FW/Src/flux_obs.c $L/FW/Src/flux_pll.c $L/FW/Src/diag.c $L/FW/Src/mathx.c $L/FW/Src/foc_core.c -lm -o "$B/fz_legacy"
+    $L/FW/Src/flux_obs.c $L/FW/Src/flux_pll.c $L/FW/Src/diag.c $L/FW/Src/mathx.c $L/FW/Src/foc_core.c $L/FW/Src/svpwm.c $L/FW/Src/mc_tables.c -lm -o "$B/fz_legacy"
   gcc -include $T/shim/armcc_compat.h -I$T/shim $I "$T/gain_check.c" -o "$B/gain_check_legacy"
 }
 case "${1:-all}" in old) build_old;; new) build_new;; legacy) build_legacy;; *) build_old; build_new; build_legacy;; esac

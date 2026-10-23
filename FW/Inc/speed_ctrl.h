@@ -10,7 +10,7 @@
 #ifndef SPEED_CTRL_H
 #define SPEED_CTRL_H
 #include "fw_config.h"
-#include "vendor_lib.h"
+#include "mc_types.h"
 
 extern int16_t s16PowerFdk;     /* 实测功率（Q15，POWER_MAX 基准），慢环更新 */
 

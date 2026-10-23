@@ -16,7 +16,7 @@
 #ifndef FLUX_OBS_H
 #define FLUX_OBS_H
 #include "fw_config.h"
-#include "vendor_lib.h"
+#include "mc_types.h"
 
 /* 快环入口抓的输入快照（本拍算新比较值之前） */
 typedef struct {

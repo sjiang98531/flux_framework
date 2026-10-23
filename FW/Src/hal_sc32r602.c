@@ -12,6 +12,7 @@
 #include "supervisor.h"
 #include "diag.h"
 #include "SC_it.h"
+#include "svpwm.h"
 
 __align(4) u16 ADC_DMABuff[14];          /* ADC -> DMA 缓冲（SC_Init.c 配置 DMA 目标地址） */
 
@@ -114,17 +115,26 @@ void HAL_PwmSetHalfDuty(void)
     EPWM->EPWM_DT[4] = USER.u16PWMPeriod >> 1;
 }
 
-void Update_PWM(PWM_GEN_T *u1)
+void HAL_PwmWriteCompares(const PWM_GEN_T *u)
 {
-    (void)u1;
 #if (RUN_DIR == RUN_CW)
-    EPWM->EPWM_DT[4] = pwm_gen.CompA;
-    EPWM->EPWM_DT[2] = pwm_gen.CompB;
+    EPWM->EPWM_DT[4] = u->CompA;
+    EPWM->EPWM_DT[2] = u->CompB;
 #elif (RUN_DIR == RUN_CCW)
-    EPWM->EPWM_DT[2] = pwm_gen.CompA;
-    EPWM->EPWM_DT[4] = pwm_gen.CompB;
+    EPWM->EPWM_DT[2] = u->CompA;
+    EPWM->EPWM_DT[4] = u->CompB;
 #endif
-    EPWM->EPWM_DT[0] = pwm_gen.CompC;
+    EPWM->EPWM_DT[0] = u->CompC;
+}
+
+void HAL_PwmShortLowSides(uint16_t cmp)
+{
+    /* EPWM_CHN：bit0/2/4 = 三相上桥使能，bit1/3/5 = 三相下桥使能 */
+    EPWM->EPWM_CHN |= 0x2a;         /* 下桥全开 */
+    EPWM->EPWM_CHN &= 0xffea;       /* 上桥全关 */
+    EPWM->EPWM_DT[0] = cmp;
+    EPWM->EPWM_DT[2] = cmp;
+    EPWM->EPWM_DT[4] = cmp;
 }
 
 void HAL_FgSetDuty(uint32_t duty)
@@ -137,19 +147,6 @@ uint32_t HAL_TimerNow(void)
     return TIM3->TIM_CNT;
 }
 
-/* 原厂 PWM_GEN_init 由用户代码提供（pwm_gen.h 声明），这里实现 */
-void PWM_GEN_init(PWM_GEN_T *u1)
-{
-    u1->Alpha = 0;
-    u1->Beta = 0;
-    u1->CompA = 0;
-    u1->CompB = 0;
-    u1->CompC = 0;
-    u1->Mode = SEVENMODE;
-    u1->Sector = 0;
-    u1->N_halfPeriod = SYSCLK_HSI_72MHz / PWM_FREQ / 2;
-}
-
 void HAL_InitParams(void)
 {
     USER.u16PWMFreq = PWM_FREQ;
@@ -158,5 +155,5 @@ void HAL_InitParams(void)
     USER.u16CaliPWMDuty = (USER.u16PWMPeriod * CALIPWMPERCENT);
     USER.u8SpeedUpDatePeriod = SLOWLOOP_FREQ / SPEEDUPDATE_FREQ;
     USER.u32FGNum = (SYSCLK_HSI_72MHz * 60 * 256) / (SPEED_MAX * FG_NUM);
-    PWM_GEN_init(&pwm_gen);
+    Svpwm_Init(&pwm_gen, (int16_t)(SYSCLK_HSI_72MHz / PWM_FREQ / 2));
 }

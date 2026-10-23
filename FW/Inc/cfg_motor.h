@@ -31,10 +31,10 @@
 #define MOTOR_ACC_RPM_S_PER_A   501.0
 
 /* 速度标幺基准：Q15 速度 32767 = SPEED_MAX rpm。也是 PLL 速度上限
- * （s32Speed 在 2^31 处饱和）。原厂名 SPEED_MAX，闭源库按这个编码。 */
+ * （s32Speed 在 2^31 处饱和）。名字沿用原厂的 SPEED_MAX。 */
 #define SPEED_MAX               3200.0
 
-/* 原厂老名字，Hardware/闭源库头文件之外仍有引用的保留别名 */
+/* 原厂老名字，Board/ 和原厂开源头文件里还在用，保留别名 */
 #define POLEPAIRS               MOTOR_POLE_PAIRS
 
 #endif

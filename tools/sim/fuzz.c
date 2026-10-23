@@ -4,7 +4,7 @@
 #include <string.h>
 #include "motor_structure.h"
 #ifdef NEWCODE
-#include "vendor_lib.h"
+#include "mc_types.h"
 #include "flux_obs.h"
 #include "flux_pll.h"
 #include "diag.h"

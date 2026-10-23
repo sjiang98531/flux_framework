@@ -5,7 +5,7 @@
  *   磁链矢量不随转向翻转，所以不按转速指令翻符号，也不需要 rot90 和 omega。
  *   |psi| 恒定，所以全速域一组增益（cfg_ctrl.h 的 FLUXPLL_WN_HZ / ZETA）。
  *
- * 存储复用 FOC.sPLL（PLL_TypeDef，ABI 不变），字段含义：
+ * 存储复用 FOC.sPLL（PLL_TypeDef，结构体沿用原厂开源头文件），字段含义：
  *   s32Theta  Q16.16 电角度（>>16 得 0..65535 一圈）
  *   s32Speed  Q31 速度，0x80000000 = SPEED_MAX
  *   s32I_1    Q31 速度，积分器（启动下限加在这里和输出上）
@@ -15,7 +15,7 @@
 #ifndef FLUX_PLL_H
 #define FLUX_PLL_H
 #include "fw_config.h"
-#include "vendor_lib.h"
+#include "mc_types.h"
 
 typedef struct {
     int16_t  errLast;

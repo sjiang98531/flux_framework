@@ -68,8 +68,8 @@ void Est_StartupTick(FOC_TypeDef *f)
 }
 
 /* test31：Startup 期间上报给原厂代码的转速 = PLL 转速再加加速度限幅。
- * PLL 本身（角度、s32Speed）不受影响。Fast_Boot_StartUp() 只看 s16SpdFilt
- * （Var_Filt 由这里的值滤出），80 rpm 持续 10 ms 就切 Spin。转子挣脱时 PLL
+ * PLL 本身（角度、s32Speed）不受影响。原厂启动的切换判据（vendorStartupDone）只看 s16SpdFilt
+ * （Meas_SlowFilter 由这里的值滤出），80 rpm 持续 10 ms 就切 Spin。转子挣脱时 PLL
  * 追相会冲高 25~40 ms（test30：25 ms 内 165~279 rpm，而转子只有 54~110 rpm），
  * 足以骗过判据、切过去再塌回来（4/4 次）。0.5 A 只能让转子加速约 250 rpm/s，
  * 1000 rpm/s 的限幅不会拖慢真启动（核对过 test28_2/test29 的 17 次启动），

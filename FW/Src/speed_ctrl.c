@@ -5,11 +5,7 @@
 
 int16_t s16PowerFdk;
 
-#if CTRL_OWN_PI
 #define RUN_PI(p)   Pi_Run64(p)     /* 64 位，增益可以超过 65535 */
-#else
-#define RUN_PI(p)   CalcPI(p)       /* 原厂库 */
-#endif
 
 #define RAMP_Q31(rate, base)    Q31((rate) / (base) / SLOWLOOP_FREQ)
 
@@ -59,7 +55,7 @@ void SpeedCtrl_SpinSlow(void)
     FOC.s16SpdRef = FOC.s16SpdCmd;
 
 #if (CLOSE_LOOP == TORQUE_LOOP)
-    FOC.s32CurRamp = MLIB_Ramp_Q31(FOC.s16SpdRef << 16, &USER.sCurrentRamp);
+    FOC.s32CurRamp = Mc_RampQ31(FOC.s16SpdRef << 16, &USER.sCurrentRamp);
     FOC.s16CurRamp = FOC.s32CurRamp >> 16;
     FOC.sIdq_cmd.s16Q = FOC.s16CurRamp;
 
@@ -69,7 +65,7 @@ void SpeedCtrl_SpinSlow(void)
         int16_t s16AccFF;
 
         s32RampPrev = FOC.s32SpeedRamp;
-        FOC.s32SpeedRamp = MLIB_Ramp_Q31(FOC.s16SpdRef << 16, &USER.sSpeedRamp);
+        FOC.s32SpeedRamp = Mc_RampQ31(FOC.s16SpdRef << 16, &USER.sSpeedRamp);
         FOC.s16SpeedRamp = FOC.s32SpeedRamp >> 16;
 
         /* 加速度前馈：只在 |斜坡| 增大时加；减速保持原厂行为 */
@@ -94,7 +90,7 @@ void SpeedCtrl_SpinSlow(void)
         FOC.sIdq_cmd.s16Q = (int16_t)s32IqCmd;
     }
 #else
-    FOC.s32PowerRamp = MLIB_Ramp_Q31(FOC.s16SpdRef << 16, &USER.sPowerRamp);
+    FOC.s32PowerRamp = Mc_RampQ31(FOC.s16SpdRef << 16, &USER.sPowerRamp);
     FOC.s16PowerRamp = FOC.s32PowerRamp >> 16;
 
     FOC.Speed.qInRef = SPEED_LIMIT_VALUE;       /* 限速 */

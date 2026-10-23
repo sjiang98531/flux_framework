@@ -40,7 +40,7 @@ void FluxPLL_Init(PLL_TypeDef *p)
 
 int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta)
 {
-    sAngle_Trig a = MLIB_SinCos(theta);
+    sAngle_Trig a = Mc_SinCos(theta);
     return (int16_t)(MLIB_Mul_Q15(psiBeta, a.s16Cos) - MLIB_Mul_Q15(psiAlpha, a.s16Sin));
 }
 

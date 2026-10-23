@@ -31,11 +31,7 @@
 #ifndef STARTUP_H
 #define STARTUP_H
 #include "fw_config.h"
-#include "vendor_lib.h"
-
-#if (STARTUP_MODE == STARTUP_IF) && !CTRL_OWN_PI
-#error "I/F 启动需要 CTRL_OWN_PI = 1：原厂 Fast_Boot_Current_Controller 在 Startup 子状态每拍预置 d 轴积分器，会破坏 I/F 的 d 轴电流"
-#endif
+#include "mc_types.h"
 
 #if (FAST_BOOT_METHOD != 1)
 #error "只支持原厂快速启动（FAST_BOOT_METHOD = 1）。原厂的 0 分支在 test33 里本来就是半截注释掉的，已删除。"

@@ -7,6 +7,8 @@
 #include "ctrl_globals.h"
 #include "mathx.h"
 #include "flux_obs.h"
+#include "meas.h"
+#include "flystart.h"
 
 #if (STARTUP_MODE == STARTUP_IF)
 volatile StartupIfDiag_TypeDef gStartupIF;
@@ -42,7 +44,7 @@ static int16_t asinQ15(int32_t x)
     if (x < -31130) x = -31130;
     for (i = 0; i < 15; i++) {
         mid = (lo + hi) / 2;
-        if (MLIB_SinCos((int16_t)mid).s16Sin < x) lo = mid; else hi = mid;
+        if (Mc_SinCos((int16_t)mid).s16Sin < x) lo = mid; else hi = mid;
     }
     return (int16_t)lo;
 }
@@ -102,7 +104,7 @@ void Startup_OnEnterIF(uint8_t warm)
 static void ifHandover(void)
 {
     int16_t d = (int16_t)((s_olTheta >> 16) - (FOC.sPLL.s32Theta >> 16));
-    sAngle_Trig a = MLIB_SinCos(d);
+    sAngle_Trig a = Mc_SinCos(d);
     FOC.sIdq_cmd.s16Q = Mx_MulQ15(FOC.sIdq_cmd.s16D, a.s16Sin);
     FOC.sIdq_cmd.s16D = 0;
     FOC.s16ErrTheta = 0;
@@ -166,7 +168,7 @@ void Startup_ChargeFast(void)
 
 void Startup_ChargeSlow(void)
 {
-    Var_Filt();
+    Meas_SlowFilter();
 }
 
 /* ---------------------------------------------------------------------------
@@ -176,12 +178,7 @@ void Startup_ChargeSlow(void)
  * -------------------------------------------------------------------------*/
 void Startup_CalibFast(void)
 {
-#if (FLY_CHECK_0BEMF == 1)
-    MCF_FlyStart_0BEMF(&FOC);
-    FocCore_Modulate(&FOC, SEVENMODE);
-#else
-    MCF_FlyStart_2R(&FOC);
-#endif
+    FlyStart_CalibFast(&FOC);
     FOC.FluxFeedback.s16Speed = FOC.sPLL.s32Speed >> 16;
 
     if (FOC.sFly_Start.s16BemfAmp > FOC.sFly_Start.s16BemfAmpTh) {
@@ -211,7 +208,7 @@ void Startup_CalibFast(void)
 
 void Startup_CalibSlow(void)
 {
-    Var_Filt();
+    Meas_SlowFilter();
 }
 
 /* ---------------------------------------------------------------------------
@@ -272,7 +269,7 @@ void Startup_AlignSlow(void)
         }
     }
 #endif
-    Var_Filt();
+    Meas_SlowFilter();
     FOC.s16SpdFilt = 0;
 #else
     if (FOC.s16SpdCmd > 0) FOC.sIdq_cmd.s16Q = USER.s16StartupIqCmd >> 2;
@@ -282,7 +279,7 @@ void Startup_AlignSlow(void)
         Sup_SwitchAlignStartup();
         USER.u16AlignTimeCnt = 0;
     }
-    Var_Filt();
+    Meas_SlowFilter();
     FOC.s16SpdFilt = 0;
 #endif
 }
@@ -290,7 +287,7 @@ void Startup_AlignSlow(void)
 /* ---------------------------------------------------------------------------
  * Startup
  *   原厂：固定 Iq 拖动，观测器 + PLL 从第一拍就闭环（PLL 带 12.8 rpm 下限），
- *         Fast_Boot_StartUp 每 11 个慢环拍查一次 s16SpdFilt >= 80 rpm 就切 Spin。
+ *         vendorStartupDone 每 11 个慢环拍查一次 s16SpdFilt >= 80 rpm 就切 Spin。
  *   I/F： 电流矢量开环旋转（角度 = 开环积分），观测器 + PLL 只跟踪；转速一致后切 Spin。
  * -------------------------------------------------------------------------*/
 void Startup_StartupFast(void)
@@ -312,7 +309,7 @@ void Startup_StartupFast(void)
     s_olTheta = (int32_t)((uint32_t)s_olTheta + (uint32_t)step);
     FOC_Current_Controller(&FOC);
     FocCore_Modulate(&FOC, SEVENMODE);
-    FOC.FluxFeedback.s16Speed = (int16_t)(sp >> 16);           /* Var_Filt -> s16SpdFilt 跟开环转速 */
+    FOC.FluxFeedback.s16Speed = (int16_t)(sp >> 16);           /* Meas_SlowFilter -> s16SpdFilt 跟开环转速 */
 #else
     FocCore_Clarke(&FOC);
     Est_StartupTick(&FOC);
@@ -326,6 +323,19 @@ void Startup_StartupFast(void)
     FOC.sProtect.sIabc_Max.s16B = (FOC.sProtect.sIabc_Max.s16B > FOC.sIabc.s16B) ? FOC.sProtect.sIabc_Max.s16B : FOC.sIabc.s16B;
     FOC.sProtect.sIabc_Max.s16C = (FOC.sProtect.sIabc_Max.s16C > FOC.sIabc.s16C) ? FOC.sProtect.sIabc_Max.s16C : FOC.sIabc.s16C;
 }
+
+#if (STARTUP_MODE == STARTUP_VENDOR)
+/* 原厂启动的切 Spin 判据（原 Fast_Boot_StartUp）：每 DetcTime 个慢环拍查一次，
+ * 估计转速与指令同向且 |转速| >= DetcSpd（80 rpm）就切。 */
+static uint8_t vendorStartupDone(const FOC_TypeDef *f)
+{
+    if (USER.u16StartupTimeCnt <= FastBoot_Para.DetcTime) return 0;
+    USER.u16StartupTimeCnt = 0;
+    if (f->s16SpdFilt >= FastBoot_Para.DetcSpd && f->s16SpdCmd > 0) return 1;
+    if (f->s16SpdFilt <= -FastBoot_Para.DetcSpd && f->s16SpdCmd < 0) return 1;
+    return 0;
+}
+#endif
 
 void Startup_StartupSlow(void)
 {
@@ -359,7 +369,7 @@ void Startup_StartupSlow(void)
             if (USER.u8FaultReleaseCnt < 10) USER.u8FaultReleaseCnt++;
         }
     }
-    Var_Filt();
+    Meas_SlowFilter();
 #else
     USER.u16StartupTimeCnt++;
     /* 注意：原厂代码在这里和下面各加一次，所以 s_u16BlockTime 每个慢环拍 +2：
@@ -377,7 +387,7 @@ void Startup_StartupSlow(void)
     }
 
     /* 速度斜坡（STARTUP_SPEED_RAMP，限 MAXSTARTUP_SPEED）——只给保护/切换参考，不驱动角度 */
-    FOC.s32SpeedRamp = MLIB_Ramp_Q31((FOC.s16SpdCmd << 16), &USER.sSpeedRamp);
+    FOC.s32SpeedRamp = Mc_RampQ31((FOC.s16SpdCmd << 16), &USER.sSpeedRamp);
     if (FOC.s32SpeedRamp > (USER.s16StartupSpdCmdMax << 16)) {
         FOC.s32SpeedRamp = (USER.s16StartupSpdCmdMax << 16);
     } else if (FOC.s32SpeedRamp < -(USER.s16StartupSpdCmdMax << 16)) {
@@ -387,7 +397,7 @@ void Startup_StartupSlow(void)
 
     s_u16BlockTime++;
 
-    if (Fast_Boot_StartUp(&FOC) == 1) {
+    if (vendorStartupDone(&FOC)) {
         Sup_SwitchStartupSpin();
         s_u16BlockTime = 0;
     } else {
@@ -406,7 +416,7 @@ void Startup_StartupSlow(void)
             }
         }
     }
-    Var_Filt();
+    Meas_SlowFilter();
 #endif
 }
 
@@ -428,5 +438,5 @@ void Startup_TorqueloopSlow(void)
         Sup_SwitchTorqueloopSpin();
         USER.u16TorqueloopTimeCnt = 0;
     }
-    Var_Filt();
+    Meas_SlowFilter();
 }

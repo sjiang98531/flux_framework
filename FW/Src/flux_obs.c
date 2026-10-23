@@ -123,7 +123,7 @@ void FluxObs_BeginStartup(FOC_TypeDef *f, MLIB_FILTER_MA_T *speedFilter)
      * theta_hat 甩半圈，造成 32~34 ms 后的 177~191 rpm 假转速和假切 Spin。
      * 调用方已设 sPLL.s32Theta = s16CmdTheta<<16，所以第一拍 PLL 误差正好为 0。 */
     {
-        sAngle_Trig a = MLIB_SinCos(f->s16CmdTheta);
+        sAngle_Trig a = Mc_SinCos(f->s16CmdTheta);
         sFluxObs.s32PsiAlF = (int32_t)Mx_MulQ15(FLUX_NOMINAL_Q15, a.s16Cos) << 16;
         sFluxObs.s32PsiBeF = (int32_t)Mx_MulQ15(FLUX_NOMINAL_Q15, a.s16Sin) << 16;
     }
@@ -215,7 +215,7 @@ static void FluxObs_Run(const FOC_TypeDef *f)
 
     /* |psi_r| 只给 J-Scope / 置信度用，每 16 拍一次 sqrt */
     if (sFluxObs.u8DivCnt == 8) {
-        sFluxObs.s16PsiRMag = Sqrt_Q15((int32_t)sFluxObs.s16PsiRAl * sFluxObs.s16PsiRAl +
+        sFluxObs.s16PsiRMag = Mc_SqrtQ15((int32_t)sFluxObs.s16PsiRAl * sFluxObs.s16PsiRAl +
                                        (int32_t)sFluxObs.s16PsiRBe * sFluxObs.s16PsiRBe);
     }
 }
@@ -223,7 +223,7 @@ static void FluxObs_Run(const FOC_TypeDef *f)
 void FluxObs_UpdateFeedback(FOC_TypeDef *f)
 {
     FluxObs_Run(f);
-    /* 闭源库只读 FluxFeedback.s16Speed（Var_Filt，FOC+0x90）；两个 EMF 字段没有
+    /* FluxFeedback 只有 s16Speed 还在用（Meas_SlowFilter 读）；两个 EMF 字段没有
      * 读者，保持 0（test27 反汇编核实）。 */
     f->FluxFeedback.s16Ealpha_est = 0;
     f->FluxFeedback.s16Ebeta_est = 0;

@@ -1,13 +1,13 @@
 /* ============================================================================
- * foc_core.h —— FOC 核心：坐标变换、电流环、SVPWM、电压重建
+ * foc_core.h —— FOC 核心：坐标变换、电流环、母线归一化、SVPWM 调用、电压重建
  *
- * 电流环 PI、SVPWM 用原厂闭源库（Fast_Boot_Current_Controller / PWM_GEN_calc），
- * 这里负责调用顺序和参数。增益由 cfg_ctrl.h 的 CURRENT_BW_HZ 自动算。
+ * 全部自写（Clarke/Park 用原厂开源头文件 mcflib.h 的内联函数）。
+ * 电流环增益由 cfg_ctrl.h 的 CURRENT_BW_HZ 自动算。
  * ==========================================================================*/
 #ifndef FOC_CORE_H
 #define FOC_CORE_H
 #include "fw_config.h"
-#include "vendor_lib.h"
+#include "mc_types.h"
 
 /* 电流环、母线补偿等参数初始化（写 FOC.CurID/CurIQ、USER.s16DutyLimitCmd 等） */
 void FocCore_Init(void);
@@ -22,13 +22,22 @@ static __forceinline void FocCore_Clarke(FOC_TypeDef *f)
  * 原厂函数名 FOC_Current_Controller，逻辑不变。 */
 void FOC_Current_Controller(FOC_TypeDef *pFOC);
 
-/* d/q 电流 PI（自写，防溢出；CTRL_OWN_PI = 1 时 FOC_Current_Controller 调它） */
+/* d/q 电流 PI（自写，防溢出；FOC_Current_Controller 调它） */
 void FocCore_DqPI(FOC_TypeDef *f);
 /* dq 解耦前馈开关（进 Spin 开、离开 Spin 关）。会把前馈量搬进/搬出积分器，无扰切换。
  * CTRL_DQ_DECOUPLE = 0 时空函数。 */
 void FocCore_SetDecouple(FOC_TypeDef *f, uint8_t on);
 /* 停机/故障复位用：只关开关，不动积分器 */
 void FocCore_ResetDecouple(void);
+
+/* 母线归一化（替代原厂 DcBus_Ripple_suppress）：把以 UDC_MAX 为基准的 αβ 电压换成
+ * 调制器的单位（32768 = Vbus/√3），kvbus = FOC.s16KVbus（Meas_SlowFilter 算）：
+ *   out = (in * kvbus >> 15) << 5     母线电压波动时自动补偿占空比 */
+static __forceinline void FocCore_BusNormalize(const MCFLIB_2_ALBE_T_S16 *in, int16_t kvbus, MCFLIB_2_ALBE_T_S16 *out)
+{
+    out->s16Alpha = (int16_t)(MLIB_Mul_Q15(in->s16Alpha, kvbus) << 5);
+    out->s16Beta  = (int16_t)(MLIB_Mul_Q15(in->s16Beta,  kvbus) << 5);
+}
 
 /* SVPWM：f->sVAlBe_cmd -> pwm_gen -> 比较寄存器。mode = SEVENMODE / FIVEMODE */
 void FocCore_Modulate(const FOC_TypeDef *f, uint8_t mode);

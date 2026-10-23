@@ -16,12 +16,25 @@
 #include "speed_ctrl.h"
 #include "diag.h"
 #include "mtpa_fw.h"
+#include "meas.h"
+#include "protect.h"
 #include <stdlib.h>
 
 m1_app_mainstate_t eM1_MainState = MainState_Init;
 m1_run_substate_t  eM1_RunSubState = RunState_Charge;
 
-static uint16_t s_u16SpinCheckTime;     /* Spin 里 Fast_Boot_Spin 的轮询分频（原 NewStartUpCloseTime） */
+static uint16_t s_u16SpinCheckTime;     /* Spin 里 spinTooSlow 的轮询分频（原 NewStartUpCloseTime） */
+
+/* Spin 回退判据（原 Fast_Boot_Spin）：估计转速掉到 DetcSpd/2（40 rpm）以下，
+ * 或与指令反向，就回到 Startup。 */
+static uint8_t spinTooSlow(const FOC_TypeDef *f)
+{
+    int32_t half = FastBoot_Para.DetcSpd >> 1;
+    if (f->s16SpdFilt >= half && f->s16SpdCmd > 0) return 0;
+    if (f->s16SpdFilt <= -half && f->s16SpdCmd < 0) return 0;
+    USER.u16StartupTimeCnt = 0;
+    return 1;
+}
 
 static void M1_Fault_Fast(void);
 static void M1_Init_Fast(void);
@@ -82,7 +95,7 @@ void Ctrl_Init(void)
 {
     HAL_InitParams();
 
-    /* Var_Filt（闭源库）用的三个测量滤波器：母线电压、转速、母线电流，窗口 2^3 */
+    /* Meas_SlowFilter 用的三个测量滤波器：母线电压、转速、母线电流，窗口 2^3 */
     USER.sSpeed_Filt.u16Sh = 3; USER.sSpeed_Filt.s32Acc = 0;
     USER.sVbus_Filt.u16Sh = 3;  USER.sVbus_Filt.s32Acc = 0;
     USER.sIbus_Filt.u16Sh = 3;  USER.sIbus_Filt.s32Acc = 0;
@@ -247,7 +260,7 @@ static void M1_Fault_Slow(void)
 {
     static uint16_t u16FaultTimeCnt;
 
-    Var_Filt();
+    Meas_SlowFilter();
     Fault_LED_Disp();
     /* 故障消失后等 FAULTRELEASE_TIME 再回 Stop */
     if (!M1FaultID) {
@@ -261,7 +274,7 @@ static void M1_Fault_Slow(void)
 
 static void M1_Init_Slow(void)
 {
-    Var_Filt();
+    Meas_SlowFilter();
 }
 
 static void M1_Stop_Slow(void)
@@ -277,7 +290,7 @@ static void M1_Stop_Slow(void)
     if (abs(FOC.s16SpdCmd) > Q15(STOP_TO_RUN_POWER / POWER_MAX) && (USER.u8FaultReleaseCnt < 5)) M1_SwitchStopRun();
     else if (abs(FOC.s16SpdCmd) < Q15(STOP_TO_RUN_POWER / POWER_MAX)) USER.u8FaultReleaseCnt = 0;
 #endif
-    Var_Filt();
+    Meas_SlowFilter();
 }
 
 static void M1_Run_Slow(void)
@@ -325,7 +338,7 @@ static void M1_RunSpinFast(void)
     Est_SpinTick(&FOC);
     FOC_Current_Controller(&FOC);
 
-    /* 缺相检测：三相电流绝对值积分（MCF_ADV_Protect 比较） */
+    /* 缺相检测：三相电流绝对值积分（Protect_SpinSlow 比较） */
     FOC.sProtect.u32Ia_Integral += MLIB_Abs_Q15(FOC.sIabc.s16A);
     FOC.sProtect.u32Ib_Integral += MLIB_Abs_Q15(FOC.sIabc.s16B);
     FOC.sProtect.u32Ic_Integral += MLIB_Abs_Q15(FOC.sIabc.s16C);
@@ -349,7 +362,7 @@ static void M1_RunSpinSlow(void)
     FOC.s16PreSpdCmd = FOC.s16SpdCmd;
 
     /* 回退到 Startup 的两条路：
-     *  1) 同向时每 DetcTime 拍查一次 Fast_Boot_Spin（filt 掉到 40 rpm 以下）
+     *  1) 同向时每 DetcTime 拍查一次 spinTooSlow（filt 掉到 40 rpm 以下）
      *  2) 反向（指令与 filt 异号）且 |filt| < 50 rpm：立即回退 */
 #if (STARTUP_MODE == STARTUP_IF)
     /* I/F 模式：低速区（含过零反向）归开环管，在观测器还锁着的转速就交回去 */
@@ -360,7 +373,7 @@ static void M1_RunSpinSlow(void)
     if (MLIB_Mul_Q15(FOC.s16SpdCmd, FOC.s16SpdFilt) > 0) {
         if (++s_u16SpinCheckTime >= FastBoot_Para.DetcTime) {
             s_u16SpinCheckTime = 0;
-            if (Fast_Boot_Spin(&FOC) == 1) Sup_SwitchSpinStartup();
+            if (spinTooSlow(&FOC)) Sup_SwitchSpinStartup();
         }
     } else {
         if ((MLIB_Mul_Q15(FOC.s16SpdCmd, FOC.s16SpdFilt) < 0) && (abs(FOC.s16SpdFilt) < Q15(50.0 / SPEED_MAX)))
@@ -370,10 +383,10 @@ static void M1_RunSpinSlow(void)
     /* 不用原厂 SMO 的高速角度补偿（磁链 PLL 没有滞后，test25/26） */
     FOC.s16ThetaComp = 0;
 
-    Var_Filt();
+    Meas_SlowFilter();
 
     /* 原厂高级保护：堵转 / 反转失控 / 缺相 / 超速 */
-    MCF_ADV_Protect(&FOC);
+    Protect_SpinSlow(&FOC);
     if (FOC.sProtect.bErr_Spin) {
         FOC.sProtect.bErr_Spin = 0;
         Sup_SwitchSpinStartup();
@@ -399,13 +412,8 @@ static void M1_RunSpinSlow(void)
 void Sup_SwitchChargeCalib(void)
 {
     DISABLE_PWMOUT();
-#if (FLY_CHECK_0BEMF == 1)
-    PWMABC_Enb;
+    PWMABC_Dis;                     /* 飞车检测：上桥关、下桥开（短接） */
     PWMABCN_Enb;
-#else
-    PWMABC_Dis;
-    PWMABCN_Enb;
-#endif
     FocCore_ModulateZero();
     ENABLE_PWMOUT();
 
