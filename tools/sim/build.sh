@@ -30,4 +30,15 @@ build_new() {
     gcc -include $T/shim/armcc_compat.h -I$T/shim $I "$T/gain_check.c" -o "$B/gain_check"
   fi
 }
-case "${1:-all}" in old) build_old;; new) build_new;; *) build_old; build_new;; esac
+build_legacy() {
+  # 当前代码 + test33 等价配置（tools/sim/legacy_cfg.sh），用来和 test33 逐位对比
+  L="$B/var_legacy"; rm -rf "$L"; mkdir -p "$L"; cp -r "$R"/{FW,MCI,User,Board} "$L"/
+  "$T/legacy_cfg.sh" "$L"
+  NEWDIR="$L" OUTNAME=sim_legacy build_new
+  echo 'void Update_PWM(void *u){(void)u;}' > "$B/stub_legacy.c"
+  I="-I$L/FW/Inc -I$L/MCI/Inc -I$L/User/Inc -I$L/Board/Inc -I$L/User/HeadFiles"
+  gcc -O2 -fwrapv -w -DNEWCODE -include $T/shim/armcc_compat.h -include stdlib.h -I$T/shim -I$T $I "$T/fuzz.c" "$T/vendor_lib.c" "$B/stub_legacy.c" \
+    $L/FW/Src/flux_obs.c $L/FW/Src/flux_pll.c $L/FW/Src/diag.c $L/FW/Src/mathx.c $L/FW/Src/foc_core.c -lm -o "$B/fz_legacy"
+  gcc -include $T/shim/armcc_compat.h -I$T/shim $I "$T/gain_check.c" -o "$B/gain_check_legacy"
+}
+case "${1:-all}" in old) build_old;; new) build_new;; legacy) build_legacy;; *) build_old; build_new; build_legacy;; esac

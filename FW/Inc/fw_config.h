@@ -4,7 +4,7 @@
  *   cfg_board.h  驱动板（HAL）     cfg_motor.h  电机本体     cfg_ctrl.h  控制规格
  *
  * 本文件只做换算，正常调参不用改它。所有增益用"截断取整"（与原厂 Q15() 宏
- * 一致），默认参数下得到的整数与 test33 逐位相同（见 tools/sim 的 gain_check）。
+ * 一致）。按 test33 的参数（tools/sim/legacy_cfg.sh）算出的整数与 test33 逐位相同。
  * ==========================================================================*/
 #ifndef FW_CONFIG_H
 #define FW_CONFIG_H
@@ -20,8 +20,10 @@
  * FluxConfig.h。重构后的框架从 0xF20E0001 开始。
  * 0xF20E0001  flux_framework P1+P2：模块化重构，默认行为与 test33（0xF10E0012）逐位相同
  * 0xF20E0002  加 MTPA / 弱磁（默认关）与 IPM 有效磁链观测（MOTOR_IPM=1 时）；默认配置行为不变
+ * 0xF20E0003  按理论取参：电流环 300 Hz + dq 解耦，速度环 0.5 Hz/ζ0.7，PLL 15 Hz/0.707，
+ *             自写防溢出 PI，观测器去直流相位补偿，电流零点 256 点。不再与 test33 逐位相同
  * -------------------------------------------------------------------------*/
-#define FW_BUILD_TAG            0xF20E0002UL
+#define FW_BUILD_TAG            0xF20E0003UL
 #define FLUXPLL_BUILD_TAG       FW_BUILD_TAG
 
 #define FW_PI                   3.14159265358979
@@ -46,6 +48,15 @@
 
 #define IBUS_LIMIT_VALUE        Q15(IBUS_LIMIT_A / I_MAX)
 #define SPEED_LIMIT_VALUE       Q15(POWER_LIMIT_SPEED_RPM / SPEED_MAX)
+
+/* ---- dq 解耦前馈 --------------------------------------------------------- */
+/* 电角速度满量程（Q15 速度 32768 对应）rad/s */
+#define W_EMAX_RAD_S            (2 * FW_PI * SPEED_MAX / 60.0 * POLEPAIRS)
+/* vq_ff = w*psi_f：Q15 速度 -> Q15 电压 */
+#define DEC_K_EMF_Q15           Q15(W_EMAX_RAD_S * MOTOR_PSI_F_WB / UDC_MAX)
+/* w*L*i：(Q15 速度 * Q15 电流 >> 15) * K >> 12 -> Q15 电压；K 可能 > 1，用 Q12 */
+#define DEC_K_LQ_Q12            ((int32_t)(W_EMAX_RAD_S * MOTOR_LQ_H * I_MAX / UDC_MAX * 4096.0))
+#define DEC_K_LD_Q12            ((int32_t)(W_EMAX_RAD_S * MOTOR_LD_H * I_MAX / UDC_MAX * 4096.0))
 
 /* ---- 磁链观测器 ---------------------------------------------------------- */
 /* psi_f 在观测器 Q15 磁链单位里的值（0.141 Wb -> 6111） */
@@ -72,6 +83,10 @@
 #define FW_KI_Q20               ((int32_t)(FW_KI_A_PER_S / I_MAX / SLOWLOOP_FREQ * 1048576.0))
 #define FW_VLIM_Q15             Q15(1.0 - FW_VOLTAGE_MARGIN)
 #define FW_ID_MIN_Q15           Q15(FW_ID_MIN_A / I_MAX)
+
+/* 去直流高通的截止角频率 wc = fs / 2^SH（rad/s），换成 Q15 速度单位；补偿起点 */
+#define HPF_WC_Q15SPD           ((int32_t)((double)PWM_FREQ / (double)(1L << FLUX_HPF_SH) / W_EMAX_RAD_S * 32768.0 + 0.5))
+#define HPF_COMP_W0_Q15SPD      ((int32_t)(FLUX_HPF_COMP_MIN_RPM / SPEED_MAX * 32768.0))
 
 /* ---- FluxPLL ------------------------------------------------------------- */
 /* err = |psi|*sin(dtheta)，鉴相增益 Kd = FLUX_NOMINAL_Q15（LSB/rad）；

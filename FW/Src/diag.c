@@ -16,6 +16,8 @@ void Diag_Init(void)
 #if !MOTOR_IPM
     if (MOTOR_LD_H != MOTOR_LQ_H) gFluxDiag.cfgWarn |= 1u;
 #endif
+    if (CURRENT_KP_D > 65535 || CURRENT_KP_Q > 65535 || CURRENT_KI_D > 65535 || CURRENT_KI_Q > 65535)
+        gFluxDiag.cfgWarn |= 2u;        /* 电流环带宽太高，增益被封顶 */
 }
 
 void Diag_IsrTiming(uint32_t start, uint32_t end)

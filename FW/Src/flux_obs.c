@@ -54,6 +54,31 @@ void FluxObs_Init(void)
     FluxObs_Reset();
 }
 
+#if CTRL_OBS_HPF_COMP
+/* 去直流相位补偿：输出前把 psi_s 转 -alpha，alpha = sign(w)*atan(wc/|w|)。
+ * cos/sin 在慢环算好（无需 atan：cos = w/r，sin = wc/r，r = sqrt(w^2+wc^2)）。 */
+static volatile int16_t s_compCos = 32767, s_compSin = 0;
+
+void FluxObs_SetSpeed(int16_t spdQ15)
+{
+    int32_t w = spdQ15 < 0 ? -(int32_t)spdQ15 : spdQ15;
+    int32_t wc = HPF_WC_Q15SPD, w0 = HPF_COMP_W0_Q15SPD;
+    int32_t r, s, c;
+    if (w <= w0) { s_compCos = 32767; s_compSin = 0; return; }
+    r = (int32_t)Mx_Isqrt32((uint32_t)(w * w + wc * wc));      /* 慢环，允许开方和除法 */
+    s = (wc * 32767) / r;
+    c = (w * 32767) / r;
+    if (w < 2 * w0) {                                           /* w0~2w0 之间线性补上去 */
+        s = s * (w - w0) / w0;
+        c = (int32_t)Mx_Isqrt32((uint32_t)(32767 * 32767 - s * s));
+    }
+    s_compCos = (int16_t)c;
+    s_compSin = (int16_t)(spdQ15 < 0 ? -s : s);
+}
+#else
+void FluxObs_SetSpeed(int16_t spdQ15) { (void)spdQ15; }
+#endif
+
 #if MOTOR_IPM
 /* 内嵌式：有效磁链幅值目标 = psi_f + (Ld-Lq)*id。快环读这三个量（各是一次 32 位
  * 读，主循环更新时最多有一拍新旧混用，无害）。 */
@@ -174,8 +199,17 @@ static void FluxObs_Run(const FOC_TypeDef *f)
     sFluxObs.s16PsiAl = (sFluxObs.s32PsiAlF + 32768) >> 16; sFluxObs.s16PsiBe = (sFluxObs.s32PsiBeF + 32768) >> 16;
 
     /* 输出：用积分后的 psi_s 算本拍的 psi_r */
+#if CTRL_OBS_HPF_COMP
+    {   /* 先补掉去直流带来的相位超前（只改输出，不改积分状态） */
+        int32_t c = s_compCos, s = s_compSin;
+        int32_t ps = sFluxObs.s16PsiAl, pb = sFluxObs.s16PsiBe;
+        x = ((ps * c + pb * s) >> 15) - Mx_MulQ15(sFluxObs.s16KLs, current.s16Alpha);
+        y = ((pb * c - ps * s) >> 15) - Mx_MulQ15(sFluxObs.s16KLs, current.s16Beta);
+    }
+#else
     x = (int32_t)sFluxObs.s16PsiAl - Mx_MulQ15(sFluxObs.s16KLs, current.s16Alpha);
     y = (int32_t)sFluxObs.s16PsiBe - Mx_MulQ15(sFluxObs.s16KLs, current.s16Beta);
+#endif
     if (x > PSI_LIMIT || x < -PSI_LIMIT || y > PSI_LIMIT || y < -PSI_LIMIT) gFluxDiag.fluxSatCount++;
     sFluxObs.s16PsiRAl = (int16_t)Mx_Clamp(x, PSI_LIMIT); sFluxObs.s16PsiRBe = (int16_t)Mx_Clamp(y, PSI_LIMIT);
 

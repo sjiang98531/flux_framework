@@ -50,6 +50,8 @@ void FluxObs_Capture(const FOC_TypeDef *f, uint8_t valid);
 void FluxObs_UpdateFeedback(FOC_TypeDef *f);
 /* 当前 |psi_r| 的目标值（Q15 磁链），诊断/置信度用 */
 int16_t FluxObs_TargetMag(void);
+/* 按 PLL 估计转速更新去直流的相位补偿（慢环调用；CTRL_OBS_HPF_COMP = 0 时空函数） */
+void FluxObs_SetSpeed(int16_t spdQ15);
 #if MOTOR_IPM
 /* 内嵌式：按 d 轴电流指令更新有效磁链幅值目标（慢环调用，含除法） */
 void FluxObs_SetIdRef(int16_t idQ15);

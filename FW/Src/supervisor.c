@@ -139,6 +139,7 @@ void Ctrl_ResetRunVariables(void)
     FOC.sProtect.bPhaseless = 0;
     FOC.sProtect.u16PhaselessTimeCnt = 0;
     MtpaFw_Reset();         /* MTPA/弱磁关闭时是空函数 */
+    FocCore_ResetDecouple();        /* 积分器上面已清零，只复位开关，不搬前馈 */
 }
 
 void Ctrl_FastTick(void)
@@ -157,6 +158,8 @@ void Ctrl_FastTick(void)
 void Ctrl_SlowTick(void)
 {
     s_STATE_SLOW[eM1_MainState]();
+    /* 观测器去直流的相位补偿跟随 PLL 转速（关闭时空函数） */
+    FluxObs_SetSpeed(eM1_MainState == MainState_Run ? (int16_t)(FOC.sPLL.s32Speed >> 16) : 0);
     Diag_SlowTick();
 }
 
@@ -429,6 +432,7 @@ void Sup_SwitchAlignStartup(void)
 void Sup_SwitchStartupSpin(void)
 {
     SpeedCtrl_OnEnterSpin();
+    FocCore_SetDecouple(&FOC, 1);
     FOC.sProtect.u16PhaselessTimeCnt = 0;
     FOC.s16PreSpdCmd = FOC.s16SpdCmd;
     eM1_RunSubState = RunState_Spin;
@@ -438,6 +442,7 @@ void Sup_SwitchStartupSpin(void)
 void Sup_SwitchTorqueloopSpin(void)
 {
     SpeedCtrl_OnEnterSpin();
+    FocCore_SetDecouple(&FOC, 1);
     FOC.s16ErrTheta = 0;
     FOC.sProtect.u16PhaselessTimeCnt = 0;
     FOC.s16PreSpdCmd = FOC.s16SpdCmd;
@@ -449,6 +454,7 @@ void Sup_SwitchTorqueloopSpin(void)
 void Sup_SwitchSpinStartup(void)
 {
     MtpaFw_Reset();         /* 回到原厂启动：id = 0 */
+    FocCore_SetDecouple(&FOC, 0);
     eM1_RunSubState = RunState_Startup;
     Est_OnEnterStartupFromSpin(&FOC);       /* 转子还在转：上报转速从当前值开始 */
     USER.sSpeedRamp.s32State = FOC.s16SpdFilt << 16;

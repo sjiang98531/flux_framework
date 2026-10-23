@@ -12,16 +12,17 @@ void FocCore_Init(void)
     FOC.s16KVbus = Q15(0.866 * UDC_MAX / UDC_RATE / 4);
 
     /* d 轴电流环（用 Ld） */
-    FOC.CurID.qKp = CURRENT_KP_D;
-    FOC.CurID.qKi = CURRENT_KI_D;
+    /* 快环 PI（Pi_Run32）要求 Kp、Ki <= 65535，超了封顶并在 gFluxDiag.cfgWarn 置 bit1 */
+    FOC.CurID.qKp = CURRENT_KP_D > 65535 ? 65535 : CURRENT_KP_D;
+    FOC.CurID.qKi = CURRENT_KI_D > 65535 ? 65535 : CURRENT_KI_D;
     FOC.CurID.qOutMax = CURRENT_OUTMAX;
     FOC.CurID.qOutMin = -FOC.CurID.qOutMax;
     FOC.CurID.qdSum = 0;
     FOC.CurID.qInMeas = 0;
     FOC.CurID.qOut = 0;
     /* q 轴电流环（用 Lq） */
-    FOC.CurIQ.qKp = CURRENT_KP_Q;
-    FOC.CurIQ.qKi = CURRENT_KI_Q;
+    FOC.CurIQ.qKp = CURRENT_KP_Q > 65535 ? 65535 : CURRENT_KP_Q;
+    FOC.CurIQ.qKi = CURRENT_KI_Q > 65535 ? 65535 : CURRENT_KI_Q;
     FOC.CurIQ.qOutMax = CURRENT_OUTMAX;
     FOC.CurIQ.qOutMin = -FOC.CurIQ.qOutMax;
     FOC.CurIQ.qdSum = 0;
@@ -61,29 +62,63 @@ void FOC_Current_Controller(FOC_TypeDef *pFOC)
  *   Startup 子状态：d 轴积分器每拍预置成 -2000*iq_cmd（原厂的启动经验值，
  *                   相当于给一个 -omega*Lq*iq 量级的 Vd，保留）
  *   d 轴输出限 ±VMAX；q 轴限 ±sqrt(VMAX^2 - Vd^2)（电压圆，d 轴优先） */
+#if CTRL_DQ_DECOUPLE
+static uint8_t s_decOn;
+/* vd_ff = -w*Lq*iq，vq_ff = w*psi_f + w*Ld*id（指令电流，Q15 电压） */
+static __forceinline void decoupleFF(const FOC_TypeDef *f, int32_t *ffd, int32_t *ffq)
+{
+    int32_t w = f->sPLL.s32Speed >> 16;
+    int32_t wiq = (w * f->sIdq_cmd.s16Q) >> 15;
+    int32_t wid = (w * f->sIdq_cmd.s16D) >> 15;
+    *ffd = -((wiq * DEC_K_LQ_Q12) >> 12);
+    *ffq = ((w * DEC_K_EMF_Q15) >> 15) + ((wid * DEC_K_LD_Q12) >> 12);
+}
+
+void FocCore_SetDecouple(FOC_TypeDef *f, uint8_t on)
+{
+    int32_t ffd, ffq;
+    if (on == s_decOn) return;
+    decoupleFF(f, &ffd, &ffq);
+    if (on) { f->CurID.qdSum -= ffd << 15; f->CurIQ.qdSum -= ffq << 15; }
+    else    { f->CurID.qdSum += ffd << 15; f->CurIQ.qdSum += ffq << 15; }
+    s_decOn = on;
+}
+
+void FocCore_ResetDecouple(void) { s_decOn = 0; }
+#else
+void FocCore_SetDecouple(FOC_TypeDef *f, uint8_t on) { (void)f; (void)on; }
+void FocCore_ResetDecouple(void) { }
+#endif
+
 void FocCore_DqPI(FOC_TypeDef *f)
 {
-    int32_t t;
+    int32_t t, ffd = 0, ffq = 0, vd, lim;
+#if CTRL_DQ_DECOUPLE
+    if (s_decOn) decoupleFF(f, &ffd, &ffq);
+#endif
     if (eM1_RunSubState == RunState_Startup) {
         t = (int32_t)f->sIdq_cmd.s16Q * -2000;
         if (t < -32767000) t = -32767000;
         else if (t > 32767000) t = 32767000;
         f->CurID.qdSum = t;
     }
-    f->CurID.qOutMax = f->s16VMAX;
-    f->CurID.qOutMin = -f->CurID.qOutMax;
+    /* 前馈为 0 时与原厂逐位相同：PI 输出范围 = 电压限幅 - 前馈 */
+    f->CurID.qOutMax = f->s16VMAX - ffd;
+    f->CurID.qOutMin = -f->s16VMAX - ffd;
     f->CurID.qInRef = f->sIdq_cmd.s16D;
     f->CurID.qInMeas = f->sIdq.s16D;
     Pi_Run32(&f->CurID);
-    f->sVdq.s16D = (int16_t)f->CurID.qOut;
+    vd = f->CurID.qOut + ffd;
+    f->sVdq.s16D = (int16_t)vd;
 
     t = (int32_t)f->s16VMAX * f->s16VMAX - (int32_t)f->sVdq.s16D * f->sVdq.s16D;
-    f->CurIQ.qOutMax = Sqrt_Q15(t);
-    f->CurIQ.qOutMin = -f->CurIQ.qOutMax;
+    lim = Sqrt_Q15(t);
+    f->CurIQ.qOutMax = lim - ffq;
+    f->CurIQ.qOutMin = -lim - ffq;
     f->CurIQ.qInRef = f->sIdq_cmd.s16Q;
     f->CurIQ.qInMeas = f->sIdq.s16Q;
     Pi_Run32(&f->CurIQ);
-    f->sVdq.s16Q = (int16_t)f->CurIQ.qOut;
+    f->sVdq.s16Q = (int16_t)(f->CurIQ.qOut + ffq);
 }
 
 void FocCore_Modulate(const FOC_TypeDef *f, uint8_t mode)
