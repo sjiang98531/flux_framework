@@ -63,3 +63,4 @@ _snapshots/
 _reorg_new/
 _test28_new/
 tools/sim/build/
+__pycache__/

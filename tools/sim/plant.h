@@ -9,6 +9,7 @@ typedef struct {
     double vbus, tdEff;          /* bus voltage, effective dead time [s] */
     int adcOff[2];               /* ADC zero offsets (counts), phases U,V */
     double loadStep;             /* extra load torque [Nm] */
+    double noise;                /* ADC 噪声幅值（LSB，均匀分布 ±noise） */
     /* state */
     double id, iq, wm, thm;      /* dq currents, mech speed rad/s, mech angle */
     double iu, iv, iw;

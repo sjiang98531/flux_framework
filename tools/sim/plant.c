@@ -32,7 +32,13 @@ void plant_init(Plant *p, int ipm)
       if ((e = getenv("SIM_TH0"))) p->thm = atof(e);
       if ((e = getenv("SIM_FRIC"))) p->tFric = atof(e);
       if ((e = getenv("SIM_W0"))) p->wm = atof(e) * TWO_PI / 60.0;
-      if ((e = getenv("SIM_VBUS"))) p->vbus = atof(e); }
+      if ((e = getenv("SIM_VBUS"))) p->vbus = atof(e);
+      /* 参数失配：电机实际值 = 标称 * 系数（控制器仍按标称） */
+      if ((e = getenv("SIM_KR"))) p->res *= atof(e);
+      if ((e = getenv("SIM_KL"))) { p->lD *= atof(e); p->lQ *= atof(e); }
+      if ((e = getenv("SIM_KPSI"))) p->psi *= atof(e);
+      if ((e = getenv("SIM_KJ"))) p->J *= atof(e);
+      p->noise = (e = getenv("SIM_NOISE")) ? atof(e) : 1.0; }
 }
 
 static int phaseState(uint32_t chn, int bitHi)   /* 2 = PWM, 1 = low side, 0 = float */
@@ -44,15 +50,26 @@ static int phaseState(uint32_t chn, int bitHi)   /* 2 = PWM, 1 = low side, 0 = f
     return 0;
 }
 
+/* SIM_PWMDLY=1：比较值晚一个 PWM 周期生效（影子寄存器在周期边界装载的硬件）。
+ * 默认 0 = 本拍写、本拍生效（乐观）。 */
+static int s_dlyInit, s_dly; static uint32_t s_chnPrev; static int32_t s_dtPrev[3];
 void plant_step(Plant *p, double dt)
 {
     const int N = 8;
     double h = dt / N;
     uint32_t chn = EPWM->EPWM_CHN;
+    int32_t dt4 = (int32_t)EPWM->EPWM_DT[4], dt2 = (int32_t)EPWM->EPWM_DT[2], dt0 = (int32_t)EPWM->EPWM_DT[0];
+    if (!s_dlyInit) { const char *e = getenv("SIM_PWMDLY"); s_dly = e ? atoi(e) : 0; s_dlyInit = 1;
+                      s_chnPrev = chn; s_dtPrev[0] = dt4; s_dtPrev[1] = dt2; s_dtPrev[2] = dt0; }
+    if (s_dly) {
+        uint32_t c0 = chn; int32_t a = dt4, b = dt2, c = dt0;
+        chn = s_chnPrev; dt4 = s_dtPrev[0]; dt2 = s_dtPrev[1]; dt0 = s_dtPrev[2];
+        s_chnPrev = c0; s_dtPrev[0] = a; s_dtPrev[1] = b; s_dtPrev[2] = c;
+    }
     int su = phaseState(chn, 4), sv = phaseState(chn, 2), sw = phaseState(chn, 0);
-    double du = (PERIOD - (double)(int32_t)EPWM->EPWM_DT[4]) / PERIOD;
-    double dv = (PERIOD - (double)(int32_t)EPWM->EPWM_DT[2]) / PERIOD;
-    double dw = (PERIOD - (double)(int32_t)EPWM->EPWM_DT[0]) / PERIOD;
+    double du = (PERIOD - (double)dt4) / PERIOD;
+    double dv = (PERIOD - (double)dt2) / PERIOD;
+    double dw = (PERIOD - (double)dt0) / PERIOD;
     int driven = (su && sv && sw);
     int k;
     if (du < 0) du = 0; if (du > 1) du = 1;
@@ -99,8 +116,8 @@ void plant_step(Plant *p, double dt)
     }
     {
         const double kAdc = 0.1 * 3.139 / 5.0 * 4096.0;
-        int u = (int)lround(p->adcOff[0] - p->iu * kAdc + (urand(p) - 0.5) * 2.0);
-        int v = (int)lround(p->adcOff[1] - p->iv * kAdc + (urand(p) - 0.5) * 2.0);
+        int u = (int)lround(p->adcOff[0] - p->iu * kAdc + (urand(p) - 0.5) * 2.0 * p->noise);
+        int v = (int)lround(p->adcOff[1] - p->iv * kAdc + (urand(p) - 0.5) * 2.0 * p->noise);
         if (u < 0) u = 0; if (u > 4095) u = 4095;
         if (v < 0) v = 0; if (v > 4095) v = 4095;
         ADC_DMABuff[0] = (uint16_t)u;
