@@ -1,6 +1,8 @@
 #include "foc_core.h"
 #include "hal.h"
 #include "ctrl_globals.h"
+#include "ctrl_pi.h"
+#include "supervisor.h"
 
 void FocCore_Init(void)
 {
@@ -43,12 +45,45 @@ void FOC_Current_Controller(FOC_TypeDef *pFOC)
     s16Temp = MLIB_Mul_Q15(USER.s16DutyLimitCmd, pFOC->s16VbusAvg);
     pFOC->s16VMAX = MLIB_Mul_Q15(s16Temp, Q15(0.6667));     /* 幅值不变变换 */
 
-    /* d/q 两个 PI + Vq 圆限幅（原厂库；Startup 子状态下库会预置 d 轴积分器） */
+#if CTRL_OWN_PI
+    FocCore_DqPI(pFOC);
+#else
+    /* 原厂库：d/q 两个 CalcPI + Vq 圆限幅；Startup 子状态下预置 d 轴积分器 */
     Fast_Boot_Current_Controller(pFOC);
+#endif
 
     pFOC->sAngle_cmd_update = pFOC->sAngle_cmd;
     MCFLIB_InvPark_S16(&pFOC->sVdq, &pFOC->sAngle_cmd_update, &pFOC->sVAlBe);
     DcBus_Ripple_suppress(&pFOC->sVAlBe, pFOC->s16VbusAvg, &pFOC->sVAlBe_cmd);
+}
+
+/* d/q 电流 PI（替代原厂 Fast_Boot_Current_Controller，逻辑按反汇编逐条对应）：
+ *   Startup 子状态：d 轴积分器每拍预置成 -2000*iq_cmd（原厂的启动经验值，
+ *                   相当于给一个 -omega*Lq*iq 量级的 Vd，保留）
+ *   d 轴输出限 ±VMAX；q 轴限 ±sqrt(VMAX^2 - Vd^2)（电压圆，d 轴优先） */
+void FocCore_DqPI(FOC_TypeDef *f)
+{
+    int32_t t;
+    if (eM1_RunSubState == RunState_Startup) {
+        t = (int32_t)f->sIdq_cmd.s16Q * -2000;
+        if (t < -32767000) t = -32767000;
+        else if (t > 32767000) t = 32767000;
+        f->CurID.qdSum = t;
+    }
+    f->CurID.qOutMax = f->s16VMAX;
+    f->CurID.qOutMin = -f->CurID.qOutMax;
+    f->CurID.qInRef = f->sIdq_cmd.s16D;
+    f->CurID.qInMeas = f->sIdq.s16D;
+    Pi_Run32(&f->CurID);
+    f->sVdq.s16D = (int16_t)f->CurID.qOut;
+
+    t = (int32_t)f->s16VMAX * f->s16VMAX - (int32_t)f->sVdq.s16D * f->sVdq.s16D;
+    f->CurIQ.qOutMax = Sqrt_Q15(t);
+    f->CurIQ.qOutMin = -f->CurIQ.qOutMax;
+    f->CurIQ.qInRef = f->sIdq_cmd.s16Q;
+    f->CurIQ.qInMeas = f->sIdq.s16Q;
+    Pi_Run32(&f->CurIQ);
+    f->sVdq.s16Q = (int16_t)f->CurIQ.qOut;
 }
 
 void FocCore_Modulate(const FOC_TypeDef *f, uint8_t mode)

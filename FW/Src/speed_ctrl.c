@@ -1,8 +1,15 @@
 #include "speed_ctrl.h"
 #include "ctrl_globals.h"
+#include "ctrl_pi.h"
 #include <stdlib.h>
 
 int16_t s16PowerFdk;
+
+#if CTRL_OWN_PI
+#define RUN_PI(p)   Pi_Run64(p)     /* 64 位，增益可以超过 65535 */
+#else
+#define RUN_PI(p)   CalcPI(p)       /* 原厂库 */
+#endif
 
 #define RAMP_Q31(rate, base)    Q31((rate) / (base) / SLOWLOOP_FREQ)
 
@@ -75,11 +82,11 @@ void SpeedCtrl_SpinSlow(void)
 #endif
         FOC.Speed.qInRef = FOC.s16SpeedRamp;
         FOC.Speed.qInMeas = FOC.s16SpdFilt;
-        CalcPI(&FOC.Speed);
+        RUN_PI(&FOC.Speed);
 
         FOC.Power.qInRef = IBUS_LIMIT_VALUE;    /* 母线电流限 */
         FOC.Power.qInMeas = FOC.s16IbusAvg;
-        CalcPI(&FOC.Power);
+        RUN_PI(&FOC.Power);
 
         s32IqCmd = (int32_t)FOC.Speed.qOut + FOC.Power.qOut + s16AccFF;
         if (s32IqCmd > USER.s16IqLimitMax)  s32IqCmd = USER.s16IqLimitMax;
@@ -92,11 +99,11 @@ void SpeedCtrl_SpinSlow(void)
 
     FOC.Speed.qInRef = SPEED_LIMIT_VALUE;       /* 限速 */
     FOC.Speed.qInMeas = FOC.s16SpdFilt;
-    CalcPI(&FOC.Speed);
+    RUN_PI(&FOC.Speed);
 
     FOC.Power.qInRef = FOC.s16PowerRamp;
     FOC.Power.qInMeas = s16PowerFdk;
-    CalcPI(&FOC.Power);
+    RUN_PI(&FOC.Power);
 
     FOC.sIdq_cmd.s16Q = FOC.Power.qOut + FOC.Speed.qOut;
 #endif

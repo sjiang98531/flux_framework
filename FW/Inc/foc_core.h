@@ -22,6 +22,9 @@ static __forceinline void FocCore_Clarke(FOC_TypeDef *f)
  * 原厂函数名 FOC_Current_Controller，逻辑不变。 */
 void FOC_Current_Controller(FOC_TypeDef *pFOC);
 
+/* d/q 电流 PI（自写，防溢出；CTRL_OWN_PI = 1 时 FOC_Current_Controller 调它） */
+void FocCore_DqPI(FOC_TypeDef *f);
+
 /* SVPWM：f->sVAlBe_cmd -> pwm_gen -> 比较寄存器。mode = SEVENMODE / FIVEMODE */
 void FocCore_Modulate(const FOC_TypeDef *f, uint8_t mode);
 

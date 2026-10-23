@@ -68,6 +68,20 @@ static double profile(int sc, double t, Plant *pl)
         if (t < 8.0) return 1000;
         if (t < 16.0) return -1000;
         return 300;
+    case 6: /* speed steps: 1172 -> 600 -> 1172 (speed-loop response) */
+        if (t < 0.2) return 0;
+        if (t < 20.0) return 1172;
+        if (t < 40.0) return 600;
+        return 1172;
+    case 7: /* low-speed plateaus: 300, 150, 80 rpm (observer angle accuracy) */
+        if (t < 0.2) return 0;
+        if (t < 10.0) return 300;
+        if (t < 20.0) return 150;
+        return 80;
+    case 8: /* load step +0.5 N*m at 1000 rpm from 15 s to 30 s */
+        pl->loadStep = (t > 15.0 && t < 30.0) ? 0.5 : 0.0;
+        if (t < 0.2) return 0;
+        return 1000;
     default:
         return t < 0.2 ? 0 : 1000;
     }
