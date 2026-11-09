@@ -255,7 +255,7 @@ void Spin_Slow(void)
         Sup_Log(SUP_EV_FALLBACK, SUP_FB_OPENLOOP);
         Sup_SwitchSpinStartup();
     } else
-    if (cmdSameDir()) {
+    if (!cmdOppositeDir()) {    /* 同向，或估计转速恰为 0（指令此处不为 0）：0 也按"转不动"判失锁 */
         if (++s_u16SpinCheckTime >= SPIN_CHECK_TICKS) {
             s_u16SpinCheckTime = 0;
             if (spinTooSlow()) {
