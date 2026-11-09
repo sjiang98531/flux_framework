@@ -30,7 +30,7 @@ void Est_SpinTick(void);
 
 /* 进入 I/F 冷起动（定位之后）：观测器复位、PLL 角度对齐定位角 */
 void Est_OnEnterStartupCold(void);
-/* 飞车直接接管进入 Spin（FLY_PHASOR）：theta = 本拍采样时刻的转子角，spd = 转速 Q15。
+/* 飞车直接接管进入 Spin：theta = 本拍采样时刻的转子角，spd = 转速 Q15。
  * 预置观测器磁链、PLL（角度推进到下一拍、转速、积分器）以及转速反馈 / 滤波器。 */
 void Est_OnCatch(int16_t theta, int16_t spd);
 /* 停机 / 故障复位：PLL 转速和积分器清零（角度、增益保留） */

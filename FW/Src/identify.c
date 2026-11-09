@@ -608,7 +608,7 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
 
 /* ===========================================================================
  * 运行辨识之一：I/F 开环中测量磁链
- * 开环拖到目标转速（指令限制在 OPENLOOP_HANDOVER ~ OPENLOOP_FALLBACK 之间）后暂不切闭环：稳定 300 ms、平均 500 ms，
+ * 开环拖到目标转速（指令限制在 OPENLOOP_HANDOVER_RPM ~ OPENLOOP_FALLBACK_RPM 之间）后暂不切闭环：稳定 300 ms、平均 500 ms，
  *   e = v - R i - Vdt(i) - jωL(|i|) i，psi_f = |e| / |ω|
  * 全部为 dq 平面中的模长 / 叉乘，与开环角是否对准转子无关（I/F 电流角滞后转子任意角度均可），ω 为开环电角速度（同步）。
  * 要求 R、L、死区准确：在静止测量之后进行（gParam 已为测得值）。死区按 cfg_board.h 的模型（clamp(i/I0)）取基波：

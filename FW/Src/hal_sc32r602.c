@@ -24,7 +24,9 @@ Hal_TypeDef gHal;
 /* 零点校准累加器：A、B 相电流及母线电流的采样和（256 个） */
 static uint32_t s_u32IaSum, s_u32IbSum, s_u32IbusSum;
 static uint16_t s_u16Cnt;                /* 上电拍数（零点校准用） */
-static uint16_t s_u16IbusOffset;
+#if (IBUS_RECONSTRUCTED == 0)
+static uint16_t s_u16IbusOffset;        /* 母线电流采样零点（仅在使用采样值时需要） */
+#endif
 static uint16_t s_adcMin[2], s_adcMax[2];   /* 零点窗口内两相电流采样的最小 / 最大值（用于测量噪声） */
 /* 快环拍数计数，达到 gHal.slowLoopDiv（16）时挂起一次慢环 */
 static uint8_t  s_u8SlowDiv;
@@ -58,7 +60,9 @@ FORCE_INLINE uint8_t acquireSamples(void)
     } else if (s_u16Cnt == 1255) {
         gMeas.iabcOffset.s16A = s_u32IaSum >> 8;
         gMeas.iabcOffset.s16B = s_u32IbSum >> 8;
+#if (IBUS_RECONSTRUCTED == 0)
         s_u16IbusOffset = s_u32IbusSum >> 8;
+#endif
         {   /* 噪声峰值（码）= 峰峰值 / 2 向上取整 + 1 码量化，两相取较大值。飞车测速脉冲电流下限据此计算（flystart.c） */
             uint16_t na = (uint16_t)((s_adcMax[0] - s_adcMin[0] + 1) >> 1), nb = (uint16_t)((s_adcMax[1] - s_adcMin[1] + 1) >> 1);
             gHal.adcNoisePk = (uint16_t)((na > nb ? na : nb) + 1);

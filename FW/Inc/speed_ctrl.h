@@ -50,7 +50,7 @@ void SpeedCtrl_OnEnterSpin(void);
 /* 进入 Startup：速度斜坡改用 STARTUP_SPEED_RAMP */
 void SpeedCtrl_UseStartupRamp(void);
 /* I/F 切换时刻调用：开始融合。(id0, iq0) 为需淡出的分量（叠加在控制器输出上）；
- * 斜坡从 rampStartQ31（开环转速）以 I/F 加速度继续；accScaleQ12 = 开环加速度 / OPENLOOP_ACC */
+ * 斜坡从 rampStartQ31（开环转速）以 I/F 加速度继续；accScaleQ12 = 开环加速度 / OPENLOOP_ACC_RPM_S */
 void SpeedCtrl_BlendStart(int16_t id0, int16_t iq0, int32_t rampStartQ31, int16_t accScaleQ12, int16_t ff0);
 /* 停止融合（离开 Spin / 停机 / 飞车直接进 Spin） */
 void SpeedCtrl_BlendStop(void);

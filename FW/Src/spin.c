@@ -25,7 +25,7 @@
 static volatile uint8_t s_spinEntryPending;     /* 飞车直接进入 Spin 后，速度环初始化推迟到下一个慢环周期 */
 /* 零电流跟踪：Spin 中 id = iq = 0、PWM 保持输出、观测器与 PLL 持续跟踪转子，速度环不闭合。
  * 两个入口：飞车接管、闭环中停机（软停机电流降到 0 后）；两个出口：指令恢复 -> 闭合速度环，
- * 转速低于观测器可靠下限 -> 关闭 PWM 回到 Stop。见 trackSlow。 */
+ * 转速低于观测器可靠下限 -> 关闭 PWM 回到 Stop。见 Spin_TrackSlow。 */
 static volatile uint8_t s_track;                /* 1 = 零电流跟踪中 */
 static uint16_t s_trackN;                       /* 进入跟踪后的慢环拍数（饱和） */
 static int32_t s_syncSum, s_syncN;              /* 当前块的 PLL 转速累加（块长 FLY_SYNC_TICKS/2，用于求平均） */
@@ -35,7 +35,7 @@ static int8_t s_spinDir;              /* 进入 Spin 时的指令方向；之后
 static uint16_t s_u16SpinCheckTime;     /* Spin 中 spinTooSlow 的轮询分频（SPIN_CHECK_TICKS） */
 
 /* 同向时估计转速降到 SPIN_LOST_RPM 以下：Spin 只在 >= 切换转速的区间运行，同向降到此值不属于正常减速
- * （正常减速在 OPENLOOP_FALLBACK 已交给 I/F），判为失锁或堵转 */
+ * （正常减速在 OPENLOOP_FALLBACK_RPM 已交给 I/F），判为失锁或堵转 */
 static uint8_t spinTooSlow(void)
 {
     if (gMeas.speed >= SPIN_LOST_Q15 && gSpd.cmd > 0) return 0;
@@ -45,6 +45,16 @@ static uint8_t spinTooSlow(void)
 
 
 static void spinEntered(void);
+
+/* 指令与估计转速同向 / 反向（任一为 0 时两者都不成立） */
+static uint8_t cmdSameDir(void)
+{
+    return (uint8_t)((gSpd.cmd > 0 && gMeas.speed > 0) || (gSpd.cmd < 0 && gMeas.speed < 0));
+}
+static uint8_t cmdOppositeDir(void)
+{
+    return (uint8_t)((gSpd.cmd > 0 && gMeas.speed < 0) || (gSpd.cmd < 0 && gMeas.speed > 0));
+}
 
 /* 停机复位：清除"待初始化速度环"与零电流跟踪标志 */
 void Spin_Reset(void)
@@ -82,9 +92,9 @@ void Spin_OnEnterCatch(void)
  * 电流控制为 0、电机不出力，PWM 保持输出，观测器与 PLL 持续跟踪转子。由此保持转子状态，
  * 滑行中重新给指令时可直接闭环，无需重新进行飞车测速。
  *   入口：飞车接管（脉冲给出初始角 / 转速）；闭环中停机（软停将电流降到 0 后）。
- *   出口：指令恢复（|cmd| > STOP_TO_RUN）且已跟踪 FLY_SYNC_TICKS（PLL 收敛）-> 按跟踪转速闭合速度环，
+ *   出口：指令恢复（|cmd| > STOP_TO_RUN_SPEED）且已跟踪 FLY_SYNC_TICKS（PLL 收敛）-> 按跟踪转速闭合速度环，
  *         反向指令即为一次正常的闭环反转；
- *         无指令且转速低于 TRACK_END（观测器可靠下限）-> 关闭 PWM 回到 Stop，之后再起动走飞车检测 / 定位。
+ *         无指令且转速低于 TRACK_END_RPM（观测器可靠下限）-> 关闭 PWM 回到 Stop，之后再起动走飞车检测 / 定位。
  * 转速按块平均（块长 FLY_SYNC_TICKS/2）：只在块结束时决定是否闭环，以刚结束一块的平均值预置转速滤波器与斜坡
  * （飞车入口的第一个决策点 = FLY_SYNC_TICKS，平均的是后半段）。
  * 顺风持续时持续跟踪；逆风使转子降速到结束转速以下时关闭 PWM，再起动按逆风飞车处理。
@@ -96,12 +106,13 @@ void Spin_TrackBegin(void)
     s_trackN = 0;
     s_syncSum = 0; s_syncN = 0;
     FocCore_SetIdqRef(0, 0);
+    SpeedCtrl_BlendStop();      /* 跟踪期间电流为 0，未完成的 I/F 切换融合作废，否则跟踪结束闭环时会重新叠加 */
 }
 
 /* 零电流跟踪一拍（慢环）：
  *   前 first 拍等待 PLL 收敛；之后每 half 拍为一块，累加 PLL 转速求平均；
- *   块结束时：存在指令（|指令| > STOP_TO_RUN）-> 以该块平均转速预置转速滤波器、斜坡、速度环，结束跟踪并闭环；
- *            无指令且转速 < TRACK_END -> 关闭 PWM 回到 Stop；否则继续跟踪。
+ *   块结束时：存在指令（|指令| > STOP_TO_RUN_SPEED）-> 以该块平均转速预置转速滤波器、斜坡、速度环，结束跟踪并闭环；
+ *            无指令且转速 < TRACK_END_RPM -> 关闭 PWM 回到 Stop；否则继续跟踪。
  *   零电流下只检查超速（缺相、堵转需有电流才有意义） */
 void Spin_TrackSlow(void)
 {
@@ -195,7 +206,7 @@ static void spinLostLockStop(void)
  * 直接切换会使 d 轴电流阶跃。分两段消除阶跃：
  *  1. 判定需回退后先留在 Spin，将 |id| 上限按电流变化率 CURRENT_SLEW_A_S 降到 0（撤除回馈制动 id，电流只减不增，
  *     观测器不受影响；若在闭环中直接渐变到 I/F 的 d 分量，低速大 id 下电阻误差可能导致观测器失锁）；
- *  2. 进入 I/F 时开环电流从 |iq| / sin(OPENLOOP_WARM_DELTA_DEG) 起、按同一变化率升到目标（Startup_OnEnterOpenLoop），
+ *  2. 进入 I/F 时开环电流从 |iq| / sin(OPENLOOP_WARM_DELTA_DEG) 起、按同一变化率升到目标（Startup_PrepareOpenLoop），
  *     切换时刻 d 轴仅增加 |iq|。
  * 两段均使用 CURRENT_SLEW_A_S（= 软停机 = S 形斜坡的最大转矩变化率）。
  * 条件中途不再成立（指令改回）时停止。 */
@@ -206,7 +217,7 @@ static uint8_t fallbackBlend(void)
     if (s_fbLim < 0) {
         if (!Startup_OpenLoopWantsFallback()) return 0;
         s_fbLim = abs(d);
-    } else if (QMath_MulQ15(gSpd.cmd, gMeas.speed) > 0 && abs(gSpd.cmd) >= OPENLOOP_SPIN_MIN_Q15) {
+    } else if (cmdSameDir() && abs(gSpd.cmd) >= OPENLOOP_SPIN_MIN_Q15) {
         /* 开始融合后只依据指令：转速在回退门限附近含噪声，若按转速判断会反复清零、融合无法完成，
          * 导致长时间停留在门限以下的闭环中。仅当指令改回同向时才取消 */
         s_fbLim = -1;
@@ -238,26 +249,26 @@ void Spin_Slow(void)
     FocCore_SetIdqRef(gSpd.idqCmd.s16D, gSpd.idqCmd.s16Q);
 
 
-    /* 低速区（含过零反向）由 I/F 开环负责，在观测器仍锁定的转速即交回；同向降到 SPIN_LOST 以下 = 失锁 */
+    /* 低速区（含过零反向）由 I/F 开环负责，在观测器仍锁定的转速即交回；同向降到 SPIN_LOST_RPM 以下 = 失锁 */
     if (spinLostLock()) { spinLostLockStop(); return; }
     if (fbReady) {
         Sup_Log(SUP_EV_FALLBACK, SUP_FB_OPENLOOP);
         Sup_SwitchSpinStartup();
     } else
-    if (QMath_MulQ15(gSpd.cmd, gMeas.speed) > 0) {
+    if (cmdSameDir()) {
         if (++s_u16SpinCheckTime >= SPIN_CHECK_TICKS) {
             s_u16SpinCheckTime = 0;
             if (spinTooSlow()) {
                 /* Spin 只在 >= 切换转速的区间运行，同向降到 SPIN_LOST_RPM 以下不属于正常减速（正常减速在
-                 * OPENLOOP_FALLBACK 已交给 I/F），判为失锁或堵转：PLL 不可信，同样停机重新检测 */
+                 * OPENLOOP_FALLBACK_RPM 已交给 I/F），判为失锁或堵转：PLL 不可信，同样停机重新检测 */
                 spinLostLockStop();
                 return;
             }
         }
     } else {
-        /* 兜底：指令反向且已低于闭环最低转速仍未回退（正常在 OPENLOOP_FALLBACK 即开始回退，仅当撤除制动 id 期间
+        /* 兜底：指令反向且已低于闭环最低转速仍未回退（正常在 OPENLOOP_FALLBACK_RPM 即开始回退，仅当撤除制动 id 期间
          * 转速已很低时才会进入此分支），立即交给 I/F */
-        if ((QMath_MulQ15(gSpd.cmd, gMeas.speed) < 0) && (abs(gMeas.speed) < OPENLOOP_SPIN_MIN_Q15)) {
+        if (cmdOppositeDir() && (abs(gMeas.speed) < OPENLOOP_SPIN_MIN_Q15)) {
             Sup_Log(SUP_EV_FALLBACK, SUP_FB_REVERSE);
             Sup_SwitchSpinStartup();
         }

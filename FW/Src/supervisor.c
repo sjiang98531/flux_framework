@@ -258,9 +258,7 @@ static void M1_Init_Fast(void)
 {
     HAL_PwmAllOff();
     Ctrl_ResetRunVariables();
-    /* Init -> Stop */
-    gSup.mainState = MainState_Stop;
-    Ctrl_ResetRunVariables();
+    gSup.mainState = MainState_Stop;    /* Init -> Stop */
 }
 
 /* Stop 快环：PWM 关闭，比较值设为半占空比（下次开启 PWM 时三相电压平衡）；母线平均值直接跟随采样
@@ -344,7 +342,7 @@ static void M1_Run_Slow(void)
     {   /* 有电流的子状态（定位、I/F、闭环）执行软停机；软停机开始后，仅当闭环中指令恢复时才取消
          * （从当前电流和转速继续闭环），定位 / I/F 中一律完成后再停 */
         uint8_t live = (gSup.runState == RunState_Spin || gSup.runState == RunState_Startup || gSup.runState == RunState_Align);
-        uint8_t req = (uint8_t)(abs(gSpd.cmd) < abs(Q15(RUN_TO_STOP_SPEED / SPEED_MAX)));
+        uint8_t req = (uint8_t)(abs(gSpd.cmd) < Q15(RUN_TO_STOP_SPEED / SPEED_MAX));
         if (s_softStop && !req && gSup.runState == RunState_Spin) {
             s_softStop = 0;
             IRQ_LOCK();
@@ -352,6 +350,7 @@ static void M1_Run_Slow(void)
             IRQ_UNLOCK();
         }
         if (live && (req || s_softStop)) {
+            if (!s_softStop) SpeedCtrl_BlendStop();     /* 软停期间不执行速度环，未完成的 I/F 切换融合作废 */
             s_softStop = 1;
             if (softStopSlow()) {
                 s_softStop = 0;
@@ -370,9 +369,10 @@ static void M1_Run_Slow(void)
         s_softStop = 0;
     }
 
-    if (abs(gSpd.cmd) < abs(Q15(RUN_TO_STOP_SPEED / SPEED_MAX))) {
+    if (abs(gSpd.cmd) < Q15(RUN_TO_STOP_SPEED / SPEED_MAX)) {     /* 无电流的子状态（预充、飞车检测）直接停机 */
         HAL_PwmAllOff();
         Sup_SwitchRunStop();
+        return;
     }
     s_M1_STATE_RUN_TABLE_SLOW[gSup.runState]();
 }
@@ -481,7 +481,7 @@ void Sup_SwitchIpdStartup(int16_t theta)
 {
     OpenLoopEntry_TypeDef e;
     Startup_PrepareOpenLoop(0, 0, 0, 0, 0, &e);
-    /* 定位后电流本就在 I/F 方向上；IPD 后电流为 0，开环电流从 1/4 起按 CURRENT_SLEW 上升（与回退相同），
+    /* 定位后电流本就在 I/F 方向上；IPD 后电流为 0，开环电流从 1/4 起按 CURRENT_SLEW_A_S 上升（与回退相同），
      * 加速度按电流比例给出，负载角余量不变；d 轴电流阶跃较小 */
     e.olCur = e.olCurTarget >> 2;
     e.accStep = (e.accStepFull * e.olCur) / e.olCurTarget;
@@ -514,7 +514,7 @@ void Sup_SwitchStartupSpin(void)
     IRQ_UNLOCK();
 }
 
-/* Spin -> Startup（回退：闭环转速低于 OPENLOOP_FALLBACK，或正反转需过零）：
+/* Spin -> Startup（回退：闭环转速低于 OPENLOOP_FALLBACK_RPM，或正反转需过零）：
  * 准备 I/F 入口（开环角延续 PLL 角、开环电流从当前 iq 延续、判断是否反转），临界区内关闭解耦、切换状态 */
 void Sup_SwitchSpinStartup(void)
 {

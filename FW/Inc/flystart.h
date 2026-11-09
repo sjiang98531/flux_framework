@@ -69,7 +69,7 @@ void FlyStart_NoteRunEnd(void);
  * 返回 FLY_CATCH / FLY_CATCH_OPENLOOP 时 gFly.thetaCatch / speedCatch 有效（对应本拍采样时刻）。 */
 FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign);
 
-/* 直接接入 Spin（闭环）的转速下限：同向 FLY_CATCH，反向 FLY_REV_SPIN_MIN */
+/* 直接接入 Spin（闭环）的转速下限：同向 FLY_CATCH，反向 FLY_REV_SPIN_MIN_RPM */
 int32_t FlyStart_SpinMin(uint8_t sameDir);
 
 #endif

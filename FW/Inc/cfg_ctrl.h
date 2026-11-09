@@ -103,7 +103,7 @@
 #define SPEED_RAMP_UP           200.0       /* rpm/s */
 #define SPEED_RAMP_DOWN         200.0
 /* 反转（指令与当前转速反号）时过零前的减速斜率。同向调速仍使用上面两个斜率；反转需先将转速降到
- * OPENLOOP_FALLBACK 再交给 I/F，此段使用较大斜率。母线电压控制器（BUS_VDC_*）按回馈功率限制时，
+ * OPENLOOP_FALLBACK_RPM 再交给 I/F，此段使用较大斜率。母线电压控制器（BUS_VDC_*）按回馈功率限制时，
  * 实际减速可能更慢。 */
 #define SPEED_RAMP_REV          (2.0 * SPEED_RAMP_DOWN)     /* rpm/s，本电机 400 */
 /* 斜坡圆角：限制给定轨迹的加加速度（jerk）。加速度从 0 升到 SPEED_RAMP_UP 用时 SPEED_RAMP_ROUND_S，
@@ -178,7 +178,7 @@
 /* 闭环运行的最低指令转速：|指令| 低于该值时电机以指令转速开环（I/F）运行。
  * 闭环可运行到比切换转速更低的转速，因此该值低于 OPENLOOP_HANDOVER_RPM。 */
 #define OPENLOOP_SPIN_MIN_RPM         59.0        /* rpm（反电势约 1.4% 额定母线） */
-/* Spin 失锁判据：指令同向、估计转速却降到该值以下（正常减速在 OPENLOOP_FALLBACK 已交给 I/F，同向降到此值
+/* Spin 失锁判据：指令同向、估计转速却降到该值以下（正常减速在 OPENLOOP_FALLBACK_RPM 已交给 I/F，同向降到此值
  * 只可能是观测器失锁或堵转）-> 停机并重新进行飞车检测。每 SPIN_CHECK_S 检查一次。C 类经验值。 */
 #define SPIN_LOST_RPM           40.0        /* rpm */
 #define SPIN_CHECK_S            0.010       /* s */
@@ -205,8 +205,8 @@
 /* ===================== 顺逆风（飞车）检测 ================================ */
 /* 首先以短脉冲测速（见下）；测不到或结果不一致时退回连续短接测量（flystart.c）：
  * 每 1 ms 取一次短路电流矢量的平均，相邻两次的夹角即为 1 ms 内转过的电角度 -> 转速与转向；
- * 电流矢量方向加阻抗角即为转子角。转速足够高 -> 接入 Spin（同向 >= FLY_CATCH，反向 >= FLY_REV_SPIN_MIN）；
- * 较低但 >= FLY_LOW_MIN -> 直接进入 I/F；更低则继续短接制动，短路电流低于 FLYCURRENT_TH_PU 持续 FLYBRAKE_TIME
+ * 电流矢量方向加阻抗角即为转子角。转速足够高 -> 接入 Spin（同向 >= FLY_CATCH，反向 >= FLY_REV_SPIN_MIN_RPM）；
+ * 较低但 >= FLY_LOW_MIN_RPM -> 直接进入 I/F；更低则继续短接制动，短路电流低于 FLYCURRENT_TH_PU 持续 FLYBRAKE_TIME
  * （检测到过转动时还需额外等待停稳）后按静止处理 -> 定位 -> I/F。 */
 
 #define FLYBRAKE_TIME           0.1         /* s，短路电流低于门限持续该时间即判为静止 */
@@ -222,11 +222,11 @@
 #define FLYCURRENT_TH_PU        (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB \
                                  / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX）：FLY_STILL_RPM 下的短路电流 */
 #define CALIPWMPERCENT          (0.99)      /* 短接时下桥占空比 */
-#define FLY_CATCH_RPM           252.0       /* rpm，同向且 >= 该值时直接接入闭环（取与 OPENLOOP_FALLBACK 相同，观测器在此以上可靠） */
+#define FLY_CATCH_RPM           252.0       /* rpm，同向且 >= 该值时直接接入闭环（取与 OPENLOOP_FALLBACK_RPM 相同，观测器在此以上可靠） */
 /* 零电流跟踪结束转速（C 类经验值）：闭环中给出停机指令后不关闭 PWM，以零电流滑行跟踪转子，
  * 转速低于该值才关闭 PWM 回到 Stop。在跟踪期间重新给指令可直接闭环加速，无需飞车检测。
  * 跟踪期间零电流、无 Rs*i 误差，角度很准；限制因素是重新加速时带电流的那一刻，死区补偿误差越大、
- * 转速越低，角度误差越大。须不低于 OPENLOOP_HANDOVER（cfg_check_list.h 检查）。 */
+ * 转速越低，角度误差越大。须不低于 OPENLOOP_HANDOVER_RPM（cfg_check_list.h 检查）。 */
 #define TRACK_END_RPM           130.0       /* rpm */
 /* 短接后等待电流暂态衰减再开始测量：暂态按 L/R 衰减（本电机 3.1 ms），实际衰减约为模型值的 2 倍，
  * 取 10 倍 L/R（约 5 个实际时间常数，暂态 < 1%）。 */
@@ -237,7 +237,7 @@
  * 等待时间按估计器自身动态计算（cfg_derived.h FLY_SYNC_TICKS）：PLL 误差按 e^(-zeta*wn*t) 衰减，
  * 取 4 个时间常数（98%，本电机 60 ms）；结束时以 PLL 转速重新预置转速滤波器。
  * 零电流时观测器无 Rs*i 误差，为其最准确的工况。代价是此期间转子自由滑行，接管后有少量掉速。 */
-/* 短脉冲测速：进入 Calib 后不长时间短接，而是每 FLY_PULSE_PERIOD 施加一个下桥短接脉冲，
+/* 短脉冲测速：进入 Calib 后不长时间短接，而是每 FLY_PULSE_PERIOD_TICKS 施加一个下桥短接脉冲，
  * 电流达到门限（按实测采样噪声计算，见下）且至少 FLY_PULSE_MIN_TICKS 拍后松开（上下桥全关）。
  * 脉冲很短时电阻尚未起作用，电流 ≈ -∫e dt / L，方向与反电势相反：
  *   转子角 = ∠i + sgn(w)*90°，相邻脉冲的夹角 = 一个周期内转过的电角度 -> 转速与转向。
@@ -246,7 +246,7 @@
  * 测不到（转速太低）、反向、或多次测量不一致时，退回连续短接测量 / 制动。 */
 /* 脉冲精度要求由后级决定：
  *  - 接入 Spin：只为开启 PWM 的瞬间提供初值（使电流环与反电势匹配），精确值由后续零电流同步获得，要求约 10°；
- *  - 低速直接接入 I/F（反向低于 FLY_REV_SPIN_MIN、同向低于 FLY_CATCH）：开环无观测器修正，
+ *  - 低速直接接入 I/F（反向低于 FLY_REV_SPIN_MIN_RPM、同向低于 FLY_CATCH）：开环无观测器修正，
  *    初值角度即开环起始负载角，要求更严，约 5°。
  * 测量前无法确定后级，按严格者取 FLY_SEED_ANGLE_DEG = 5°。脉冲电流取"ADC 噪声下单次矢量角度误差 <= 5°"的最小值：
  *   I = 噪声峰值 * 每码电流 * 2/sqrt(3)（Clarke 放大）/ tan(5°)，噪声峰值在上电零点校准时测得（gHal.adcNoisePk）。
@@ -262,9 +262,9 @@
 /* 低于 FLY_CATCH_RPM 但 >= FLY_LOW_MIN_RPM：按测得的角度 / 转速直接进入 I/F 开环（与 Spin 回退相同的接法），省去制动和定位 */
 #define FLY_LOW_MIN_RPM         42.0        /* rpm，更低则制动；须高于静止门限 FLY_STILL_RPM（反电势约 1% 额定母线） */
 /* 转子与指令反向时：与同向相同，按转子自身方向接管（>= FLY_REV_SPIN_MIN_RPM 进 Spin，>= FLY_LOW_MIN_RPM 进 I/F），
- * 随后走正常换向流程：速度环减速 -> OPENLOOP_FALLBACK 回退 I/F -> I/F 过零 -> 反向切闭环。
+ * 随后走正常换向流程：速度环减速 -> OPENLOOP_FALLBACK_RPM 回退 I/F -> I/F 过零 -> 反向切闭环。
  * 全程受控、电流有限幅，与运行中直接给反转指令为同一路径。 */
-/* 反向接管时直接进入 Spin 的下限：需与回退点 OPENLOOP_FALLBACK 保持足够距离（约 2 倍），使 Spin 中的 PLL 有时间收敛；
+/* 反向接管时直接进入 Spin 的下限：需与回退点 OPENLOOP_FALLBACK_RPM 保持足够距离（约 2 倍），使 Spin 中的 PLL 有时间收敛；
  * 更低则直接进入 I/F（见 flystart.c）。 */
 #define FLY_REV_SPIN_MIN_RPM    504.0       /* rpm */
 
@@ -360,7 +360,7 @@
 #define CTRL_WEAKEN_ENABLE          0
 #define WEAKEN_VOLTAGE_MARGIN       0.08        /* 电压裕量 */
 /* 弱磁积分速度：电压误差为 100% VMAX 时 id 每秒变化 WEAKEN_KI_A_PER_S 安培。
- * 环路极点 ≈ WEAKEN_KI * omega*Ld / VMAX；本电机 2000 rpm 时 omega*Ld ≈ 48 V/A，
+ * 环路极点 ≈ WEAKEN_KI_A_PER_S * omega*Ld / VMAX；本电机 2000 rpm 时 omega*Ld ≈ 48 V/A，
  * VMAX ≈ 174 V，50 A/s 对应约 2 Hz（快于速度环、远慢于电流环）。 */
 #define WEAKEN_KI_A_PER_S           50.0
 #define WEAKEN_ID_MIN_A             (-2.0)      /* A，弱磁 id 下限（受退磁电流、效率约束） */

@@ -41,7 +41,7 @@ void FluxObs_LoadModel(void);       /* 从 gGain 重新装载 Rs / L / NLFO 归�
 void FluxObs_Reset(void);           /* 清除全部状态（非 Run 状态时每拍调用） */
 /* Align -> Startup：清除观测器、PLL 速度与转速反馈，将 psi 初始化为 |psi_f|∠gFoc.theta */
 void FluxObs_BeginStartup(void);
-/* 飞车接管（FLY_PHASOR）：清除观测器，将定子磁链初始化为 psi_f∠theta + Lq*i（theta、i 均为本拍采样时刻） */
+/* 飞车接管：清除观测器，将定子磁链初始化为 psi_f∠theta + Lq*i（theta、i 均为本拍采样时刻） */
 void FluxObs_SeedCatch(int16_t theta);
 /* 执行本拍模型。调用前须已计算 gMeas.iab（Clarke），且本拍尚未调制（gSvpwm.Alpha/Beta 仍为上一拍指令）。 */
 void FluxObs_UpdateFeedback(void);

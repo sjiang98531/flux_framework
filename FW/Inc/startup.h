@@ -9,7 +9,7 @@
  *
  *   I/F（开环拖动）：
  *     Align 子状态首先执行 IPD（STARTUP_IPD，ipd.h）：以 12 个方向的电压脉冲确定 N 极角，直接从该角进入 Startup，
- *       电流从 1/4 起按 CURRENT_SLEW 升至 OPENLOOP_CURRENT（加速度同比例）；对比度不足时退回定位。
+ *       电流从 1/4 起按 CURRENT_SLEW_A_S 升至 OPENLOOP_CURRENT_A（加速度同比例）；对比度不足时退回定位。
  *     Align：d 轴电流斜坡升至 ALIGN_A，在 0° 等待转子停稳；
  *       定位期间按 q 轴反电势施加阻尼电流（转子等效为无阻尼单摆）
  *     Startup：电流 OPENLOOP_CURRENT_A 沿开环角方向（与定位电流连续），开环角按
@@ -17,7 +17,7 @@
  *       PLL 转速（滤波）与开环转速相差 < OPENLOOP_AGREE_RATIO 并持续 OPENLOOP_AGREE_S
  *       -> 转矩不变切换：iq_new = I * sin(theta_ol - theta_est)，id = 0 -> Spin
  *       OPENLOOP_TIMEOUT_S 内仍不一致 -> 堵转故障
- *     Spin 回退（指令反向或低于闭环最低转速、减速到 OPENLOOP_FALLBACK）时，从当前估计角和转速继续开环拖动。
+ *     Spin 回退（指令反向或低于闭环最低转速、减速到 OPENLOOP_FALLBACK_RPM）时，从当前估计角和转速继续开环拖动。
  *
  * 子状态之间的切换函数位于 supervisor.c（Sup_Switch*），本模块的处理函数在条件满足时调用它们。
  * ==========================================================================*/
@@ -62,7 +62,7 @@ typedef struct {
     uint8_t  warm;    /* 1 = 从运行状态接管（回退 / 飞车），0 = 冷起动（定位后） */
     uint32_t thetaOffset;       /* 开环角 - 估计角（Q31 角度），提交时叠加到当时的 PLL 角上 */
     int32_t  olSpeed;           /* 开环起始转速 Q31 */
-    int32_t  olCur, olCurTarget;    /* 开环电流起始值 / 目标值（Q15），起始值 < 目标值时按 CURRENT_SLEW 上升 */
+    int32_t  olCur, olCurTarget;    /* 开环电流起始值 / 目标值（Q15），起始值 < 目标值时按 CURRENT_SLEW_A_S 上升 */
     int32_t  accScaleQ12, accStepFull, accStep;    /* 加速度缩放（开环电流 / 额定开环电流，Q12）、电流到目标后的加速度步长、起始加速度步长（Q31 / 快环拍） */
 } OpenLoopEntry_TypeDef;
 void Startup_PrepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e);    /* 准备（临界区外，只计算） */
@@ -75,7 +75,7 @@ void Startup_CommitCatchOpenLoop(int16_t spd);
 int16_t Startup_OpenLoopSpeedQ15(void);
 /* Spin 慢环调用：判断是否应交回 I/F（|转速| < OPENLOOP_FALLBACK_RPM 且指令反向或低于 OPENLOOP_SPIN_MIN_RPM） */
 uint8_t Startup_OpenLoopWantsFallback(void);
-/* 回退 I/F 时的开环电流（Q15）：max(OPENLOOP_CURRENT, |iq|/sin(OPENLOOP_WARM_DELTA_DEG))，反转时至少 OPENLOOP_REV_CURRENT，上限 OPENLOOP_WARM_MAX */
+/* 回退 I/F 时的开环电流（Q15）：max(OPENLOOP_CURRENT_A, |iq|/sin(OPENLOOP_WARM_DELTA_DEG))，反转时至少 OPENLOOP_REV_CURRENT_A，上限 OPENLOOP_WARM_MAX_A */
 int16_t Startup_OpenLoopWarmCurrent(int16_t iq, uint8_t reversal);
 
 typedef struct {

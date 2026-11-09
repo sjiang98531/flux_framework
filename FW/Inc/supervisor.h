@@ -75,7 +75,7 @@ extern Supervisor_TypeDef gSup;
 #define SUP_EV_HANDOVER     9   /* Startup -> Spin */
 #define SUP_EV_FALLBACK     11  /* Spin -> Startup，arg = 原因（SUP_FB_x） */
 #define SUP_FB_OPENLOOP           1   /* Startup_OpenLoopWantsFallback：低于回退转速且指令反向 / 过低 */
-#define SUP_FB_REVERSE      3   /* 兜底：指令反向且已低于 OPENLOOP_SPIN_MIN 仍未回退 */
+#define SUP_FB_REVERSE      3   /* 兜底：指令反向且已低于 OPENLOOP_SPIN_MIN_RPM 仍未回退 */
 #define SUP_EV_LOST_LOCK    12  /* Spin 中失锁：指令方向未变，估计转速却降为 0 / 反号，或同向降到 SPIN_LOST_RPM 以下。关闭 PWM 回到 Stop，
                                  * 若指令仍存在则立即重新起动（重新进行飞车检测），arg = 当时的 gMeas.speed */
 #define SUP_EV_TRACK        13  /* 软停机电流降到 0 后进入零电流跟踪（PWM 不关闭，观测器持续跟踪），arg = gMeas.speed */

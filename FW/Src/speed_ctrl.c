@@ -34,7 +34,7 @@ void SpeedCtrl_LoadGains(void)
 }
 
 /* 上电：斜坡速率、电流上限 SPD_PI_LIMIT、速度 PI 与母线电流限 PI 的增益 / 状态 / 限幅。
- * 母线电流限 PI（piPower）输出范围为 [-iqLimit, 0]：母线电流超过 IBUS_LIMIT 时向下限制 iq，平时输出 0 */
+ * 母线电流限 PI（piPower）输出范围为 [-iqLimit, 0]：母线电流超过 IBUS_LIMIT_A 时向下限制 iq，平时输出 0 */
 void SpeedCtrl_Init(void)
 {
     gSpd.speedRampSt.s32RampUp     = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX);
@@ -162,7 +162,7 @@ static int32_t rampSCurve(int32_t tgt)
 }
 
 /* 回退前的轨迹衔接：需交给 I/F 时（指令反向或低于闭环最低转速），回退时刻斜坡的减速度应等于 I/F 开环
- * 过零的减速度（OPENLOOP_REV_ACC），以保证转矩连续。按 jerk 收回加速度需要 (a^2 - a_if^2) / (2j) 的转速，
+ * 过零的减速度（OPENLOOP_REV_ACC_RPM_S），以保证转矩连续。按 jerk 收回加速度需要 (a^2 - a_if^2) / (2j) 的转速，
  * 距回退点剩余该转速时，减速侧上限按 jerk 每拍减小，到达回退点时恰好为 a_if。 */
 static void approachFallback(void)
 {
@@ -184,7 +184,7 @@ static void approachFallback(void)
 /* 速度环一拍（Spin 慢环）：
  *   1. 非融合期：按方向选择斜坡速率（反转用 SPEED_RAMP_REV）、回退前衔接、母线电压限制减速；
  *   2. S 形斜坡运行一步，得到给定 ramp；斜坡本拍变化量 * 前馈系数 = 加速前馈 iq；
- *   3. 回馈兜底：母线超过 BUS_REGEN_START 时限制"阻碍转动方向"的 iq；
+ *   3. 回馈兜底：母线超过 BUS_REGEN_START_V 时限制"阻碍转动方向"的 iq；
  *   4. 速度 PI（给定 - 实测）+ 母线电流限 PI + 前馈 = iq 指令，限幅；id 指令 = 损耗制动 id（MTPA 关闭时）。
  * 结果写入 gSpd.idqCmd，由 spin.c 发布给电流环 */
 void SpeedCtrl_SpinSlow(void)
@@ -193,10 +193,9 @@ void SpeedCtrl_SpinSlow(void)
     gSpd.idqCmd.s16D = 0;               /* id 默认 0（SPM）；回馈制动 id / MTPA 在下方覆盖 */
 
     {
-        int32_t s32RampPrev, s32StPrev, s32IqCmd, s32IqMax, s32IqMin;
+        int32_t s32StPrev, s32IqCmd, s32IqMax, s32IqMin;
         int16_t s16AccFF;
 
-        s32RampPrev = gSpd.rampQ31; (void)s32RampPrev;
         s32StPrev = gSpd.speedRampSt.s32State;
         if (gSpd.blendW >= 32767) {
             /* 反转（指令与斜坡反号）的减速段使用 SPEED_RAMP_REV，同向调速仍使用 SPEED_RAMP_UP/DOWN */
@@ -264,18 +263,18 @@ void SpeedCtrl_OnEnterSpin(void)
     gSpd.speedRampSt.s32State      = gMeas.speed << 16;
     gSpd.rampAcc = 0;
     gSpd.pi.qdSum               = ((int32_t)gFoc.idqRef.s16Q - accFFAtSpinEntry()) * 32768;
-    gSpd.piPower.qdSum               = gFoc.idqRef.s16Q << 15;
+    gSpd.piPower.qdSum               = 0;          /* 母线电流限 PI 只向下限制，未限流时积分为 0 */
 }
 
 /* I/F 切闭环时开始融合：记录切换时刻开环电流在观测器坐标系中的 d / q 分量（id0 / iq0），之后按 blendW 0 -> 1
- * 淡出；斜坡延续开环的转速与加速度，斜率在融合期间从开环加速度过渡到 SPEED_RAMP（SpeedCtrl_BlendSlow） */
+ * 淡出；斜坡延续开环的转速与加速度，斜率在融合期间从开环加速度过渡到 SPEED_RAMP_UP / DOWN（SpeedCtrl_BlendSlow） */
 void SpeedCtrl_BlendStart(int16_t id0, int16_t iq0, int32_t rampStartQ31, int16_t accScaleQ12, int16_t ff0)
 {
     gSpd.blendId0 = id0;
     gSpd.blendIq0 = iq0;
     gSpd.blendW = 0;
     gSpd.blendAccQ12 = accScaleQ12;
-    /* 斜坡延续开环：值 = 开环转速，斜率 = 开环加速度，融合期间斜率过渡到 SPEED_RAMP */
+    /* 斜坡延续开环：值 = 开环转速，斜率 = 开环加速度，融合期间斜率过渡到 SPEED_RAMP_UP / DOWN */
     gSpd.speedRampSt.s32State = rampStartQ31;
     gSpd.rampQ31 = rampStartQ31;
     gSpd.ramp = (int16_t)(rampStartQ31 >> 16);
@@ -328,7 +327,7 @@ void SpeedCtrl_BlendSlow(void)
     w = (int32_t)gSpd.blendW + OPENLOOP_BLEND_STEP_Q15;
     if (w > 32767) w = 32767;
     gSpd.blendW = (int16_t)w;
-    {   /* 斜坡斜率 I/F 加速度 -> SPEED_RAMP；w = 32767 时恰为 SpeedCtrl_OnEnterSpin 设置的值 */
+    {   /* 斜坡斜率 I/F 加速度 -> SPEED_RAMP_UP / DOWN；w = 32767 时恰为 SpeedCtrl_OnEnterSpin 设置的值 */
         int32_t r0 = (int32_t)(((int64_t)RAMP_Q31(OPENLOOP_ACC_RPM_S, SPEED_MAX) * gSpd.blendAccQ12) >> 12);
         int32_t up = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX), dn = RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
         gSpd.speedRampSt.s32RampUp   = (w >= 32767) ? up : r0 + (int32_t)(((int64_t)(up - r0) * w) >> 15);

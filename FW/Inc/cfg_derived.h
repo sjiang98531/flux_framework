@@ -17,7 +17,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E0051UL
+#define BUILD_TAG            0xF20E0053UL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -104,7 +104,7 @@
 #define SPEED_KI                SPEED_KI_OF(MOTOR_ACC_RPM_S_PER_A)
 /* 斜坡 jerk（Q31 / 慢环拍^2）：SPEED_RAMP_ROUND_S 内加速度从 0 升到 SPEED_RAMP_UP */
 #define SPEED_JERK_Q31          ((int32_t)(SPEED_RAMP_UP / SPEED_MAX / SLOWLOOP_FREQ * 2147483648.0 / (SPEED_RAMP_ROUND_S * SLOWLOOP_FREQ) + 0.5))
-/* 回退 I/F 后过零的开环加减速度（rpm/s）：Startup_OnEnterOpenLoop 按 OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A 放大 OPENLOOP_ACC */
+/* 回退 I/F 后过零的开环加减速度（rpm/s）：Startup_PrepareOpenLoop 按 OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A 放大 OPENLOOP_ACC_RPM_S */
 #define OPENLOOP_REV_ACC_RPM_S        (OPENLOOP_ACC_RPM_S * OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A)
 /* 软停机：电流幅值每慢环拍减小多少（Q15），= S 形斜坡的最大转矩变化率 SPEED_RAMP_UP / b / SPEED_RAMP_ROUND_S */
 #define CURRENT_SLEW_STEP_Q15   ((int32_t)(CURRENT_SLEW_A_S / SLOWLOOP_FREQ / I_MAX * 32768.0 + 0.5))
@@ -138,7 +138,7 @@
  *   而定点基准在编译期确定，运行时辨识无法改变它，因此需预留余量。取 1.5。
  *   反向约束：PLL 增益与 psi_f 的 Q15 值成反比，超出 int16 范围时封顶（带宽降低，param.c cfgWarn 第 2 位）。
  *   FILL 越小，psi_f 的 Q15 值越小、越容易封顶：本电机取 1.5 时 Kp = 29939，辨识出的 psi_f 比配置值小 9% 以内不封顶。
- *   积分步长 FLUX_KTS = 2*pi*FLUX_WN_HZ/PWM_FREQ 须小于 1，故上限为 0.9*PWM_FREQ/(2*pi)（仅高压、小电感电机会触及，
+ *   积分步长 FLUX_KTS_Q15 = 2*pi*FLUX_WN_HZ/PWM_FREQ 须小于 1，故上限为 0.9*PWM_FREQ/(2*pi)（仅高压、小电感电机会触及，
  *   此时量程无法填满，分辨率不足由配置检查 FLUX_NOMINAL_RESOLUTION 报告）。 */
 #define FLUX_V_BASE             (UDC_MAX)
 #define FLUX_PARAM_MARGIN       1.5
