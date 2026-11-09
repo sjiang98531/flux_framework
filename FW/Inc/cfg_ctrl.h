@@ -19,9 +19,12 @@
  *   结果在 gIdent，见 identify.h）。辨识结束后结果自动写入运行参数（仅 RAM，见 param.h；
  *   辨识值须在配置值的 1/3 ~ 3 倍以内才会采用）。长期使用应将 gParam 抄回 cfg_motor.h / cfg_board.h。
  *   极对数与铭牌额定值须手工填写。
+ * 更换电机后须重新确定的转速门限（直接以 rpm 给出，不随电机参数自动换算，估算方法见"转速门限"一节）：
+ *   OPENLOOP_HANDOVER_RPM、OPENLOOP_SPIN_MIN_RPM、OPENLOOP_FALLBACK_RPM、FLY_CATCH_RPM、FLY_REV_SPIN_MIN_RPM、
+ *   FLY_LOW_MIN_RPM、FLY_STILL_RPM、ALIGN_STILL_RPM、SPIN_LOST_RPM、TRACK_END_RPM、FLUX_HPF_COMP_MIN_RPM、PWM_5SEG_RPM
  * 首次上电调试时确认（已写成额定值的倍数，一般无需修改，但与负载有关）：
  *   OPENLOOP_CURRENT_A / OPENLOOP_ACC_RPM_S（I/F 拖动电流、加速度，负载越重电流越大）、
- *   OPENLOOP_HANDOVER_RPM（切闭环转速）、STARTUP_IPD（饱和不明显时自动退回定位，也可直接关闭）、
+ *   STARTUP_IPD（饱和不明显时自动退回定位，也可直接关闭）、
  *   IPD_PEAK_A / IPD_PULSE_S（噪声与对比度的折中）、SPD_PI_LIMIT / IBUS_LIMIT_A（相电流、母线电流上限）
  * 一般无需修改（按带宽 / 阻尼 / 时间常数给出的设计指标，随电机自动换算）：
  *   CURRENT_BW_HZ、SPEED_WN_HZ / ZETA、FLUXPLL_*、FLUX_*（观测器）、BUS_*（母线电压环）、FLY_*（飞车）、各滤波时间常数
@@ -30,12 +33,13 @@
 #ifndef CFG_CTRL_H
 #define CFG_CTRL_H
 
-/* ===================== 观测器相关门限的表示方法 ============================ */
-/* 磁链观测器在低速是否可用，取决于反电势 w*psi_f 相对电压误差的大小。电压误差主要来自死区
- * （约 母线电压 x 死区时间 x PWM 频率），与母线电压成正比。因此所有与"观测器是否可靠"相关的
- * 转速门限都表示为：反电势占额定母线电压 UDC_RATE 的比例。更换电机（psi_f、极对数）或母线电压时
- * 自动换算为 rpm。注释中的 rpm 为本电机（5 对极、0.141 Wb、310 V）的换算值，每 1% 约 42 rpm。 */
-#define OBS_EMF_TO_RPM(k)       ((k) * UDC_RATE * 60.0 / (2 * 3.14159265358979 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB))
+/* ===================== 转速门限 ========================================== */
+/* 所有转速门限均直接以 rpm（机械转速）给出。
+ * 更换电机或母线电压时的估算方法：磁链观测器在低速是否可靠，取决于反电势 E = w_e*psi_f 相对逆变器
+ * 电压误差（死区，约 母线电压 x 死区时间 x PWM 频率，与母线电压成正比）的大小。因此与观测器相关的门限
+ * 宜按"反电势占额定母线 UDC_RATE 的比例 k"选取，再换算为转速：
+ *     n [rpm] = k * UDC_RATE * 60 / (2*pi * 极对数 * psi_f)
+ * 本电机（5 对极、0.141 Wb、310 V）每 1% 约 42 rpm。各门限对应的 k 值写在其注释中，供更换电机时参考。 */
 
 /* ===================== 启停 ============================================== */
 /* 外环为速度环。转速指令的启停门限（rpm，指令绝对值）：|指令| > STOP_TO_RUN_SPEED 时起动，
@@ -146,7 +150,7 @@
 #define ALIGN_MIN_T          1.6         /* x T（本电机 0.80 s） */
 /* 定位结束条件：满足最短时间后，转子转速（由反电势估计）低于 ALIGN_STILL_RPM 并持续 ALIGN_STILL_T，
  * 才开始拖动。摆到端点时速度也会短暂过零，持续窗口应长于端点附近的停留时间（0.2 T）。 */
-#define ALIGN_STILL_RPM      OBS_EMF_TO_RPM(0.002)   /* 反电势 0.2% 额定母线（本电机 8.4 rpm） */
+#define ALIGN_STILL_RPM      8.4         /* rpm（反电势约 0.2% 额定母线） */
 #define ALIGN_STILL_T        0.2         /* x T（本电机 0.10 s） */
 /* 最长定位时间（到时直接拖动）= 最短时间 + 阻尼衰减到 2% 的时间 4/(zeta*wn) = 1.6 T + 2.55 T（zeta 0.25），取 4 T。 */
 #define ALIGN_MAX_T          4.0         /* x T（本电机 2.0 s） */
@@ -158,7 +162,7 @@
 /* 拖动：电流 OPENLOOP_CURRENT_A 沿开环角方向，开环转速以 OPENLOOP_ACC_RPM_S 加速到 OPENLOOP_HANDOVER_RPM 后保持。
  * 加速度取拖动电流可产生的最大加速度（MOTOR_ACC_RPM_S_PER_A * OPENLOOP_CURRENT_A，本电机 0.75 A 约 376 rpm/s）
  * 的 1/3 作为余量，更换电机时按惯量自动缩放。
- * 切换转速应使反电势远大于电压误差：2.5% 额定母线（本电机 105 rpm 时约 7.7 V）。 */
+ * 切换转速应使反电势远大于电压误差：取反电势约 2.5% 额定母线（105 rpm 时约 7.7 V）。 */
 #define OPENLOOP_CURRENT_A            (1.0 * MOTOR_I_RATED_A)     /* A，本电机 0.75 A */
 #define OPENLOOP_ACC_RPM_S            (0.33 * MOTOR_ACC_RPM_S_PER_A * OPENLOOP_CURRENT_A)   /* rpm/s（本电机 124 rpm/s） */
 /* Spin -> I/F 回退（热接管）时的开环电流：开环转矩 = I·Kt·sin(δ)，δ 超过 90° 即失步。
@@ -169,13 +173,13 @@
 #define OPENLOOP_WARM_DELTA_DEG       45.0
 #define OPENLOOP_REV_CURRENT_A        (OPENLOOP_CURRENT_A / 0.75)       /* A，本电机 1.0 A */
 #define OPENLOOP_WARM_MAX_A           (2.0 * MOTOR_I_RATED_A)     /* A，本电机 1.5 A */
-#define OPENLOOP_HANDOVER_RPM         OBS_EMF_TO_RPM(0.025)   /* 反电势 2.5% 额定母线（本电机 105 rpm） */
+#define OPENLOOP_HANDOVER_RPM         105.0       /* rpm（反电势约 2.5% 额定母线） */
 /* 闭环运行的最低指令转速：|指令| 低于该值时电机以指令转速开环（I/F）运行。
  * 闭环可运行到比切换转速更低的转速，因此该值低于 OPENLOOP_HANDOVER_RPM。 */
-#define OPENLOOP_SPIN_MIN_RPM         OBS_EMF_TO_RPM(0.014)   /* 反电势 1.4%（本电机 59 rpm） */
+#define OPENLOOP_SPIN_MIN_RPM         59.0        /* rpm（反电势约 1.4% 额定母线） */
 /* Spin 失锁判据：指令同向、估计转速却降到该值以下（正常减速在 OPENLOOP_FALLBACK 已交给 I/F，同向降到此值
  * 只可能是观测器失锁或堵转）-> 停机并重新进行飞车检测。每 SPIN_CHECK_S 检查一次。C 类经验值。 */
-#define SPIN_LOST_RPM           OBS_EMF_TO_RPM(0.0095262)   /* 本电机 40 rpm */
+#define SPIN_LOST_RPM           40.0        /* rpm */
 #define SPIN_CHECK_S            0.010       /* s */
 /* 闭环 -> I/F 的回退转速：指令反向或 |指令| < OPENLOOP_SPIN_MIN_RPM 时，Spin 减速到此转速即交给 I/F
  * （此时观测器仍锁定，交接角度准确），由开环带过零点，反向后再切回闭环。
@@ -183,7 +187,7 @@
  * 观测器在 200 rpm 以下开始失准；加速时两者同向，低转速仍可靠。
  * 回退只取决于指令（反向 / 低于 OPENLOOP_SPIN_MIN_RPM），切换只在指令同向且 >= OPENLOOP_SPIN_MIN_RPM 时发生，
  * 二者互斥，不会来回跳变。 */
-#define OPENLOOP_FALLBACK_RPM         OBS_EMF_TO_RPM(0.06)    /* 反电势 6%（本电机 252 rpm） */
+#define OPENLOOP_FALLBACK_RPM         252.0       /* rpm（反电势约 6% 额定母线） */
 /* 切换融合时间：切换后 id 从 I/F 电流的 d 分量渐变到 0、加速前馈渐入所用的时间。
  * 观测器角度误差引起的转矩在此期间淡出，需让速度环来得及补偿：取速度环时间常数 1/(2*pi*SPEED_WN_HZ)。 */
 #define OPENLOOP_BLEND_S              (1.0 / (2.0 * 3.14159265359 * SPEED_WN_HZ))     /* 本电机 0.20 s */
@@ -205,18 +209,19 @@
  * （检测到过转动时还需额外等待停稳）后按静止处理 -> 定位 -> I/F。 */
 
 #define FLYBRAKE_TIME           0.1         /* s，短路电流低于门限持续该时间即判为静止 */
-/* 静止判定的短路电流门限：短路电流 = 反电势 / |Rs + jwL|，低速时约为 反电势 / Rs。
- * 取"反电势为 0.75% 额定母线时的短路电流"（本电机 32 rpm、0.158 A），仅与电机参数有关，与采样电路无关。 */
-#define FLY_STILL_EMF           0.0075
-/* 制动后等待停稳：短路电流低于门限只说明转速低于 OBS_EMF_TO_RPM(FLY_STILL_EMF)（本电机 32 rpm），
+/* 静止判定转速：短路电流 = 反电势 / |Rs + jwL|，低速时约为 反电势 / Rs。以该转速下的短路电流作为
+ * "在转"的电流门限 FLYCURRENT_TH_PU（本电机约 0.158 A），仅与电机参数有关，与采样电路无关。 */
+#define FLY_STILL_RPM           31.5        /* rpm（反电势约 0.75% 额定母线） */
+/* 制动后等待停稳：短路电流低于门限只说明转速低于 FLY_STILL_RPM，
  * 转子可能仍在转动。短接时低速制动转矩 ≈ B·ω，B = 1.5 p² ψf² / Rs，转速按 τ = J / B 指数衰减
  * （J 由 MOTOR_ACC_RPM_S_PER_A 反推，本电机 τ ≈ 0.4 s）。若检测到过转动，电流低于门限后再短接
  * FLYBRAKE_TIME + τ·ln(门限转速 / FLY_STILL_END_RPM) 才开始定位（本电机约 1.2 s）；
  * 始终静止（冷起动）时仍为 FLYBRAKE_TIME，起动时间不受影响。 */
 #define FLY_STILL_END_RPM       2.0         /* rpm，开始定位时允许的残余转速 */
-#define FLYCURRENT_TH_PU        (FLY_STILL_EMF * UDC_RATE / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX） */
+#define FLYCURRENT_TH_PU        (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB \
+                                 / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX）：FLY_STILL_RPM 下的短路电流 */
 #define CALIPWMPERCENT          (0.99)      /* 短接时下桥占空比 */
-#define FLY_CATCH_RPM           OBS_EMF_TO_RPM(0.06)    /* 同向且 >= 该值时直接接入闭环（= OPENLOOP_FALLBACK，观测器在此以上可靠；本电机 252 rpm） */
+#define FLY_CATCH_RPM           252.0       /* rpm，同向且 >= 该值时直接接入闭环（取与 OPENLOOP_FALLBACK 相同，观测器在此以上可靠） */
 /* 零电流跟踪结束转速（C 类经验值）：闭环中给出停机指令后不关闭 PWM，以零电流滑行跟踪转子，
  * 转速低于该值才关闭 PWM 回到 Stop。在跟踪期间重新给指令可直接闭环加速，无需飞车检测。
  * 跟踪期间零电流、无 Rs*i 误差，角度很准；限制因素是重新加速时带电流的那一刻，死区补偿误差越大、
@@ -254,13 +259,13 @@
 #define FLY_PULSE_N             6
 #define FLY_BRAKE_TIMEOUT_S     10.0        /* s，短接制动超过该时间仍未停止（如持续受风）-> 故障 */
 /* 低于 FLY_CATCH_RPM 但 >= FLY_LOW_MIN_RPM：按测得的角度 / 转速直接进入 I/F 开环（与 Spin 回退相同的接法），省去制动和定位 */
-#define FLY_LOW_MIN_RPM         OBS_EMF_TO_RPM(0.01)    /* 更低则制动；须高于静止门限 FLY_STILL_EMF（本电机 42 rpm） */
+#define FLY_LOW_MIN_RPM         42.0        /* rpm，更低则制动；须高于静止门限 FLY_STILL_RPM（反电势约 1% 额定母线） */
 /* 转子与指令反向时：与同向相同，按转子自身方向接管（>= FLY_REV_SPIN_MIN_RPM 进 Spin，>= FLY_LOW_MIN_RPM 进 I/F），
  * 随后走正常换向流程：速度环减速 -> OPENLOOP_FALLBACK 回退 I/F -> I/F 过零 -> 反向切闭环。
  * 全程受控、电流有限幅，与运行中直接给反转指令为同一路径。 */
-/* 反向接管时直接进入 Spin 的下限：需与回退点 OPENLOOP_FALLBACK 保持足够距离，使 Spin 中的 PLL 有时间收敛；
+/* 反向接管时直接进入 Spin 的下限：需与回退点 OPENLOOP_FALLBACK 保持足够距离（约 2 倍），使 Spin 中的 PLL 有时间收敛；
  * 更低则直接进入 I/F（见 flystart.c）。 */
-#define FLY_REV_SPIN_MIN_RPM    (2.0 * OPENLOOP_FALLBACK_RPM)     /* rpm，本电机 504 rpm */
+#define FLY_REV_SPIN_MIN_RPM    504.0       /* rpm */
 
 /* ===================== 回馈减速：母线电压控制 ==================================
  * 物理背景：无制动电阻、整流桥不能回馈电网时，减速过程中转子动能只能进入母线电容，或在电机 / 逆变器中转为热量。
@@ -333,7 +338,7 @@
 /* 去直流的相位补偿：反电势先高通再积分，等效 1/(s+wc)，磁链角超前 atan(wc/w)
  * （wc = 1/0.256 s：80 rpm 时 5.3°，30 rpm 时 14°）。按估计转速将输出 psi_s 反向旋转该角度
  * （慢环计算 sin/cos，快环 4 次乘法）；转速低于 FLUX_HPF_COMP_MIN_RPM 时不补偿，到 2 倍该转速线性补满。 */
-#define FLUX_HPF_COMP_MIN_RPM   OBS_EMF_TO_RPM(0.005)   /* 反电势 0.5%（本电机 21 rpm） */
+#define FLUX_HPF_COMP_MIN_RPM   21.0        /* rpm（反电势约 0.5% 额定母线） */
 /* 补偿所用转速：Spin 中使用 PLL 转速；I/F 拖动时使用开环转速（转子同步，比估计值可靠）；
  * 定位、飞车检测、停机时不补偿。 */
 
@@ -361,7 +366,8 @@
 /* 电流圆：|i| <= SPD_PI_LIMIT。存在 id 时 iq 上限自动缩为 sqrt(Imax^2 - id^2)。 */
 
 /* ===================== PWM 调制方式 ======================================== */
-/* 七段式 -> 五段式（不连续 PWM，开关损耗减少约 1/3，但低调制比时电流畸变较大）的切换点，按调制比（反电势 / 母线）确定。 */
-#define PWM_5SEG_RPM            OBS_EMF_TO_RPM(0.15242)     /* 本电机 640 rpm，调制比约 0.26 */
+/* 七段式 -> 五段式（不连续 PWM，开关损耗减少约 1/3，但低调制比时电流畸变较大）的切换转速。
+ * 本质上由调制比（反电势 / 母线）决定，更换电机时宜保持调制比约 0.26（反电势约 15% 额定母线）。 */
+#define PWM_5SEG_RPM            640.0       /* rpm */
 
 #endif
