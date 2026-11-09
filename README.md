@@ -48,7 +48,8 @@ IPD 对比度的测量，结果在 `gIdent`，并自动在本次上电期间生�
 | 文件 | 功能 |
 |---|---|
 | `supervisor` | 主状态机与子状态切换、故障汇总、事件记录（`gSup`、`gSupLog`） |
-| `startup` / `ipd` / `flystart` | 预充、IPD、定位、I/F 拖动 / 飞车检测 |
+| `startup` / `ipd` / `flystart` | 预充、飞车检测分发、IPD / 定位 / 飞车检测 |
+| `openloop` | I/F 开环拖动、开环与闭环之间的切换 |
 | `spin` | 闭环运行、零电流跟踪、回退 I/F |
 | `est` / `flux_obs` / `flux_pll` | 角度估计调度 / 磁链观测器 / 锁相环 |
 | `foc_core` / `svpwm` | 电流环 / 空间矢量调制 |
