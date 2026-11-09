@@ -1,0 +1,32 @@
+# ---------- Keil 编译产物 ----------
+Output/*
+List/*
+!Output/.gitkeep
+!List/.gitkeep
+*.o
+*.d
+*.crf
+*.dep
+*.axf
+*.hex
+*.bin
+*.lst
+*.map
+*.htm
+*.lnp
+*.iex
+*.__i
+*.build_log.*
+Project/build_log.txt
+
+# ---------- Keil 每用户界面布局 / 备份 ----------
+*.uvguix.*
+*.bak
+
+# ---------- 调试器日志 ----------
+Project/JLinkLog.txt
+Project/JLinkSettings.ini
+
+# ---------- 系统 ----------
+Thumbs.db
+desktop.ini
