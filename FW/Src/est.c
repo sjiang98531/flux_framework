@@ -19,7 +19,7 @@ Est_TypeDef gEst;
 RAMFUNC int16_t Est_TrackTick(void)
 {
     int16_t thK = (int16_t)(gEst.pll.s32Theta >> 16), err;
-    FluxObs_UpdateFeedback();
+    FluxObs_Run();
     err = FluxPLL_PhaseError(gFluxObs.s16PsiRAl, gFluxObs.s16PsiRBe, thK);
     gEst.thetaPll = FluxPLL_Run(err, &gEst.pll);
     return thK;

@@ -41,9 +41,6 @@ void Startup_Init(void);    /* 上电：预充时间、飞车 / 定位的各段�
 /* 停机 / 故障复位：预充计数清零 */
 void Startup_ResetRun(void);
 
-/* 进入 Calib 时启动飞车检测 */
-void Startup_ResetFlyCheck(void);
-
 /* ---- 子状态处理：Fast = 快环（ADC 中断）每拍，Slow = 慢环（PendSV）每拍（1 kHz） ---- */
 void Startup_ChargeFast(void);    /* 预充：三相下桥轮流导通为自举电容充电，到时进入飞车检测 */
 void Startup_ChargeSlow(void);    /* 预充：仅滤波 */
@@ -78,6 +75,14 @@ uint8_t Startup_OpenLoopWantsFallback(void);
 /* 回退 I/F 时的开环电流（Q15）：max(OPENLOOP_CURRENT_A, |iq|/sin(OPENLOOP_WARM_DELTA_DEG))，反转时至少 OPENLOOP_REV_CURRENT_A，上限 OPENLOOP_WARM_MAX_A */
 int16_t Startup_OpenLoopWarmCurrent(int16_t iq, uint8_t reversal);
 
+/* gOpenLoopDiag.stage 的取值（数值沿用历史台架记录） */
+enum {
+    OPENLOOP_STAGE_ALIGN    = 1,    /* 定位 */
+    OPENLOOP_STAGE_RUN      = 3,    /* 开环加速 / 保持 */
+    OPENLOOP_STAGE_HANDOVER = 5,    /* 已切闭环 */
+    OPENLOOP_STAGE_TIMEOUT  = 6,    /* 超时故障 */
+    OPENLOOP_STAGE_IPD      = 7     /* IPD */
+};
 typedef struct {
     uint16_t stage;         /* 7 IPD，1 定位，3 开环加速 / 保持，5 已切闭环，6 超时故障（2 保留未用） */
     int16_t  olSpeed;       /* 开环转速 Q15 */

@@ -26,6 +26,8 @@ typedef struct {
     uint16_t shape;         /* 0 方波（+V 半宽、-V 半宽），1 正弦一个周期 */
 } IpdCfg_TypeDef;
 
+enum { IPD_STATE_IDLE = 0, IPD_STATE_PULSING = 1, IPD_STATE_DONE = 2 };    /* gIpd.state */
+
 typedef struct {
     volatile uint8_t state;     /* 0 空闲，1 脉冲进行中，2 完成（等待慢环判定） */
     uint8_t  ok;                /* 上次判定：1 有效 */

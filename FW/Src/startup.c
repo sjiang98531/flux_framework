@@ -32,7 +32,7 @@ static volatile int32_t s_olTheta;         /* 开环角 Q16.16（快环推进）
 static volatile int32_t s_olSpeed;         /* 开环转速 Q31（快环斜坡） */
 static volatile int32_t s_olTarget;        /* 目标转速 Q31，带方向（慢环写） */
 static int32_t s_pllFilt;                  /* PLL 转速一阶滤波 Q31（慢环，OPENLOOP_PLL_FILT_TAU_S） */
-static uint16_t s_agree, s_hold, s_time;
+static uint16_t s_agree, s_hold;
 /* 开环加速度按实际开环电流缩放：OPENLOOP_ACC_RPM_S 为 OPENLOOP_CURRENT_A 下最大能力的 1/3，回退 / 反转时电流增大，
  * 保持相同余量时加速度也按电流比例增大，过零更快。s_accScaleQ12 = I / OPENLOOP_CURRENT_A（Q12，冷起动 = 4096） */
 static int32_t s_accScaleQ12 = 4096;
@@ -93,13 +93,13 @@ void Startup_OnEnterAlign(void)
     s_still = 0;
     s_alignTheta = 0;
     FocCore_SetIdqRef(0, 0);
-    gOpenLoopDiag.stage = 1;
+    gOpenLoopDiag.stage = OPENLOOP_STAGE_ALIGN;
     s_ipd = 0;
     if (IDENT_TEST && !gIdentCfg.run) { s_alignTheta = Ident_AlignTheta(); Ident_Reset(); }     /* 参数辨识：定位到指定角 */
     else {
         /* 运行辨识（run = 1）正常起动：上一次静止测量停在 phase 4，需清除，否则 Align 会一直交由测量程序处理 */
         if (IDENT_TEST) Ident_Idle();
-        if (STARTUP_IPD) { Ipd_Start(); s_ipd = 1; gOpenLoopDiag.stage = 7; }    /* 先检测初始位置，检测失败再定位 */
+        if (STARTUP_IPD) { Ipd_Start(); s_ipd = 1; gOpenLoopDiag.stage = OPENLOOP_STAGE_IPD; }    /* 先检测初始位置，检测失败再定位 */
     }
 }
 
@@ -188,8 +188,8 @@ void Startup_CommitOpenLoop(const OpenLoopEntry_TypeDef *e)
     s_accStep = e->accStep;
     FocCore_SetIdqRef((int16_t)e->olCur, 0);
     s_pllFilt = gEst.pll.s32Speed;
-    s_agree = 0; s_hold = 0; s_time = 0;
-    gOpenLoopDiag.stage = 3;
+    s_agree = 0; s_hold = 0;
+    gOpenLoopDiag.stage = OPENLOOP_STAGE_RUN;
 }
 
 /* 飞车接管进入 I/F（快环中执行）：接管时闭环电流 iq = 0（Sup_SwitchCalibOpenLoop 先清零），入口参数除起始转速外
@@ -240,18 +240,18 @@ static void openLoopHandover(void)
     if (s_olSpeed > 0 && iqPi < 0) iqPi = 0;
     if (s_olSpeed < 0 && iqPi > 0) iqPi = 0;
     {
-    IRQ_LOCK();
-    FocCore_SetIdqRef(id0, iqPi);       /* Sup_SwitchStartupSpin -> SpeedCtrl_OnEnterSpin 以此预置速度 PI */
-    FocCore_RotatePI(a);
-    gOpenLoopDiag.deltaAtHandover = d;
-    gOpenLoopDiag.iqAtHandover = iq0;
-    gOpenLoopDiag.handovers++;
-    gOpenLoopDiag.stage = 5;
-    Sup_SwitchStartupSpin();
-    FocCore_SetIdqRef(id0, iq0);        /* 本拍电流矢量保持不变 */
-    gSpd.idqCmd.s16Q = iqPi;            /* Spin 慢环中速度环从 iqPi 开始，iq0 - iqPi 由融合叠加 */
-    SpeedCtrl_BlendStart(id0, (int16_t)(iq0 - iqPi - ff0), ol, (int16_t)s_accScaleQ12, ff0);   /* 速度 PI 给出 iqPi、前馈给出 ff0，融合只叠加剩余部分 */
-    IRQ_UNLOCK();
+        IRQ_LOCK();
+        FocCore_SetIdqRef(id0, iqPi);       /* Sup_SwitchStartupSpin -> SpeedCtrl_OnEnterSpin 以此预置速度 PI */
+        FocCore_RotatePI(a);
+        gOpenLoopDiag.deltaAtHandover = d;
+        gOpenLoopDiag.iqAtHandover = iq0;
+        gOpenLoopDiag.handovers++;
+        gOpenLoopDiag.stage = OPENLOOP_STAGE_HANDOVER;
+        Sup_SwitchStartupSpin();
+        FocCore_SetIdqRef(id0, iq0);        /* 本拍电流矢量保持不变 */
+        gSpd.idqCmd.s16Q = iqPi;            /* Spin 慢环中速度环从 iqPi 开始，iq0 - iqPi 由融合叠加 */
+        SpeedCtrl_BlendStart(id0, (int16_t)(iq0 - iqPi - ff0), ol, (int16_t)s_accScaleQ12, ff0);   /* 速度 PI 给出 iqPi、前馈给出 ff0，融合只叠加剩余部分 */
+        IRQ_UNLOCK();
     }
 }
 
@@ -283,8 +283,6 @@ void Startup_ResetRun(void)
     gStartup.preChargePhase = 0;
 }
 
-/* 进入 Calib 时清除飞车检测状态 */
-void Startup_ResetFlyCheck(void)  { FlyStart_Begin(); }
 
 /* ---------------------------------------------------------------------------
  * Charge：三相下桥轮流导通为自举电容充电，PRECHARGE_TIME 后进入 Calib
@@ -371,14 +369,14 @@ void Startup_AlignSlow(void)
     int32_t emf, iq;
     if (IDENT_TEST && Ident_Active()) { Ident_Slow(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
     if (STARTUP_IPD && s_ipd) {
-        if (gIpd.state == 2) {
+        if (gIpd.state == IPD_STATE_DONE) {
             if (Ipd_Evaluate()) {
                 Sup_SwitchIpdStartup(gIpd.theta);  /* 从测得的 N 极角开始拖动，无需定位 */
             } else {
                 /* 对比度不足（饱和不明显 / 转子在动）：本次退回定位。PWM 已为零电压，电流约为 0。
                  * 先清积分器再清 s_ipd（分别为一次 32 / 8 位写）：快环看到 s_ipd = 0 时积分器已为 0 */
                 FocCore_PresetPI(0, 0);
-                gOpenLoopDiag.stage = 1;
+                gOpenLoopDiag.stage = OPENLOOP_STAGE_ALIGN;
                 s_ipd = 0;
             }
         }
@@ -445,7 +443,6 @@ void Startup_StartupSlow(void)
     int32_t ol = s_olSpeed;
     s_olTarget = openLoopTarget();
     s_pllFilt += (gEst.pll.s32Speed >> OPENLOOP_PLL_FILT_SH) - (s_pllFilt >> OPENLOOP_PLL_FILT_SH);
-    if (s_time < 0xFFFF) s_time++;
     if (s_olCur < s_olCurTarget) {      /* 回退时开环电流升至目标 */
         s_olCur += CURRENT_SLEW_STEP_Q15;
         if (s_olCur > s_olCurTarget) s_olCur = s_olCurTarget;
@@ -474,7 +471,7 @@ void Startup_StartupSlow(void)
             openLoopHandover();
         } else if (++s_hold > OPENLOOP_TIMEOUT_TICKS) {
             gOpenLoopDiag.timeouts++;
-            gOpenLoopDiag.stage = 6;
+            gOpenLoopDiag.stage = OPENLOOP_STAGE_TIMEOUT;
             Sup_RaiseFault(MC_FAULT_ROTOR_BLOCKED);
             Sup_CountRestart();
         }

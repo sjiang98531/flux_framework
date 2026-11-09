@@ -28,6 +28,16 @@
 #include "qtypes.h"
 #include "foc_math.h"
 
+/* gFly.stage（诊断） */
+enum {
+    FLY_STAGE_IDLE = 0, FLY_STAGE_SETTLE = 1, FLY_STAGE_MEASURE = 2, FLY_STAGE_CATCH = 3,
+    FLY_STAGE_STILL = 4, FLY_STAGE_TIMEOUT = 5, FLY_STAGE_PULSE = 6
+};
+/* gFly.pulseResult（诊断） */
+enum {
+    FLY_PR_NONE = 0, FLY_PR_SPIN = 1, FLY_PR_OPENLOOP = 2, FLY_PR_TOO_SLOW = 3, FLY_PR_LOW = 4, FLY_PR_INCONSISTENT = 5
+};
+
 /* 飞车检测状态 */
 typedef struct {
     int16_t     s16BemfAmpTh;           /* 判"在转"的电流门限（FLYCURRENT_TH_PU） */
@@ -69,7 +79,5 @@ void FlyStart_NoteRunEnd(void);
  * 返回 FLY_CATCH / FLY_CATCH_OPENLOOP 时 gFly.thetaCatch / speedCatch 有效（对应本拍采样时刻）。 */
 FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign);
 
-/* 直接接入 Spin（闭环）的转速下限：同向 FLY_CATCH，反向 FLY_REV_SPIN_MIN_RPM */
-int32_t FlyStart_SpinMin(uint8_t sameDir);
 
 #endif

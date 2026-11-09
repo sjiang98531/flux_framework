@@ -473,7 +473,7 @@ void Ident_Slow(void)
         if (++t->cnt >= ZERO_WAIT_MS) { t->cnt = 0; Ipd_Start(); t->phase = 3; }
         break;
     case 3:     /* 快环施加脉冲中（ipd.c），完成后复制结果 */
-        if (gIpd.state == 2) {
+        if (gIpd.state == IPD_STATE_DONE) {
             (void)Ipd_Evaluate();       /* 给出 gIpd.theta（交流阻抗的 d / q 方向）/ ratioQ8 */
             ipdFit();
             FocCore_PresetPI(0, 0);     /* 电流环已旁路一轮（IPD 直接输出电压），积分器从 0 开始 */

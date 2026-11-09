@@ -40,6 +40,8 @@
  * 宜按"反电势占额定母线 UDC_RATE 的比例 k"选取，再换算为转速：
  *     n [rpm] = k * UDC_RATE * 60 / (2*pi * 极对数 * psi_f)
  * 本电机（5 对极、0.141 Wb、310 V）每 1% 约 42 rpm。各门限对应的 k 值写在其注释中，供更换电机时参考。 */
+/* 本节只给估算方法；各门限宏写在所属功能的一节里：ALIGN_STILL_RPM、OPENLOOP_*_RPM、SPIN_LOST_RPM、
+ * FLY_*_RPM、TRACK_END_RPM、FLUX_HPF_COMP_MIN_RPM、PWM_5SEG_RPM，以及下面的启停门限。 */
 
 /* ===================== 启停 ============================================== */
 /* 外环为速度环。转速指令的启停门限（rpm，指令绝对值）：|指令| > STOP_TO_RUN_SPEED 时起动，
@@ -49,9 +51,6 @@
  * （本电机 4 A/s：闭环 0.3 A 约 75 ms，I/F 1 A 约 0.25 s）。 */
 #define STOP_TO_RUN_SPEED       15.0        /* rpm，起动门限 */
 #define RUN_TO_STOP_SPEED       12.0        /* rpm，停机门限（须小于起动门限） */
-
-/* ===================== PI 实现 ============================================ */
-/* 所有 PI 均使用带防溢出的定点 PI（ctrl_pi.h）。 */
 
 /* ===================== 电流环 ============================================ */
 /* 零极点对消设计：Kp = 2*pi*BW*L，Ki = 2*pi*BW*Rs（d 轴用 Ld，q 轴用 Lq）。
@@ -222,7 +221,7 @@
 #define FLYCURRENT_TH_PU        (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB \
                                  / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX）：FLY_STILL_RPM 下的短路电流 */
 #define CALIPWMPERCENT          (0.99)      /* 短接时下桥占空比 */
-#define FLY_CATCH_RPM           252.0       /* rpm，同向且 >= 该值时直接接入闭环（取与 OPENLOOP_FALLBACK_RPM 相同，观测器在此以上可靠） */
+#define FLY_CATCH_RPM           OPENLOOP_FALLBACK_RPM   /* rpm，同向且 >= 该值时直接接入闭环（取与 OPENLOOP_FALLBACK_RPM 相同，观测器在此以上可靠） */
 /* 零电流跟踪结束转速（C 类经验值）：闭环中给出停机指令后不关闭 PWM，以零电流滑行跟踪转子，
  * 转速低于该值才关闭 PWM 回到 Stop。在跟踪期间重新给指令可直接闭环加速，无需飞车检测。
  * 跟踪期间零电流、无 Rs*i 误差，角度很准；限制因素是重新加速时带电流的那一刻，死区补偿误差越大、

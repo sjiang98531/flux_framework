@@ -13,7 +13,7 @@
  *   此外，大电流时电感饱和，L*i 使用随电流下降的 L(i)（lsEff）。
  * 定点：电压 Q15（FLUX_V_BASE 基准），磁链 Q15（FLUX_PSI_N 基准，cfg_derived.h），积分状态再左移 16 位以保证精度。
  *
- * 每拍调用链：Clarke -> FluxObs_UpdateFeedback -> FluxObs_Run（在本拍调制之前，gSvpwm.Alpha/Beta 仍为上一拍指令）
+ * 每拍调用链：Clarke -> FluxObs_Run（在本拍调制之前，gSvpwm.Alpha/Beta 仍为上一拍指令）
  * ==========================================================================*/
 #include "flux_obs.h"
 #include "foc_core.h"
@@ -30,6 +30,7 @@ FluxObs_TypeDef gFluxObs;
 /* FMAX：积分状态（磁链 << 16）限幅 = 0.9 满量程；PSI_LIMIT：转子磁链分量限幅 = 32768 / sqrt(2)（两分量平方和不溢出） */
 #define FMAX ((int32_t)29491L * 65536L)
 #define PSI_LIMIT 23170
+#define PSI_MAG_DIV 16      /* |psi_r|（诊断）每 PSI_MAG_DIV 拍开方一次 */
 /* psi_f（磁链 LSB）及 |psi_f|^2：运行时参数（param.c gGain） */
 #define FLUX_NOM    gGain.fluxNomQ15
 #define FLUX_NOM2   gGain.fluxNom2
@@ -211,7 +212,7 @@ void FluxObs_SeedCatch(int16_t theta)
  *   4. NLFO 修正量（沿 psi_r 方向，按 |psi_f|^2 - |psi_r|^2 的比例）；
  *   5. 积分：psi_s += e*KTs + 修正；
  *   6. 输出 psi_r = 相位补偿(psi_s) - L(i)*i，供 PLL 使用。 */
-RAMFUNC static void FluxObs_Run(void)
+RAMFUNC void FluxObs_Run(void)
 {
     MCFLIB_2_ALBE_T_S16 current;
     int16_t va, vb, ea, eb, ia, ib;
@@ -251,7 +252,7 @@ RAMFUNC static void FluxObs_Run(void)
     gFluxObs.s16Eal = ea; gFluxObs.s16Ebe = eb;
     ea = inputClamp((int32_t)ea - QMath_FilterMA(ea, &gFluxObs.sEalAvgMA.s32Acc, gFluxObs.sEalAvgMA.u16Sh));
     eb = inputClamp((int32_t)eb - QMath_FilterMA(eb, &gFluxObs.sEbeAvgMA.s32Acc, gFluxObs.sEbeAvgMA.u16Sh));
-    if (++gFluxObs.u8DivCnt >= 16) { gFluxObs.u8DivCnt = 0; }
+    if (++gFluxObs.u8DivCnt >= PSI_MAG_DIV) { gFluxObs.u8DivCnt = 0; }
 
     /* ---- NLFO 径向修正 ------------------------------------------------------
      *     corr = Gain * psi_r * (|psi_f|^2 - |psi_r|^2)
@@ -300,14 +301,8 @@ RAMFUNC static void FluxObs_Run(void)
     gFluxObs.s16PsiRAl = (int16_t)QMath_Clamp(x, PSI_LIMIT); gFluxObs.s16PsiRBe = (int16_t)QMath_Clamp(y, PSI_LIMIT);
 
     /* |psi_r| 仅用于诊断 / 置信度，每 16 拍开方一次 */
-    if (gFluxObs.u8DivCnt == 8) {
+    if (gFluxObs.u8DivCnt == PSI_MAG_DIV / 2) {
         gFluxObs.s16PsiRMag = FocMath_SqrtQ15((int32_t)gFluxObs.s16PsiRAl * gFluxObs.s16PsiRAl +
                                        (int32_t)gFluxObs.s16PsiRBe * gFluxObs.s16PsiRBe);
     }
-}
-
-/* 对外的每拍入口（由 est.c Est_SpinTick 等调用） */
-RAMFUNC void FluxObs_UpdateFeedback(void)
-{
-    FluxObs_Run();
 }

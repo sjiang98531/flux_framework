@@ -21,10 +21,13 @@
 
 SpeedCtrl_TypeDef gSpd;
 
-#define RUN_PI(p)   Pi_Run64(p)     /* 64 位，增益可超过 65535 */
-
 /* 斜坡速率（rpm/s）-> 每慢环拍转速增量（Q31，满量程 = base rpm） */
 #define RAMP_Q31(rate, base)    Q31((rate) / (base) / SLOWLOOP_FREQ)
+#define RAMP_UP_Q31             RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX)          /* 运行：加速 */
+#define RAMP_DOWN_Q31           RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX)        /* 运行：同向减速 */
+#define RAMP_REV_Q31            RAMP_Q31(SPEED_RAMP_REV, SPEED_MAX)         /* 运行：反转的减速段 */
+#define RAMP_OPENLOOP_Q31       RAMP_Q31(OPENLOOP_ACC_RPM_S, SPEED_MAX)     /* I/F 开环加速度（切换融合的起点） */
+#define RAMP_STARTUP_Q31        RAMP_Q31(STARTUP_SPEED_RAMP, SPEED_MAX)     /* I/F 期间（仅显示） */
 
 /* 从 gGain 装载速度 PI 增益（上电及参数更新时） */
 void SpeedCtrl_LoadGains(void)
@@ -37,8 +40,8 @@ void SpeedCtrl_LoadGains(void)
  * 母线电流限 PI（piPower）输出范围为 [-iqLimit, 0]：母线电流超过 IBUS_LIMIT_A 时向下限制 iq，平时输出 0 */
 void SpeedCtrl_Init(void)
 {
-    gSpd.speedRampSt.s32RampUp     = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX);
-    gSpd.speedRampSt.s32RampDown   = RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
+    gSpd.speedRampSt.s32RampUp     = RAMP_UP_Q31;
+    gSpd.speedRampSt.s32RampDown   = RAMP_DOWN_Q31;
 
     gSpd.iqLimit = Q15(SPD_PI_LIMIT / I_MAX);
     SpeedCtrl_BlendStop();
@@ -76,7 +79,7 @@ static int16_t regenIqAllowed(void)
  * 同时计算受限程度 lam = 1 - step / 额定，供损耗制动 id 使用。只读写 gSpd，慢环调用。 */
 static void busVdcLimit(void)
 {
-    int32_t st = gSpd.speedRampSt.s32State, tgt = (int32_t)gSpd.ref << 16;
+    int32_t st = gSpd.speedRampSt.s32State, tgt = (int32_t)gSpd.cmd << 16;
     int32_t lam = 0;
     if ((st > 0 && tgt < st) || (st < 0 && tgt > st)) {
         int32_t *pr = (st > 0) ? &gSpd.speedRampSt.s32RampDown : &gSpd.speedRampSt.s32RampUp;
@@ -166,7 +169,7 @@ static int32_t rampSCurve(int32_t tgt)
  * 距回退点剩余该转速时，减速侧上限按 jerk 每拍减小，到达回退点时恰好为 a_if。 */
 static void approachFallback(void)
 {
-    int32_t st = gSpd.speedRampSt.s32State, c = gSpd.ref, ac = c < 0 ? -c : c;
+    int32_t st = gSpd.speedRampSt.s32State, c = gSpd.cmd, ac = c < 0 ? -c : c;
     int32_t ast = st < 0 ? -st : st, aif = RAMP_Q31(OPENLOOP_REV_ACC_RPM_S, SPEED_MAX), a = gSpd.rampAcc < 0 ? -gSpd.rampAcc : gSpd.rampAcc;
     int32_t *pr;
     int64_t zone;
@@ -189,7 +192,6 @@ static void approachFallback(void)
  * 结果写入 gSpd.idqCmd，由 spin.c 发布给电流环 */
 void SpeedCtrl_SpinSlow(void)
 {
-    gSpd.ref = gSpd.cmd;
     gSpd.idqCmd.s16D = 0;               /* id 默认 0（SPM）；回馈制动 id / MTPA 在下方覆盖 */
 
     {
@@ -200,12 +202,12 @@ void SpeedCtrl_SpinSlow(void)
         if (gSpd.blendW >= 32767) {
             /* 反转（指令与斜坡反号）的减速段使用 SPEED_RAMP_REV，同向调速仍使用 SPEED_RAMP_UP/DOWN */
             int32_t st = gSpd.speedRampSt.s32State;
-            gSpd.speedRampSt.s32RampUp   = (st < 0 && gSpd.ref > 0) ? RAMP_Q31(SPEED_RAMP_REV, SPEED_MAX) : RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX);
-            gSpd.speedRampSt.s32RampDown = (st > 0 && gSpd.ref < 0) ? RAMP_Q31(SPEED_RAMP_REV, SPEED_MAX) : RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
+            gSpd.speedRampSt.s32RampUp   = (st < 0 && gSpd.cmd > 0) ? RAMP_REV_Q31 : RAMP_UP_Q31;
+            gSpd.speedRampSt.s32RampDown = (st > 0 && gSpd.cmd < 0) ? RAMP_REV_Q31 : RAMP_DOWN_Q31;
             approachFallback();     /* 回退 I/F 时刻的减速度 = I/F 过零的减速度 */
             busVdcLimit();          /* 减速侧步长按允许回馈功率限制（给定始终可实现） */
         }
-        gSpd.rampQ31 = rampSCurve(gSpd.ref << 16);
+        gSpd.rampQ31 = rampSCurve(gSpd.cmd << 16);
         gSpd.ramp = gSpd.rampQ31 >> 16;
 
         s16AccFF = 0;
@@ -232,11 +234,11 @@ void SpeedCtrl_SpinSlow(void)
 
         gSpd.pi.qInRef = gSpd.ramp;
         gSpd.pi.qInMeas = gMeas.speed;
-        RUN_PI(&gSpd.pi);
+        Pi_Run64(&gSpd.pi);
 
         gSpd.piPower.qInRef = IBUS_LIMIT_VALUE;    /* 母线电流限 */
         gSpd.piPower.qInMeas = gMeas.ibusAvg;
-        RUN_PI(&gSpd.piPower);
+        Pi_Run64(&gSpd.piPower);
 
         s32IqCmd = (int32_t)gSpd.pi.qOut + gSpd.piPower.qOut + s16AccFF;
         if (s32IqCmd > s32IqMax) s32IqCmd = s32IqMax;
@@ -252,8 +254,8 @@ void SpeedCtrl_SpinSlow(void)
  * 速度 PI 积分器预置为当前 iq 指令（转矩连续，进入时无跳变） */
 void SpeedCtrl_OnEnterSpin(void)
 {
-    gSpd.speedRampSt.s32RampUp     = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX);
-    gSpd.speedRampSt.s32RampDown   = RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
+    gSpd.speedRampSt.s32RampUp     = RAMP_UP_Q31;
+    gSpd.speedRampSt.s32RampDown   = RAMP_DOWN_Q31;
     gSpd.brakeId = 0;
     gSpd.brakeIdQ15x = 0;
     gSpd.vdcLam = 0;
@@ -276,7 +278,7 @@ void SpeedCtrl_BlendStart(int16_t id0, int16_t iq0, int32_t rampStartQ31, int16_
     gSpd.speedRampSt.s32State = rampStartQ31;
     gSpd.rampQ31 = rampStartQ31;
     gSpd.ramp = (int16_t)(rampStartQ31 >> 16);
-    gSpd.speedRampSt.s32RampUp   = (int32_t)(((int64_t)RAMP_Q31(OPENLOOP_ACC_RPM_S, SPEED_MAX) * accScaleQ12) >> 12);
+    gSpd.speedRampSt.s32RampUp   = (int32_t)(((int64_t)RAMP_OPENLOOP_Q31 * accScaleQ12) >> 12);
     gSpd.speedRampSt.s32RampDown = gSpd.speedRampSt.s32RampUp;
     /* 开环仍在加速（ff0 != 0）：斜坡加速度延续开环值，前馈连续 */
     gSpd.rampAcc = (ff0 > 0) ? gSpd.speedRampSt.s32RampUp : ((ff0 < 0) ? -gSpd.speedRampSt.s32RampUp : 0);
@@ -326,8 +328,8 @@ void SpeedCtrl_BlendSlow(void)
     if (w > 32767) w = 32767;
     gSpd.blendW = (int16_t)w;
     {   /* 斜坡斜率 I/F 加速度 -> SPEED_RAMP_UP / DOWN；w = 32767 时恰为 SpeedCtrl_OnEnterSpin 设置的值 */
-        int32_t r0 = (int32_t)(((int64_t)RAMP_Q31(OPENLOOP_ACC_RPM_S, SPEED_MAX) * gSpd.blendAccQ12) >> 12);
-        int32_t up = RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX), dn = RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX);
+        int32_t r0 = (int32_t)(((int64_t)RAMP_OPENLOOP_Q31 * gSpd.blendAccQ12) >> 12);
+        int32_t up = RAMP_UP_Q31, dn = RAMP_DOWN_Q31;
         gSpd.speedRampSt.s32RampUp   = (w >= 32767) ? up : r0 + (int32_t)(((int64_t)(up - r0) * w) >> 15);
         gSpd.speedRampSt.s32RampDown = (w >= 32767) ? dn : r0 + (int32_t)(((int64_t)(dn - r0) * w) >> 15);
     }
@@ -340,6 +342,6 @@ void SpeedCtrl_BlendSlow(void)
 void SpeedCtrl_UseStartupRamp(void)
 {
     gSpd.rampAcc = 0;
-    gSpd.speedRampSt.s32RampUp   = RAMP_Q31(STARTUP_SPEED_RAMP, SPEED_MAX);
-    gSpd.speedRampSt.s32RampDown = RAMP_Q31(STARTUP_SPEED_RAMP, SPEED_MAX);
+    gSpd.speedRampSt.s32RampUp   = RAMP_STARTUP_Q31;
+    gSpd.speedRampSt.s32RampDown = RAMP_STARTUP_Q31;
 }

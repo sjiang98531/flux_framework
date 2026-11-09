@@ -37,7 +37,7 @@ FORCE_INLINE int16_t QMath_Abs16(int16_t x)
 
 /* 32 位饱和加法（结果限在 [INT32_MIN, INT32_MAX]），QMath_FilterMA 内部用。
  * 判溢出：两个非负数相加得负数 = 正溢出，两个负数相加得非负数 = 负溢出（用符号位运算，不用分支比较） */
-FORCE_INLINE int32_t QMath_SatAdd32_(int32_t a, int32_t b)
+FORCE_INLINE int32_t QMath_AddSat32Full(int32_t a, int32_t b)
 {
     int32_t z = (int32_t)((uint32_t)a + (uint32_t)b);
     if ((~(a | b) & z) < 0) return INT32_MAX;
@@ -50,7 +50,7 @@ FORCE_INLINE int32_t QMath_SatAdd32_(int32_t a, int32_t b)
  * 用于母线电压、转速、母线电流的慢环滤波（meas.c）。快环中也有调用，故强制内联。 */
 FORCE_INLINE int16_t QMath_FilterMA(int16_t x, int32_t *acc, uint16_t sh)
 {
-    int32_t a = QMath_SatAdd32_(*acc, x), y = a >> sh, ny = (int32_t)(0u - (uint32_t)y);
+    int32_t a = QMath_AddSat32Full(*acc, x), y = a >> sh, ny = (int32_t)(0u - (uint32_t)y);
     int32_t z = (int32_t)((uint32_t)a - (uint32_t)y);
     if ((~(a | ny) & z) < 0) z = INT32_MAX;
     else if ((a & ny & ~z) < 0) z = INT32_MIN;
@@ -58,7 +58,7 @@ FORCE_INLINE int16_t QMath_FilterMA(int16_t x, int32_t *acc, uint16_t sh)
     return (int16_t)(y > 32767 ? 32767 : (y < -32768 ? -32768 : y));
 }
 
-/* 32 位饱和加法（结果限在 ±0x7FFFFFFF） */
+/* 32 位饱和加法，对称限在 ±0x7FFFFFFF（PI、PLL 用；QMath_AddSat32Full 限在 [INT32_MIN, INT32_MAX]） */
 FORCE_INLINE int32_t QMath_AddSat32(int32_t a, int32_t b)
 {
     if (b > 0 && a > (int32_t)0x7FFFFFFF - b) return  (int32_t)0x7FFFFFFF;

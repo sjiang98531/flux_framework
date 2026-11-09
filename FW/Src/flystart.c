@@ -16,7 +16,7 @@ FlyStart_TypeDef gFly;
 /* 直接接入 Spin 的转速下限。同向：FLY_CATCH。反向：进入 Spin 仅用于闭环减速，
  * 减速到 OPENLOOP_FALLBACK_RPM 即需回退 I/F；若接管点距回退点太近，Spin 中的 PLL 尚未收敛就要以其转速 / 角度初始化 I/F，
  * 可能导致失步。因此反向且低于 FLY_REV_SPIN_MIN_RPM 时，直接按飞车测得的转速 / 角度进入 I/F（测量值准确），由 I/F 减速过零。 */
-int32_t FlyStart_SpinMin(uint8_t sameDir)
+static int32_t flySpinMin(uint8_t sameDir)
 {
     if (!sameDir) return FLY_REV_SPIN_MIN_Q15;
     return FLY_CATCH_Q15;
@@ -63,7 +63,7 @@ static void pulseBegin(void)
 {
     s_pState = P_ON; s_pIdx = 0; s_pBad = 0; s_pNeedDphi = 0;
     s_pTick = 0; s_pSince = 0; s_pSum = 0;
-    gFly.pulseLen = 0; gFly.pulseResult = 0;
+    gFly.pulseLen = 0; gFly.pulseResult = FLY_PR_NONE;
     {   /* 门限 = 噪声峰值 * 每码门限（单次矢量角度误差 <= FLY_SEED_ANGLE_DEG） */
         int32_t n = gHal.adcNoisePk, ith;
         if (n < (int32_t)BOARD_ADC_NOISE_CODES) n = (int32_t)BOARD_ADC_NOISE_CODES;
@@ -88,7 +88,7 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
     case P_ON: {
         int32_t a = gMeas.iab.s16Alpha, b = gMeas.iab.s16Beta, m2 = a * a + b * b;
         HAL_PwmShortLowSides(gHal.caliDuty);
-        gFly.stage = 6;
+        gFly.stage = FLY_STAGE_PULSE;
         s_pTick++;
         if (gFly.pulseLen ? (s_pTick < gFly.pulseLen)
                           : ((m2 < s_pIth2 || s_pTick < FLY_PULSE_MIN_TICKS) && s_pTick < FLY_PULSE_MAX_TICKS))
@@ -97,7 +97,7 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
         gFly.pulseM2 = (uint32_t)m2;                    /* 幅值的平方；开方（仅用于诊断显示）在慢环执行 */
         if (!gFly.pulseLen) {
             gFly.pulseLen = s_pTick;
-            if (m2 < s_pIth2) return pulseFallback(3);     /* 最长脉冲也达不到精度要求的电流：转速太低（或静止） */
+            if (m2 < s_pIth2) return pulseFallback(FLY_PR_TOO_SLOW);     /* 最长脉冲也达不到精度要求的电流：转速太低（或静止） */
         }
         s_pPrevA = s_pA; s_pPrevB = s_pB;
         s_pA = a >> 1; s_pB = b >> 1;
@@ -124,7 +124,7 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
         }
         return FLY_BUSY;
     case P_CALC1: {
-        int32_t w, mean, tol;
+        int32_t w;
         uint8_t i;
         s_pSince++;
         /* 一致性：每个夹角与平均值之差不超过平均值的一半或 FLY_PULSE_TOL_MIN（取较大者）。
@@ -141,11 +141,10 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
                 if (e > tolN || e < -tolN) s_pBad = 1;
             }
         }
-        (void)mean; (void)tol;
-        if (s_pBad) return pulseFallback(5);
+        if (s_pBad) return pulseFallback(FLY_PR_INCONSISTENT);
         s_pSpd = QMath_Sat16((int32_t)(((int64_t)s_pSum * FLY_PULSE_K) >> 28));
         w = s_pSpd < 0 ? -(int32_t)s_pSpd : s_pSpd;
-        if (w < FLY_STABLE_MIN_Q15) return pulseFallback(4);
+        if (w < FLY_STABLE_MIN_Q15) return pulseFallback(FLY_PR_LOW);
         s_pState = P_CALC2;
         return FLY_BUSY;
     }
@@ -166,12 +165,12 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
         gFly.thetaCatch = (int16_t)(s_pAng >> 16);
         gFly.speedCatch = s_pSpd;
         gFly.speed = s_pSpd;
-        gFly.stage = 3;
+        gFly.stage = FLY_STAGE_CATCH;
         gFly.catches++;
         gFly.pulseCatches++;
         s_pState = P_DONE;
-        if (w >= FlyStart_SpinMin((s_pSpd > 0) == (cmdSign > 0))) { gFly.pulseResult = 1; return FLY_CATCH; }
-        gFly.pulseResult = 2;
+        if (w >= flySpinMin((s_pSpd > 0) == (cmdSign > 0))) { gFly.pulseResult = FLY_PR_SPIN; return FLY_CATCH; }
+        gFly.pulseResult = FLY_PR_OPENLOOP;
         return FLY_CATCH_OPENLOOP;
     }
     default:
@@ -185,7 +184,7 @@ void FlyStart_Begin(void)
     pulseBegin();
     s_sumA = 0; s_sumB = 0; s_tick = 0; s_blocks = 0;
     s_havePrev = 0; s_haveCD = 0; s_sawSpin = s_mayMove; s_prevSpd = 0; s_stillDone = 0; s_catchStep = 0;
-    gFly.stage = 1; gFly.amp = 0; gFly.ampM2 = 0; gFly.pulseM2 = 0; gFly.speed = 0; gFly.stable = 0; gFly.still = 0; gFly.brakeMs = 0;
+    gFly.stage = FLY_STAGE_SETTLE; gFly.amp = 0; gFly.ampM2 = 0; gFly.pulseM2 = 0; gFly.speed = 0; gFly.stable = 0; gFly.still = 0; gFly.brakeMs = 0;
 }
 
 /* 转子角 = 电流方向 + sgn(w) * (90° + atan(|w|Lq/Rs))。分两拍计算：
@@ -222,16 +221,16 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     HAL_PwmShortLowSides(gHal.caliDuty);               /* 三相下桥短接（同时起制动作用） */
     FocMath_ClarkeSat(&gMeas.iabc, &gMeas.iab);
     /* 静止在上一块末尾判出，下一拍才切换（进入 Calib 后第 FLYBRAKE_TIME*PWM_FREQ + 1 拍切到定位） */
-    if (s_stillDone) { gFly.stage = 4; return FLY_STILL; }
+    if (s_stillDone) { gFly.stage = FLY_STAGE_STILL; return FLY_STILL; }
     /* 接管：判定之后第 1 拍计算阻抗角，第 2 拍用当拍电流计算转子角并切换 */
     if (s_catchStep == 1) { s_catchOff = impedanceOffset(gFly.speedCatch); s_catchStep = 2; return FLY_BUSY; }
     if (s_catchStep == 2) {
         int32_t w = gFly.speedCatch < 0 ? -(int32_t)gFly.speedCatch : gFly.speedCatch;
         s_catchStep = 0;
         gFly.thetaCatch = catchAngle(gFly.speedCatch, s_catchOff);
-        gFly.stage = 3;
+        gFly.stage = FLY_STAGE_CATCH;
         gFly.catches++;
-        return (w >= FlyStart_SpinMin((gFly.speedCatch > 0) == (cmdSign > 0))) ? FLY_CATCH : FLY_CATCH_OPENLOOP;
+        return (w >= flySpinMin((gFly.speedCatch > 0) == (cmdSign > 0))) ? FLY_CATCH : FLY_CATCH_OPENLOOP;
     }
     s_sumA += gMeas.iab.s16Alpha;
     s_sumB += gMeas.iab.s16Beta;
@@ -263,7 +262,7 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
         gFly.still = 0;
         s_sawSpin = 1;
     } else {
-        gFly.stage = 2;
+        gFly.stage = FLY_STAGE_MEASURE;
         s_sawSpin = 1;
         gFly.still = 0;
         if (s_havePrev) {
@@ -296,6 +295,6 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
         s_havePrev = 1;
     }
     s_prevA = a; s_prevB = b;
-    if (gFly.brakeMs > FLY_TIMEOUT_BLOCKS) { gFly.stage = 5; return FLY_TIMEOUT; }
+    if (gFly.brakeMs > FLY_TIMEOUT_BLOCKS) { gFly.stage = FLY_STAGE_TIMEOUT; return FLY_TIMEOUT; }
     return FLY_BUSY;
 }

@@ -18,6 +18,8 @@
 
 FocCore_TypeDef gFoc;
 
+RAMFUNC static void dqPI(void);
+
 /* 上电初始化：装载电流环增益，清零积分器（输出限幅每拍按电压圆重设） */
 void FocCore_Init(void)
 {
@@ -73,7 +75,7 @@ void FocCore_PresetPIForSpeed(int16_t spdQ15)
 /* 电流环一拍（快环）：
  *   1. Park：αβ 电流 -> dq 电流（使用 gFoc.theta）；
  *   2. 电压圆半径 vmax = MAX_DUTY * 母线 * 2/3（SVPWM 线性区可输出的最大相电压幅值，Q15 电压）；
- *   3. FocCore_DqPI：d、q 两个 PI 加解耦前馈，得到 dq 电压；
+ *   3. dqPI：d、q 两个 PI 加解耦前馈，得到 dq 电压；
  *   4. 反 Park（使用 gFoc.thetaInv，可超前于 theta，补偿 PWM 延迟一拍生效期间的转角）-> αβ 电压；
  *   5. 母线归一化：按实际母线电压换算为调制器单位（母线升高时占空比自动减小）。 */
 RAMFUNC void FocCore_CurrentLoop(void)
@@ -86,7 +88,7 @@ RAMFUNC void FocCore_CurrentLoop(void)
     s16Temp = QMath_MulQ15(FOC_DUTY_LIMIT_Q15, gMeas.vbusAvg);
     gFoc.vmax = QMath_MulQ15(s16Temp, Q15(0.6667));     /* 幅值不变变换 */
 
-    FocCore_DqPI();
+    dqPI();
 
     /* 反 Park 角（gFoc.thetaInv）由估计模块按时序补偿给出；与 theta 相同时省去一次查表 */
     if (gFoc.thetaInv != gFoc.theta)
@@ -101,6 +103,7 @@ RAMFUNC void FocCore_CurrentLoop(void)
  * 开关请求由慢环发出（s_decReq：0 无请求，1 关闭，2 打开），快环在 PI 之前执行：
  * 前馈量移入 / 移出积分器与前馈开关切换在同一拍内完成，不会被中断分割。
  * s_decOn = 解耦前馈当前是否打开 */
+enum { DEC_REQ_NONE = 0, DEC_REQ_OFF = 1, DEC_REQ_ON = 2 };
 static volatile uint8_t s_decOn, s_decReq;
 /* vd_ff = -w*Lq*iq，vq_ff = w*psi_f + w*Ld*id（指令电流，Q15 电压） */
 /* 由 dq 电压方程，稳态时 vd = Rs*id - w*Lq*iq，vq = Rs*iq + w*(psi_f + Ld*id)。
@@ -118,7 +121,7 @@ FORCE_INLINE void decoupleFF(int32_t *ffd, int32_t *ffq)
 /* 慢环 / 切换函数请求打开（on = 1）或关闭解耦，由下一拍快环执行（applyDecoupleRequest） */
 void FocCore_SetDecouple(uint8_t on)
 {
-    s_decReq = on ? 2 : 1;
+    s_decReq = on ? DEC_REQ_ON : DEC_REQ_OFF;
 }
 
 /* 快环中执行开关请求。打开解耦后总电压 = PI 输出 + 前馈；为使切换时刻总电压不跳变，从积分器中减去前馈量
@@ -127,9 +130,9 @@ FORCE_INLINE void applyDecoupleRequest(void)
 {
     uint8_t on;
     int32_t ffd, ffq;
-    if (!s_decReq) return;
-    on = (uint8_t)(s_decReq - 1);
-    s_decReq = 0;
+    if (s_decReq == DEC_REQ_NONE) return;
+    on = (uint8_t)(s_decReq == DEC_REQ_ON);
+    s_decReq = DEC_REQ_NONE;
     if (on == s_decOn) return;
     decoupleFF(&ffd, &ffq);
     if (on) { gFoc.piD.qdSum -= ffd << 15; gFoc.piQ.qdSum -= ffq << 15; }
@@ -138,7 +141,7 @@ FORCE_INLINE void applyDecoupleRequest(void)
 }
 
 /* 复位解耦开关（不修改积分器：调用方已清零积分器） */
-void FocCore_ResetDecouple(void) { s_decReq = 0; s_decOn = 0; }
+void FocCore_ResetDecouple(void) { s_decReq = DEC_REQ_NONE; s_decOn = 0; }
 
 /* gFoc.idqRef 在 FocCore_TypeDef 中 4 字节对齐，可用一条 STR 指令写入 */
 typedef char FocIdqRefAligned[(offsetof(FocCore_TypeDef, idqRef) % 4u == 0u) ? 1 : -1];
@@ -167,7 +170,7 @@ void FocCore_RotatePI(sAngle_Trig a)
  *   d 轴：PI 输出 + 前馈，限制在 ±vmax；
  *   q 轴：限制在 ±sqrt(vmax^2 - vd^2)（电压圆，d 轴优先：先保证磁场方向电压，剩余部分用于转矩）；
  *   PI 输出范围扣除前馈，使"PI + 前馈"的总和受限（积分不会因前馈而饱和） */
-RAMFUNC void FocCore_DqPI(void)
+RAMFUNC static void dqPI(void)
 {
     int32_t t, ffd = 0, ffq = 0, vd, lim;
     applyDecoupleRequest();

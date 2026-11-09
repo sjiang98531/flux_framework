@@ -49,7 +49,7 @@ void Ipd_Start(void)
     gIpd.k = 0; gIpd.t = 0; gIpd.ok = 0;
     s_gap = nextGap();
     gIpd.runs++;
-    gIpd.state = 1;
+    gIpd.state = IPD_STATE_PULSING;
 }
 
 /* 主循环：gIpdCfg.pulseTicks 被修改后，重新计算正弦脉冲的相位步长（含除法，故不在快环中执行）；
@@ -106,7 +106,7 @@ void Ipd_Fast(void)
         if (++gIpd.t >= p + s_gap) {
             gIpd.t = 0;
             s_gap = nextGap();
-            if (++gIpd.k >= IPD_N) { gIpd.k = 0; gIpd.state = 2; }
+            if (++gIpd.k >= IPD_N) { gIpd.k = 0; gIpd.state = IPD_STATE_DONE; }
         }
     }
     FocCore_ApplyVoltageAB((int16_t)(((int32_t)v * gIpd.dir.s16Cos) >> 15),
@@ -133,6 +133,6 @@ uint8_t Ipd_Evaluate(void)
     gIpd.theta = (int16_t)(QMath_Atan2(y, x) >> 16);
     gIpd.ok = (uint8_t)(mx > 0 && gIpd.ratioQ8 >= IPD_MIN_RATIO_Q8);
     if (!gIpd.ok) gIpd.fails++;
-    gIpd.state = 0;
+    gIpd.state = IPD_STATE_IDLE;
     return gIpd.ok;
 }

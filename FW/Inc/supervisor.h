@@ -45,6 +45,10 @@ typedef enum _m1_run_substate_t {
 #define MC_FAULT_SET(faults, faultid)   (faults |= ((mcdef_fault_t)1 << faultid))
 #define MC_FAULT_CLEAR_ALL(faults)      (faults = 0)
 
+/* 连续重启（Sup_CountRestart）：计数达到 SUP_RESTART_LIMIT 后 Stop 不再自动起动，指令归零时清零；计数本身封顶 SUP_RESTART_COUNT_MAX */
+#define SUP_RESTART_LIMIT       5
+#define SUP_RESTART_COUNT_MAX   10
+
 /* 状态机、速度指令、故障 */
 typedef struct {
     m1_app_mainstate_t mainState;       /* 主状态 */
@@ -98,8 +102,6 @@ typedef struct {
 } SupLog_TypeDef;
 extern volatile SupLog_TypeDef gSupLog;
 void Sup_Log(uint16_t code, uint16_t arg);
-extern const pfcn_void_void s_STATE_FAST[4];
-extern const pfcn_void_void s_STATE_SLOW[4];
 
 /* ---- 入口 ---- */
 void Ctrl_Init(void);           /* 上电初始化全部模块 */

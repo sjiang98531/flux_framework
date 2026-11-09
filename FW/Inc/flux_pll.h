@@ -24,7 +24,6 @@ typedef struct {
     int16_t  speedLast;    /* 上一拍 PLL 转速（Q15） */
     uint16_t thetaLast;    /* 上一拍 PLL 角度 */
     uint32_t satCount;    /* 转速达到 ±SPEED_MAX 限幅的次数 */
-    uint32_t buildTag;    /* 固件版本（同 gFluxDiag.buildTag） */
 } FluxPLL_Diag_TypeDef;
 
 extern volatile FluxPLL_Diag_TypeDef gPllDiag;

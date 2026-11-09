@@ -40,7 +40,6 @@ void FluxPLL_Init(PLL_TypeDef *p)
     gPllDiag.speedLast = 0;
     gPllDiag.thetaLast = 0;
     gPllDiag.satCount  = 0;
-    gPllDiag.buildTag  = BUILD_TAG;
 }
 
 /* 鉴相器：磁链矢量与估计角方向的叉积 = |psi| * sin(真实角 - 估计角)。误差较小时 ≈ |psi| * 角度误差（rad），

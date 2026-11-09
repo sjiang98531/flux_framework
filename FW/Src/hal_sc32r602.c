@@ -21,6 +21,11 @@
 __align(4) u16 ADC_DMABuff[14];          /* ADC -> DMA 缓冲（SC_Init.c 配置 DMA 目标地址） */
 Hal_TypeDef gHal;
 
+/* 上电零点校准：前 OFFSET_START 拍等运放、基准稳定（约 62 ms），之后 OFFSET_N 拍求零点与噪声（和 >> 8 = 平均） */
+#define OFFSET_START    999u
+#define OFFSET_N        256u
+#define OFFSET_END      (OFFSET_START + OFFSET_N)
+
 /* 零点校准累加器：A、B 相电流及母线电流的采样和（256 个） */
 static uint32_t s_u32IaSum, s_u32IbSum, s_u32IbusSum;
 static uint16_t s_u16Cnt;                /* 上电拍数（零点校准用） */
@@ -44,20 +49,20 @@ FORCE_INLINE uint8_t acquireSamples(void)
 {
     int16_t ia, ib;
     s_u16Cnt++;
-    if (s_u16Cnt < 999) {               /* 第 999~1254 拍：共 256 个点 */
+    if (s_u16Cnt < OFFSET_START) {               /* 第 999~1254 拍：共 256 个点 */
         return 0;
-    } else if (s_u16Cnt < 1255) {
+    } else if (s_u16Cnt < OFFSET_END) {
         uint8_t k;
         for (k = 0; k < 2; k++) {       /* 噪声：零电流时采样峰峰值 / 2 */
             uint16_t x = ADC_DMABuff[k];
-            if (s_u16Cnt == 999 || x < s_adcMin[k]) s_adcMin[k] = x;
-            if (s_u16Cnt == 999 || x > s_adcMax[k]) s_adcMax[k] = x;
+            if (s_u16Cnt == OFFSET_START || x < s_adcMin[k]) s_adcMin[k] = x;
+            if (s_u16Cnt == OFFSET_START || x > s_adcMax[k]) s_adcMax[k] = x;
         }
         s_u32IaSum += ADC_DMABuff[0] << 3;
         s_u32IbSum += ADC_DMABuff[1] << 3;
         s_u32IbusSum += ADC_DMABuff[2] << 3;
         return 0;
-    } else if (s_u16Cnt == 1255) {
+    } else if (s_u16Cnt == OFFSET_END) {
         gMeas.iabcOffset.s16A = s_u32IaSum >> 8;
         gMeas.iabcOffset.s16B = s_u32IbSum >> 8;
 #if (IBUS_RECONSTRUCTED == 0)
@@ -70,7 +75,7 @@ FORCE_INLINE uint8_t acquireSamples(void)
         s_u32IaSum = 0; s_u32IbSum = 0; s_u32IbusSum = 0;
         return 0;
     }
-    s_u16Cnt = 1256;
+    s_u16Cnt = OFFSET_END + 1;
     ia = (ADC_DMABuff[0] << 3);                    /* 12 位 ADC 左移 3 位 -> Q15 */
     ib = (ADC_DMABuff[1] << 3);
 #if (RUN_DIR == RUN_CW)

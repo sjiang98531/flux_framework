@@ -83,8 +83,8 @@ static void M1_Stop_Slow(void);
 static void M1_Run_Slow(void);
 static void M1_FaultDetection(void);
 
-const pfcn_void_void s_STATE_FAST[4] = {M1_Fault_Fast, M1_Init_Fast, M1_Stop_Fast, M1_Run_Fast};
-const pfcn_void_void s_STATE_SLOW[4] = {M1_Fault_Slow, M1_Init_Slow, M1_Stop_Slow, M1_Run_Slow};
+static const pfcn_void_void s_STATE_FAST[4] = {M1_Fault_Fast, M1_Init_Fast, M1_Stop_Fast, M1_Run_Fast};
+static const pfcn_void_void s_STATE_SLOW[4] = {M1_Fault_Slow, M1_Init_Slow, M1_Stop_Slow, M1_Run_Slow};
 
 /* Run 子状态表，顺序 = m1_run_substate_t */
 static const pfcn_void_void s_M1_STATE_RUN_TABLE_FAST[5] = {
@@ -210,7 +210,7 @@ static void M1_SwitchRunFault(void)
  * 指令归零才清零：防止"故障 -> 重启 -> 故障"无限循环 */
 void Sup_CountRestart(void)
 {
-    if (gSup.faultRestarts < 10) gSup.faultRestarts++;
+    if (gSup.faultRestarts < SUP_RESTART_COUNT_MAX) gSup.faultRestarts++;
 }
 
 /* 报故障：置故障位（gSup.fault，同时累计到 faultRecord 便于追溯），立即切换到 Fault（关闭 PWM） */
@@ -306,7 +306,7 @@ static void M1_Init_Slow(void)
 static void M1_Stop_Slow(void)
 {
     gSpd.cmd = gSup.speedCmd;
-    if (abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && (gSup.faultRestarts < 5)) M1_SwitchStopRun();
+    if (abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && (gSup.faultRestarts < SUP_RESTART_LIMIT)) M1_SwitchStopRun();
     else if (abs(gSpd.cmd) < Q15(STOP_TO_RUN_SPEED / SPEED_MAX)) gSup.faultRestarts = 0;
     Meas_SlowFilter();
 }
@@ -327,6 +327,41 @@ static uint8_t softStopSlow(void)
     return 0;
 }
 
+/* Run 中的停机处理（有电流的子状态：定位、I/F、闭环）：软停机把电流降到 0 后，闭环且转速够高 -> 零电流跟踪，
+ * 否则关 PWM 回 Stop。软停开始后只有闭环中指令恢复才取消（从当前电流和转速继续闭环），定位 / I/F 中一律做完再停。
+ * 返回 1 = 本拍由软停机处理（调用方不再执行子状态慢环） */
+static uint8_t runStopSlow(uint8_t stopReq)
+{
+    uint8_t live = (uint8_t)(gSup.runState == RunState_Spin || gSup.runState == RunState_Startup || gSup.runState == RunState_Align);
+    if (s_softStop && !stopReq && gSup.runState == RunState_Spin) {
+        s_softStop = 0;
+        {
+            IRQ_LOCK();
+            SpeedCtrl_OnEnterSpin();        /* 斜坡从当前转速、积分器从当前 iq 继续 */
+            IRQ_UNLOCK();
+        }
+    }
+    if (!(live && (stopReq || s_softStop))) {
+        s_softStop = 0;
+        return 0;
+    }
+    if (!s_softStop) SpeedCtrl_BlendStop();     /* 软停期间不执行速度环，未完成的 I/F 切换融合作废 */
+    s_softStop = 1;
+    if (softStopSlow()) {
+        s_softStop = 0;
+        if (gSup.runState == RunState_Spin && abs(gMeas.speed) >= TRACK_END_Q15) {
+            /* 闭环中停机：不关 PWM，进入零电流跟踪（保持转子状态，滑行中再给指令无需飞车检测） */
+            Sup_Log(SUP_EV_TRACK, (uint16_t)gMeas.speed);
+            Spin_TrackBegin();
+        } else {
+            HAL_PwmAllOff();
+            Sup_SwitchRunStop();
+        }
+    }
+    Meas_SlowFilter();
+    return 1;
+}
+
 /* Run 慢环，按优先级：
  *   1. 参数辨识模式（IDENT_TEST）的慢环钩子；
  *   2. 零电流跟踪中（闭环中停机后转子仍在转动）：只执行 Spin_TrackSlow；
@@ -335,40 +370,13 @@ static uint8_t softStopSlow(void)
  *   4. 正常情况：按子状态分发慢环函数（预充计时、飞车判定、定位、I/F、速度环）。 */
 static void M1_Run_Slow(void)
 {
+    uint8_t stopReq;
     gSpd.cmd = gSup.speedCmd;
+    stopReq = (uint8_t)(abs(gSpd.cmd) < Q15(RUN_TO_STOP_SPEED / SPEED_MAX));
     if (IDENT_TEST) Ident_RunSlow((uint8_t)(gSup.runState == RunState_Spin && !s_softStop), Spin_Tracking(), gSpd.cmd, gSpd.ramp);
     if (Spin_Tracking()) { Spin_TrackSlow(); return; }
-    {   /* 有电流的子状态（定位、I/F、闭环）执行软停机；软停机开始后，仅当闭环中指令恢复时才取消
-         * （从当前电流和转速继续闭环），定位 / I/F 中一律完成后再停 */
-        uint8_t live = (gSup.runState == RunState_Spin || gSup.runState == RunState_Startup || gSup.runState == RunState_Align);
-        uint8_t req = (uint8_t)(abs(gSpd.cmd) < Q15(RUN_TO_STOP_SPEED / SPEED_MAX));
-        if (s_softStop && !req && gSup.runState == RunState_Spin) {
-            s_softStop = 0;
-            IRQ_LOCK();
-            SpeedCtrl_OnEnterSpin();        /* 斜坡从当前转速、积分器从当前 iq 继续 */
-            IRQ_UNLOCK();
-        }
-        if (live && (req || s_softStop)) {
-            if (!s_softStop) SpeedCtrl_BlendStop();     /* 软停期间不执行速度环，未完成的 I/F 切换融合作废 */
-            s_softStop = 1;
-            if (softStopSlow()) {
-                s_softStop = 0;
-                if (gSup.runState == RunState_Spin && abs(gMeas.speed) >= TRACK_END_Q15) {
-                    /* 闭环中停机：不关闭 PWM，进入零电流跟踪（保持转子状态，滑行中重新给指令无需飞车检测） */
-                    Sup_Log(SUP_EV_TRACK, (uint16_t)gMeas.speed);
-                    Spin_TrackBegin();
-                } else {
-                    HAL_PwmAllOff();
-                    Sup_SwitchRunStop();
-                }
-            }
-            Meas_SlowFilter();
-            return;
-        }
-        s_softStop = 0;
-    }
-
-    if (abs(gSpd.cmd) < Q15(RUN_TO_STOP_SPEED / SPEED_MAX)) {     /* 无电流的子状态（预充、飞车检测）直接停机 */
+    if (runStopSlow(stopReq)) return;
+    if (stopReq) {                      /* 无电流的子状态（预充、飞车检测）直接停机 */
         HAL_PwmAllOff();
         Sup_SwitchRunStop();
         return;
@@ -379,6 +387,16 @@ static void M1_Run_Slow(void)
 /* ===========================================================================
  * Run 子状态切换
  * =========================================================================*/
+/* 打开上下桥互补输出，本周期输出零矢量（下一拍起由电流环 / 开环接手）：先全关、使能上下桥、写零矢量比较值，再开输出 */
+static void bridgeOnZeroVector(void)
+{
+    HAL_PwmAllOff();
+    HAL_PwmHighOn();
+    HAL_PwmLowOn();
+    FocCore_ModulateZero();
+    HAL_PwmAllOn();
+}
+
 /* Charge -> Calib（预充完成，开始飞车检测）：上桥关闭、下桥导通（三相短接），比较值为零矢量。
  * 清除运行状态与飞车检测状态 */
 void Sup_SwitchChargeCalib(void)
@@ -390,7 +408,7 @@ void Sup_SwitchChargeCalib(void)
     HAL_PwmAllOn();
 
     Ctrl_ResetRunVariables();
-    Startup_ResetFlyCheck();
+    FlyStart_Begin();
     gStartup.preChargeCnt = 0;
     gSup.runState = RunState_Calib;
 }
@@ -401,11 +419,7 @@ void Sup_SwitchCalibAlign(void)
     Sup_Log(SUP_EV_STILL, 0);
     Startup_OnEnterAlign();         /* 定位计时、角度清零 */
     gSup.runState = RunState_Align;
-    HAL_PwmAllOff();
-    HAL_PwmHighOn();
-    HAL_PwmLowOn();
-    FocCore_ModulateZero();
-    HAL_PwmAllOn();
+    bridgeOnZeroVector();
 }
 
 /* Calib -> Spin（飞车检测：转子转速足够，直接接入闭环）。在快环中调用（常数时间赋值）：
@@ -422,11 +436,7 @@ void Sup_SwitchCalibSpin(void)
     FocCore_SetIdqRef(0, 0);
     FocCore_PresetPIForSpeed(spd);
 
-    HAL_PwmAllOff();
-    HAL_PwmHighOn();
-    HAL_PwmLowOn();
-    FocCore_ModulateZero();         /* 本周期仍为零矢量（= 短接），下一拍由电流环接手 */
-    HAL_PwmAllOn();
+    bridgeOnZeroVector();         /* 本周期仍为零矢量（= 短接），下一拍由电流环接手 */
 
     SpeedCtrl_BlendStop();
     Spin_OnEnterCatch();            /* 先跟踪后控制：零电流跟踪，估计器收敛后再闭合速度环；速度环初始化推迟到下一个慢环周期 */
@@ -446,11 +456,7 @@ void Sup_SwitchCalibOpenLoop(void)
     FocCore_PresetPIForSpeed(spd);
     Startup_CommitCatchOpenLoop(spd);     /* 从 PLL 角（= 接管角外推一拍）和转速开始拖动；入口参数已在上电时计算，常数时间 */
 
-    HAL_PwmAllOff();
-    HAL_PwmHighOn();
-    HAL_PwmLowOn();
-    FocCore_ModulateZero();
-    HAL_PwmAllOn();
+    bridgeOnZeroVector();
 
     gSup.runState = RunState_Startup;
     SpeedCtrl_PresetRamp(gMeas.speed);
@@ -464,13 +470,13 @@ void Sup_SwitchAlignStartup(void)
     OpenLoopEntry_TypeDef e;
     Startup_PrepareOpenLoop(0, 0, 0, 0, 0, &e);
     {
-    IRQ_LOCK();
-    Sup_Log(SUP_EV_ALIGN_DONE, 0);
-    Est_OnEnterStartupCold();
-    Startup_CommitOpenLoop(&e);           /* I/F：从定位角、零速开始拖动 */
-    gSup.runState = RunState_Startup;
-    SpeedCtrl_UseStartupRamp();
-    IRQ_UNLOCK();
+        IRQ_LOCK();
+        Sup_Log(SUP_EV_ALIGN_DONE, 0);
+        Est_OnEnterStartupCold();
+        Startup_CommitOpenLoop(&e);           /* I/F：从定位角、零速开始拖动 */
+        gSup.runState = RunState_Startup;
+        SpeedCtrl_UseStartupRamp();
+        IRQ_UNLOCK();
     }
 }
 
@@ -485,16 +491,16 @@ void Sup_SwitchIpdStartup(int16_t theta)
     e.olCur = e.olCurTarget >> 2;
     e.accStep = (e.accStepFull * e.olCur) / e.olCurTarget;
     {
-    IRQ_LOCK();
-    Sup_Log(SUP_EV_IPD_DONE, (uint16_t)theta);
-    gFoc.theta = theta;
-    gFoc.thetaInv = theta;
-    FocCore_PresetPI(0, 0);         /* 电流环已旁路一轮（直接输出电压），积分器从 0 开始 */
-    Est_OnEnterStartupCold();       /* 观测器初始化为 |psi_f|∠theta（N 极），PLL 角 = theta */
-    Startup_CommitOpenLoop(&e);
-    gSup.runState = RunState_Startup;
-    SpeedCtrl_UseStartupRamp();
-    IRQ_UNLOCK();
+        IRQ_LOCK();
+        Sup_Log(SUP_EV_IPD_DONE, (uint16_t)theta);
+        gFoc.theta = theta;
+        gFoc.thetaInv = theta;
+        FocCore_PresetPI(0, 0);         /* 电流环已旁路一轮（直接输出电压），积分器从 0 开始 */
+        Est_OnEnterStartupCold();       /* 观测器初始化为 |psi_f|∠theta（N 极），PLL 角 = theta */
+        Startup_CommitOpenLoop(&e);
+        gSup.runState = RunState_Startup;
+        SpeedCtrl_UseStartupRamp();
+        IRQ_UNLOCK();
     }
 }
 
@@ -521,15 +527,15 @@ void Sup_SwitchSpinStartup(void)
     /* 准备：输入均为慢环写入的量（iq 指令、滤波转速）或变化很慢的量（PLL 转速符号），可在临界区外读取 */
     Startup_PrepareOpenLoop(1, gFoc.idqRef.s16Q, Startup_OpenLoopReversal(gEst.pll.s32Speed), Startup_OpenLoopReversal(gMeas.speed), gMeas.speed, &e);
     {
-    IRQ_LOCK();
-    IdRef_Reset();         /* 回到起动模式：id = 0 */
-    FocCore_SetDecouple(0);
-    SpeedCtrl_BlendStop();
-    Startup_CommitOpenLoop(&e);           /* I/F：开环角 = 此刻的 PLL 角 + 预先计算的偏移 */
-    gSup.runState = RunState_Startup;
-    SpeedCtrl_PresetRamp(gMeas.speed);
-    SpeedCtrl_UseStartupRamp();
-    IRQ_UNLOCK();
+        IRQ_LOCK();
+        IdRef_Reset();         /* 回到起动模式：id = 0 */
+        FocCore_SetDecouple(0);
+        SpeedCtrl_BlendStop();
+        Startup_CommitOpenLoop(&e);           /* I/F：开环角 = 此刻的 PLL 角 + 预先计算的偏移 */
+        gSup.runState = RunState_Startup;
+        SpeedCtrl_PresetRamp(gMeas.speed);
+        SpeedCtrl_UseStartupRamp();
+        IRQ_UNLOCK();
     }
 }
 

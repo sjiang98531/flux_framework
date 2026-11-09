@@ -34,26 +34,37 @@ static int32_t s_fbLim;                 /* Spin -> I/F 回退前 |id| 的上限�
 static int8_t s_spinDir;              /* 进入 Spin 时的指令方向；之后指令反向（需要反转）时清 0 */
 static uint16_t s_u16SpinCheckTime;     /* Spin 中 spinTooSlow 的轮询分频（SPIN_CHECK_TICKS） */
 
+/* 符号：+1 / 0 / -1 */
+static int8_t sign16(int16_t x)
+{
+    return (int8_t)((x > 0) - (x < 0));
+}
+
 /* 同向时估计转速降到 SPIN_LOST_RPM 以下：Spin 只在 >= 切换转速的区间运行，同向降到此值不属于正常减速
  * （正常减速在 OPENLOOP_FALLBACK_RPM 已交给 I/F），判为失锁或堵转 */
 static uint8_t spinTooSlow(void)
 {
-    if (gMeas.speed >= SPIN_LOST_Q15 && gSpd.cmd > 0) return 0;
-    if (gMeas.speed <= -SPIN_LOST_Q15 && gSpd.cmd < 0) return 0;
-    return 1;
+    return (uint8_t)((int32_t)sign16(gSpd.cmd) * gMeas.speed < SPIN_LOST_Q15);
 }
-
 
 static void spinEntered(void);
 
 /* 指令与估计转速同向 / 反向（任一为 0 时两者都不成立） */
 static uint8_t cmdSameDir(void)
 {
-    return (uint8_t)((gSpd.cmd > 0 && gMeas.speed > 0) || (gSpd.cmd < 0 && gMeas.speed < 0));
+    return (uint8_t)(sign16(gSpd.cmd) * sign16(gMeas.speed) > 0);
 }
 static uint8_t cmdOppositeDir(void)
 {
-    return (uint8_t)((gSpd.cmd > 0 && gMeas.speed < 0) || (gSpd.cmd < 0 && gMeas.speed > 0));
+    return (uint8_t)(sign16(gSpd.cmd) * sign16(gMeas.speed) < 0);
+}
+
+/* 进入 Spin 的公共处理（I/F 切闭环、飞车接管、零电流跟踪转闭环）：记录指令方向，缺相统计与失速检查重新开始 */
+static void spinBeginChecks(void)
+{
+    spinEntered();
+    Protect_PhaseReset();
+    s_u16SpinCheckTime = 0;
 }
 
 /* 停机复位：清除"待初始化速度环"与零电流跟踪标志 */
@@ -72,19 +83,15 @@ uint8_t Spin_Tracking(void)
 /* 从 I/F 切入 Spin 时（Sup_SwitchStartupSpin）：记录方向，缺相统计与失速检查重新开始 */
 void Spin_OnEnter(void)
 {
-    spinEntered();
-    Protect_PhaseReset();
-    s_u16SpinCheckTime = 0;
+    spinBeginChecks();
 }
 
 /* 飞车直接接入 Spin 时（Sup_SwitchCalibSpin，快环中）：进入零电流跟踪，速度环初始化推迟到下一个慢环周期 */
 void Spin_OnEnterCatch(void)
 {
-    spinEntered();
+    spinBeginChecks();
     s_spinEntryPending = 1;         /* SpeedCtrl_OnEnterSpin 推迟到下一个慢环周期（减少快环负担，且避免与慢环同时访问 gSpd） */
     Spin_TrackBegin();
-    Protect_PhaseReset();
-    s_u16SpinCheckTime = 0;
 }
 
 /* ===========================================================================
@@ -143,9 +150,7 @@ void Spin_TrackSlow(void)
         Sup_Log(SUP_EV_TRACK_END, 1);
         Meas_SpeedPreset(w);
         SpeedCtrl_OnEnterSpin();
-        spinEntered();
-        Protect_PhaseReset();
-        s_u16SpinCheckTime = 0;
+        spinBeginChecks();
         s_track = 0;
     } else if (abs(w) < TRACK_END_Q15) {
         Sup_Log(SUP_EV_TRACK_END, 0);
@@ -162,8 +167,6 @@ void Spin_TrackSlow(void)
 RAMFUNC void Spin_Fast(void)
 {
     FocCore_Clarke();
-
-
     Est_SpinTick();
     FocCore_CurrentLoop();
 
@@ -179,9 +182,7 @@ static void spinEntered(void)
     /* 仅当转子方向与指令一致时才记为"进入 Spin 时的方向"。飞车按转子自身方向接管而指令反向时，
      * 进入 Spin 即为一次正常反转（减速 -> 回退 I/F -> 过零），不能判为失锁 */
     s_fbLim = -1;
-    if (gSpd.cmd > 0 && gMeas.speed > 0) s_spinDir = 1;
-    else if (gSpd.cmd < 0 && gMeas.speed < 0) s_spinDir = -1;
-    else s_spinDir = 0;
+    s_spinDir = cmdSameDir() ? sign16(gSpd.cmd) : 0;
 }
 
 /* 失锁：指令方向自进入 Spin 以来未变，估计转速却变为 0 或反向。转子在几毫秒内不可能被自身正向转矩
@@ -248,14 +249,12 @@ void Spin_Slow(void)
     /* 本拍电流指令一次性发布 */
     FocCore_SetIdqRef(gSpd.idqCmd.s16D, gSpd.idqCmd.s16Q);
 
-
     /* 低速区（含过零反向）由 I/F 开环负责，在观测器仍锁定的转速即交回；同向降到 SPIN_LOST_RPM 以下 = 失锁 */
     if (spinLostLock()) { spinLostLockStop(); return; }
     if (fbReady) {
         Sup_Log(SUP_EV_FALLBACK, SUP_FB_OPENLOOP);
         Sup_SwitchSpinStartup();
-    } else
-    if (!cmdOppositeDir()) {    /* 同向，或估计转速恰为 0（指令此处不为 0）：0 也按"转不动"判失锁 */
+    } else if (!cmdOppositeDir()) {    /* 同向，或估计转速恰为 0（指令此处不为 0）：0 也按"转不动"判失锁 */
         if (++s_u16SpinCheckTime >= SPIN_CHECK_TICKS) {
             s_u16SpinCheckTime = 0;
             if (spinTooSlow()) {
@@ -268,13 +267,11 @@ void Spin_Slow(void)
     } else {
         /* 兜底：指令反向且已低于闭环最低转速仍未回退（正常在 OPENLOOP_FALLBACK_RPM 即开始回退，仅当撤除制动 id 期间
          * 转速已很低时才会进入此分支），立即交给 I/F */
-        if (cmdOppositeDir() && (abs(gMeas.speed) < OPENLOOP_SPIN_MIN_Q15)) {
+        if (abs(gMeas.speed) < OPENLOOP_SPIN_MIN_Q15) {
             Sup_Log(SUP_EV_FALLBACK, SUP_FB_REVERSE);
             Sup_SwitchSpinStartup();
         }
     }
-
-    /* 磁链 PLL 无相位滞后，无需高速角度补偿 */
 
     Meas_SlowFilter();
 

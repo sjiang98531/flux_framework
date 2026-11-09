@@ -45,8 +45,6 @@ FORCE_INLINE void FocCore_Clarke(void)
 /* 电流环：Park -> PI（d/q）-> 反 Park -> 母线归一化。角度用 gFoc.theta / thetaInv。 */
 void FocCore_CurrentLoop(void);
 
-/* d/q 电流 PI（带防溢出；由 FocCore_CurrentLoop 调用） */
-void FocCore_DqPI(void);
 /* dq 解耦前馈开关（进入 Spin 时打开、离开时关闭）。切换时将前馈量移入 / 移出积分器，实现无扰切换。
  */
 void FocCore_SetDecouple(uint8_t on);

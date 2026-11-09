@@ -17,7 +17,6 @@
 /* 外环状态 */
 typedef struct {
     int16_t  cmd;               /* 本拍的转速指令（Q15），= gSup.speedCmd */
-    int16_t  ref;               /* 外环给定（= cmd） */
     int32_t  rampQ31;           /* 速度斜坡输出 Q31 */
     int16_t  ramp;              /* 速度斜坡输出 Q15 */
     int16_t  iqLimit;           /* iq 上限 Q15（SPD_PI_LIMIT） */
