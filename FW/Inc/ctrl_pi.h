@@ -12,7 +12,7 @@
  * Pi_Run64：慢环使用（速度环 / 功率环），64 位乘积，Kp/Ki 可超过 65535。误差限在 int32 范围（输入为 Q15，实际远小于此），
  *           两个乘法均写成 32x32->64：Keil 对 64x64 乘法调用通用库 _ll_mul（M0+ 上约上千个时钟），
  *           对两个 32 位数扩展后相乘调用 __ARM_common_ll_mulss（几十个时钟）。
- * 状态存储使用 qtypes.h 中的 tPIParm（gFoc.piD/piQ、gSpd.pi/piPower）。
+ * 状态存储使用 qtypes.h 中的 PI_TypeDef（gFoc.piD/piQ、gSpd.pi/piIbus）。
  * ==========================================================================*/
 #ifndef CTRL_PI_H
 #define CTRL_PI_H
@@ -27,7 +27,7 @@
  *         -> 输出 = Kp*err >> 15 + sum >> 15，再限幅。全部为 32 位乘加，每拍几十个时钟。
  * @param  p  PI 参数与状态
  */
-FORCE_INLINE void Pi_Run32(tPIParm *p)
+FORCE_INLINE void Pi_Run32(PI_TypeDef *p)
 {
     int32_t err = (int32_t)p->qInRef - (int32_t)p->qInMeas;
     int32_t hi = (int32_t)p->qOutMax << 15, lo = (int32_t)p->qOutMin << 15;
@@ -50,7 +50,7 @@ FORCE_INLINE void Pi_Run32(tPIParm *p)
  *         积分写回 int32 前已限制在输出范围 << 15 以内，不会溢出。
  * @param  p  PI 参数与状态
  */
-FORCE_INLINE void Pi_Run64(tPIParm *p)
+FORCE_INLINE void Pi_Run64(PI_TypeDef *p)
 {
     int64_t d = (int64_t)p->qInRef - (int64_t)p->qInMeas;
     int32_t err = (d > 2147483647) ? 2147483647 : (d < -2147483647) ? -2147483647 : (int32_t)d;

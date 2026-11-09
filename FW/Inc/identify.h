@@ -54,7 +54,7 @@ extern IdentResult_TypeDef gIdent;
 /* ============================================================================
  * 参数辨识模式（IDENT_TEST，cfg_board.h；默认 0 = 整段在编译期去除）
  *
- * 置 1 后起动流程变为：Charge -> Calib -> Align（定位到 gIdentCfg.alignDeg）-> 测量 -> 保持零电压，
+ * 置 1 后起动流程变为：Charge -> FlyCheck -> Align（定位到 gIdentCfg.alignDeg）-> 测量 -> 保持零电压，
  * 不进入 I/F。给出速度指令 0 即停机。测量步骤（phase 为 gIdentTest.phase 的取值）：
  *
  * 1. R/L（phase 9）：进入 Align 时首先执行，200 Hz 电压注入、不使用电流环，得到粗略 R、L 并立即更新电流环增益；

@@ -23,7 +23,7 @@ void Protect_Init(void)
 }
 
 /* 母线过压 / 欠压（慢环每拍，由 Ctrl_SlowTick 调用）：母线平均值越限持续 DCBUS_FILT_S 后立即关闭 PWM，
- * 结果写入 gProt.busFlags（PROTECT_BUS_OV / UV 位），由快环 M1_FaultDetection 转换为故障 */
+ * 结果写入 gProt.busFlags（PROTECT_BUS_OV / UV 位），由快环 faultDetect 转换为故障 */
 void Protect_BusSlow(void)
 {
     static uint16_t u16OvCntr, u16UvCntr;
@@ -52,21 +52,21 @@ void Protect_BusSlow(void)
 /* 缺相统计清零（开始一个新窗口） */
 void Protect_PhaseReset(void)
 {
-    gProt.u32Ia_Integral = 0;
-    gProt.u32Ib_Integral = 0;
-    gProt.u32Ic_Integral = 0;
-    gProt.u32PhaseN = 0;
-    gProt.u32PhaseAcc = 0;
+    gProt.sumAbsA = 0;
+    gProt.sumAbsB = 0;
+    gProt.sumAbsC = 0;
+    gProt.sampleN = 0;
+    gProt.angleAcc = 0;
 }
 
 /* 缺相统计（快环每拍）：三相 |i| 分别累加。某相断线时，该相累加值远小于另外两相 */
 RAMFUNC void Protect_PhaseFast(void)
 {
-    if (gProt.u32PhaseN >= PHASELESS_N_MAX) return;     /* 慢环将丢弃该窗口 */
-    gProt.u32Ia_Integral += (uint32_t)QMath_Abs16(gMeas.iabc.s16A);
-    gProt.u32Ib_Integral += (uint32_t)QMath_Abs16(gMeas.iabc.s16B);
-    gProt.u32Ic_Integral += (uint32_t)QMath_Abs16(gMeas.iabc.s16C);
-    gProt.u32PhaseN++;
+    if (gProt.sampleN >= PHASELESS_N_MAX) return;     /* 慢环将丢弃该窗口 */
+    gProt.sumAbsA += (uint32_t)QMath_Abs16(gMeas.iabc.s16A);
+    gProt.sumAbsB += (uint32_t)QMath_Abs16(gMeas.iabc.s16B);
+    gProt.sumAbsC += (uint32_t)QMath_Abs16(gMeas.iabc.s16C);
+    gProt.sampleN++;
 }
 
 /* 缺相判定（慢环每拍）：按转速累加电角度，满 PHASELESS_PERIODS 个电周期判定一次（整周期内的平均 |i| 才可比较）：
@@ -74,11 +74,11 @@ RAMFUNC void Protect_PhaseFast(void)
  *   转速过低、2 s 内未转满则丢弃窗口。返回 1 = 缺相 */
 uint8_t Protect_PhaseSlow(int16_t speedQ15)
 {
-    uint32_t a = gProt.u32Ia_Integral, b = gProt.u32Ib_Integral, c = gProt.u32Ic_Integral;
-    uint32_t mx, mn, n = gProt.u32PhaseN, floor;
+    uint32_t a = gProt.sumAbsA, b = gProt.sumAbsB, c = gProt.sumAbsC;
+    uint32_t mx, mn, n = gProt.sampleN, floor;
     uint8_t lost = 0;
-    gProt.u32PhaseAcc += (uint32_t)(speedQ15 < 0 ? -(int32_t)speedQ15 : speedQ15);
-    if (gProt.u32PhaseAcc < PHASELESS_ACC_FULL) {
+    gProt.angleAcc += (uint32_t)(speedQ15 < 0 ? -(int32_t)speedQ15 : speedQ15);
+    if (gProt.angleAcc < PHASELESS_ACC_FULL) {
         if (n >= PHASELESS_N_MAX) Protect_PhaseReset();     /* 转速过低，窗口作废 */
         return 0;
     }
@@ -88,7 +88,7 @@ uint8_t Protect_PhaseSlow(int16_t speedQ15)
     floor = (uint32_t)PHASELESS_RATIO * 16u * (uint32_t)gHal.adcNoisePk;
     if (n > 0 && mx >= floor * n) {
         uint32_t q = mn >> 4, r = (q == 0) ? 0xFFFFu : mx / q;     /* 最大 / 最小 x 16，32 位除法（诊断用） */
-        gProt.u16PhaseRatioLast = (uint16_t)(r > 0xFFFFu ? 0xFFFFu : r);
+        gProt.ratioLastX16 = (uint16_t)(r > 0xFFFFu ? 0xFFFFu : r);
         if (mx > (uint32_t)PHASELESS_RATIO * mn) lost = 1;
     }
     Protect_PhaseReset();

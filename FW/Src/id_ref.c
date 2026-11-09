@@ -10,7 +10,7 @@
 
 IdRef_TypeDef gIdRef;
 
-#if MTPA_FW_ACTIVE
+#if IDREF_ACTIVE
 
 /* 上电：清除 MTPA / 弱磁状态，iq 上限 = 速度环电流上限 */
 void IdRef_Init(void)
@@ -97,7 +97,7 @@ void IdRef_Slow(void)
 #endif
 }
 
-#else   /* !MTPA_FW_ACTIVE：不修改任何控制量 */
+#else   /* !IDREF_ACTIVE：不修改任何控制量 */
 
 void IdRef_Init(void)  { }
 void IdRef_Reset(void) { }

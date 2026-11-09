@@ -36,6 +36,6 @@ extern Svpwm_TypeDef gSvpwm;
 void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod);    /* 清除状态、记录 PWM 半周期（上电调用一次） */
 
 /* 计算三相比较值。iabc：本拍三相电流（Q15），用于重构母线电流，结果写入 *ibusRec。 */
-void Svpwm_Calc(Svpwm_TypeDef *u, const MCFLIB_3_ABC_T_S16 *iabc, int16_t *ibusRec);
+void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibusRec);
 
 #endif

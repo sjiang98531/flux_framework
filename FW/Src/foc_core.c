@@ -143,7 +143,7 @@ void FocCore_ResetDecouple(void) { s_decReq = DEC_REQ_NONE; s_decOn = 0; }
 
 /* gFoc.idqRef 在 FocCore_TypeDef 中 4 字节对齐，可用一条 STR 指令写入 */
 typedef char FocIdqRefAligned[(offsetof(FocCore_TypeDef, idqRef) % 4u == 0u) ? 1 : -1];
-typedef union { MCFLIB_2_DQ_T_S16 dq; uint32_t u32; } FocDqWord;
+typedef union { Dq_TypeDef dq; uint32_t u32; } FocDqWord;
 
 /* 写入 dq 电流指令（慢环 -> 快环的唯一入口，其他地方不得直接写）。
  * d、q 拼成一个 32 位字一次写入：快环不会读到"新 d + 旧 q"的不完整指令 */
@@ -157,7 +157,7 @@ void FocCore_SetIdqRef(int16_t d, int16_t q)
 
 /* 将两个积分器（即 dq 电压）按角度 a 旋转。I/F 切闭环时，参考坐标系由开环角切换为观测器角，二者相差 a：
  * 电压矢量在空间中保持不变，仅更换坐标系表示，因此 dq 分量需反向旋转同一角度（startup.c openLoopHandover） */
-void FocCore_RotatePI(sAngle_Trig a)
+void FocCore_RotatePI(SinCos_TypeDef a)
 {
     int32_t vd = gFoc.piD.qdSum, vq = gFoc.piQ.qdSum;     /* 乘法写成 32x32->64（在临界区内调用，需尽量短） */
     gFoc.piD.qdSum = (int32_t)(((int64_t)vd * (int32_t)a.s16Cos - (int64_t)vq * (int32_t)a.s16Sin) >> 15);

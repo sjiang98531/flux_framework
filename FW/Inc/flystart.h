@@ -2,7 +2,7 @@
  * @file    flystart.h
  * @brief   飞车（转子已在旋转）检测
  *
- * 在 Calib 子状态的快环中每拍调用，将三相下桥对地短接（上桥全关）：
+ * 在 FlyCheck 子状态的快环中每拍调用，将三相下桥对地短接（上桥全关）：
  * 转子反电势在绕组中产生短路电流，稳态时（电压方程 0 = Rs*i + L*di/dt + jω*ψf∠θ）
  *     i = -jω*ψf∠θ / (Rs + jωL)
  *     |i| = |ω|ψf / sqrt(Rs² + ω²L²)              本电机 30 rpm 0.15 A，250 rpm 1.2 A，1500 rpm 2.8 A
@@ -72,9 +72,9 @@ typedef enum {
     FLY_TIMEOUT         /* 制动超时 -> 故障 */
 } FlyVerdict_t;
 void FlyStart_Init(void);       /* 上电：电流门限、检测到过转动后等待停稳的时间 */
-/* 进入 Calib 时调用：清除状态 */
+/* 进入 FlyCheck 时调用：清除状态 */
 void FlyStart_Begin(void);
-/* Run 从 Startup / Spin 退出（停机、故障）时调用：转子可能仍在滑行，下次飞车检测按"检测到过转动"等待停稳 */
+/* Run 从 OpenLoop / Spin 退出（停机、故障）时调用：转子可能仍在滑行，下次飞车检测按"检测到过转动"等待停稳 */
 void FlyStart_NoteRunEnd(void);
 /* 每拍调用（短接下桥、Clarke、累加；每 1 ms 判定一次）。cmdSign：指令方向（> 0 正转）。
  * 返回 FLY_CATCH / FLY_CATCH_OPENLOOP 时 gFly.thetaCatch / speedCatch 有效（对应本拍采样时刻）。 */

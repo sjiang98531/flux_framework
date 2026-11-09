@@ -13,7 +13,7 @@
 #define ID_REF_H
 #include "cfg_derived.h"
 
-#define MTPA_FW_ACTIVE  (CTRL_MTPA_ENABLE || CTRL_WEAKEN_ENABLE)
+#define IDREF_ACTIVE  (CTRL_MTPA_ENABLE || CTRL_WEAKEN_ENABLE)
 
 typedef struct {
     int16_t idMtpa;     /* Q15（I_MAX 基准） */
@@ -27,7 +27,7 @@ typedef struct {
 extern IdRef_TypeDef gIdRef;
 
 void IdRef_Init(void);
-/* 离开 Spin（回退 Startup、停机、故障）时调用：id 清零、恢复 iq 上限 */
+/* 离开 Spin（回退 OpenLoop、停机、故障）时调用：id 清零、恢复 iq 上限 */
 void IdRef_Reset(void);
 /* Spin 慢环，在速度环计算出 iq 之后调用 */
 void IdRef_Slow(void);

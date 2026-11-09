@@ -18,12 +18,12 @@
 #include "foc_math.h"
 
 typedef struct {
-    uint32_t u32Ia_Integral;            /* 当前窗口三相电流绝对值累加（Q15，快环） */
-    uint32_t u32Ib_Integral;
-    uint32_t u32Ic_Integral;
-    uint32_t u32PhaseN;                 /* 当前窗口的快环拍数 */
-    uint32_t u32PhaseAcc;               /* 当前窗口转过的电角度（|转速 Q15| 的慢环累加） */
-    uint16_t u16PhaseRatioLast;         /* 上一个已判断窗口：最大 / 最小 x 16（诊断用） */
+    uint32_t sumAbsA;            /* 当前窗口三相电流绝对值累加（Q15，快环） */
+    uint32_t sumAbsB;
+    uint32_t sumAbsC;
+    uint32_t sampleN;                 /* 当前窗口的快环拍数 */
+    uint32_t angleAcc;               /* 当前窗口转过的电角度（|转速 Q15| 的慢环累加） */
+    uint16_t ratioLastX16;         /* 上一个已判断窗口：最大 / 最小 x 16（诊断用） */
     int16_t  ovpCmd;                    /* 母线过压门限 Q15 */
     int16_t  uvpCmd;                    /* 母线欠压门限 Q15 */
     volatile uint8_t busFlags;          /* 母线越限判定（PROTECT_BUS_OV / UV，慢环写、快环读） */

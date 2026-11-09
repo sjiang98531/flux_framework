@@ -32,7 +32,7 @@ typedef struct {
     volatile uint8_t state;     /* 0 空闲，1 脉冲进行中，2 完成（等待慢环判定） */
     uint8_t  ok;                /* 上次判定：1 有效 */
     uint16_t k, t;              /* 快环：当前方向、方向内拍数 */
-    sAngle_Trig dir;
+    SinCos_TypeDef dir;
     int16_t  pk[IPD_N], perp[IPD_N];    /* 各方向电流投影峰值 / 同一拍的垂直分量（Q15 电流） */
     int16_t  theta;             /* 结果：N 极电角度（Q15 角度，65536 = 一圈） */
     uint16_t ratioQ8;           /* 峰值最大/最小（Q8） */

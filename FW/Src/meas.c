@@ -22,7 +22,7 @@ void Meas_Init(void)
 /* 将转速滤波器直接预置为稳态 w，避免从 0 缓慢上升。用于飞车接管、零电流跟踪转闭环 */
 void Meas_SpeedPreset(int16_t w)
 {
-    /* QMath_FilterMA 输入恒为 w 时的稳态累加值 = w*2^sh - w */
+    /* QMath_LowPass 输入恒为 w 时的稳态累加值 = w*2^sh - w */
     gMeas.speedFilt.s32Acc = ((int32_t)w << gMeas.speedFilt.u16Sh) - w;
     gMeas.speed = w;
 }
@@ -53,9 +53,9 @@ static int16_t kvbusOf(int16_t v)
  * 母线电流只滤波正值（负值为回馈，母线电流限只作用于电动方向） */
 void Meas_SlowFilter(void)
 {
-    gMeas.vbusAvg = QMath_FilterMA(gMeas.vbus, &gMeas.vbusFilt.s32Acc, gMeas.vbusFilt.u16Sh);
-    gMeas.speed = QMath_FilterMA(gMeas.speedRaw, &gMeas.speedFilt.s32Acc, gMeas.speedFilt.u16Sh);
+    gMeas.vbusAvg = QMath_LowPass(gMeas.vbus, &gMeas.vbusFilt.s32Acc, gMeas.vbusFilt.u16Sh);
+    gMeas.speed = QMath_LowPass(gMeas.speedRaw, &gMeas.speedFilt.s32Acc, gMeas.speedFilt.u16Sh);
     if (gMeas.ibus <= 0) gMeas.ibusAvg = 0;
-    else gMeas.ibusAvg = QMath_FilterMA(gMeas.ibus, &gMeas.ibusFilt.s32Acc, gMeas.ibusFilt.u16Sh);
+    else gMeas.ibusAvg = QMath_LowPass(gMeas.ibus, &gMeas.ibusFilt.s32Acc, gMeas.ibusFilt.u16Sh);
     if (gMeas.vbusAvg > 0) gMeas.kvbus = kvbusOf(gMeas.vbusAvg);     /* 母线无电压（上电瞬间）时不更新 */
 }

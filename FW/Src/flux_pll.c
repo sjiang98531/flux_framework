@@ -46,7 +46,7 @@ void FluxPLL_Init(PLL_TypeDef *p)
  * 估计角落后时为正（PLL 加速追赶） */
 RAMFUNC int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta)
 {
-    sAngle_Trig a = FocMath_SinCos(theta);
+    SinCos_TypeDef a = FocMath_SinCos(theta);
     return (int16_t)(QMath_MulQ15(psiBeta, a.s16Cos) - QMath_MulQ15(psiAlpha, a.s16Sin));
 }
 

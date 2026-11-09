@@ -17,7 +17,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E0059UL
+#define BUILD_TAG            0xF20E005AUL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -104,7 +104,7 @@
 #define SPEED_KI                SPEED_KI_OF(MOTOR_ACC_RPM_S_PER_A)
 /* 斜坡 jerk（Q31 / 慢环拍^2）：SPEED_RAMP_ROUND_S 内加速度从 0 升到 SPEED_RAMP_UP */
 #define SPEED_JERK_Q31          ((int32_t)(SPEED_RAMP_UP / SPEED_MAX / SLOWLOOP_FREQ * 2147483648.0 / (SPEED_RAMP_ROUND_S * SLOWLOOP_FREQ) + 0.5))
-/* 回退 I/F 后过零的开环加减速度（rpm/s）：Startup_PrepareOpenLoop 按 OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A 放大 OPENLOOP_ACC_RPM_S */
+/* 回退 I/F 后过零的开环加减速度（rpm/s）：OpenLoop_Prepare 按 OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A 放大 OPENLOOP_ACC_RPM_S */
 #define OPENLOOP_REV_ACC_RPM_S        (OPENLOOP_ACC_RPM_S * OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A)
 /* 软停机：电流幅值每慢环拍减小多少（Q15），= S 形斜坡的最大转矩变化率 SPEED_RAMP_UP / b / SPEED_RAMP_ROUND_S */
 #define CURRENT_SLEW_STEP_Q15   ((int32_t)(CURRENT_SLEW_A_S / SLOWLOOP_FREQ / I_MAX * 32768.0 + 0.5))

@@ -32,7 +32,7 @@
 #define MOTOR_LS_SAT_MIN        0.5             /* 下限（相对 MOTOR_LQ_H） */
 
 /* 转子永磁磁链（铭牌 0.154 Wb，实测 0.141 Wb）。
- * 观测器幅值目标、Startup 初值、PLL 鉴相增益均按此值计算。 */
+ * 观测器幅值目标、OpenLoop 初值、PLL 鉴相增益均按此值计算。 */
 #define MOTOR_PSI_F_WB          0.141f
 
 /* 转矩电流 -> 加速度（rpm/s per A），由转速斜坡响应辨识（风阻与摩擦单独拟合）。等价于转动惯量

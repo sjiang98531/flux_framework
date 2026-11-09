@@ -23,9 +23,9 @@ extern const int16_t g_focSqrtTab[513];
  * 不插值，分辨率 90°/256 = 0.35°。
  * 先把角度平移半圈变成 0..65535：高 2 位是象限，接下来 8 位是表索引。
  * 平移了 180°，所以各象限的符号与常规写法差一个负号。 */
-FORCE_INLINE sAngle_Trig FocMath_SinCos(int16_t angle)
+FORCE_INLINE SinCos_TypeDef FocMath_SinCos(int16_t angle)
 {
-    sAngle_Trig r;
+    SinCos_TypeDef r;
     uint16_t u = (uint16_t)((int32_t)angle + 0x8000);
     uint32_t idx = (u >> 6) & 0xFFu;
     int16_t s = g_focSinTab[idx];             /* sin(φ) */
@@ -51,7 +51,7 @@ FORCE_INLINE int16_t FocMath_SqrtQ15(int32_t x)
 
 /* Clarke：三相电流 -> 静止两相 αβ（α 沿 A 相）。双电阻采样，c = -a - b 已在 abc 中给出：
  * alpha = a，beta = (b - c) / sqrt3，beta 饱和到 Q15 */
-FORCE_INLINE void FocMath_ClarkeSat(const MCFLIB_3_ABC_T_S16 *in, MCFLIB_2_ALBE_T_S16 *out)
+FORCE_INLINE void FocMath_ClarkeSat(const Abc_TypeDef *in, AlphaBeta_TypeDef *out)
 {
     int32_t b = (((int32_t)in->s16B - in->s16C) * 18919) >> 15;     /* 18919 = 32768 / sqrt3 */
     out->s16Alpha = in->s16A;
@@ -62,7 +62,7 @@ FORCE_INLINE void FocMath_ClarkeSat(const MCFLIB_3_ABC_T_S16 *in, MCFLIB_2_ALBE_
 
 /* Park：静止 αβ 坐标 -> 随转子旋转的 dq 坐标（d 轴沿转子磁链，q 轴超前 90°，iq 产生转矩）。
  * d = a cos + b sin，q = b cos - a sin，不饱和 */
-FORCE_INLINE void FocMath_Park(const MCFLIB_2_ALBE_T_S16 *in, const sAngle_Trig *ang, MCFLIB_2_DQ_T_S16 *out)
+FORCE_INLINE void FocMath_Park(const AlphaBeta_TypeDef *in, const SinCos_TypeDef *ang, Dq_TypeDef *out)
 {
     int32_t a = in->s16Alpha, b = in->s16Beta, s = ang->s16Sin, c = ang->s16Cos;
     out->s16D = (int16_t)((c * a + s * b) >> 15);
@@ -71,7 +71,7 @@ FORCE_INLINE void FocMath_Park(const MCFLIB_2_ALBE_T_S16 *in, const sAngle_Trig 
 
 /* 反 Park：dq 电压指令 -> 静止 αβ 坐标（之后交给 SVPWM）。
  * alpha = d cos - q sin，beta = d sin + q cos，不饱和 */
-FORCE_INLINE void FocMath_InvPark(const MCFLIB_2_DQ_T_S16 *in, const sAngle_Trig *ang, MCFLIB_2_ALBE_T_S16 *out)
+FORCE_INLINE void FocMath_InvPark(const Dq_TypeDef *in, const SinCos_TypeDef *ang, AlphaBeta_TypeDef *out)
 {
     int32_t d = in->s16D, q = in->s16Q, s = ang->s16Sin, c = ang->s16Cos;
     out->s16Beta  = (int16_t)((c * q + s * d) >> 15);

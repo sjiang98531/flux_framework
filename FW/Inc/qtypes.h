@@ -17,25 +17,25 @@
 #define Q31(x) ((int32_t)((x) < 1 ? ((x) >= -1 ? (x)*0x80000000 : 0x80000000) : 0x7FFFFFFF))
 
 /* 三相 / 静止两相 / 旋转两相，Q15 */
-typedef struct { int16_t s16A, s16B, s16C; } MCFLIB_3_ABC_T_S16;
-typedef struct { int16_t s16Alpha, s16Beta; } MCFLIB_2_ALBE_T_S16;
-typedef struct { int16_t s16D, s16Q; } MCFLIB_2_DQ_T_S16;
+typedef struct { int16_t s16A, s16B, s16C; } Abc_TypeDef;
+typedef struct { int16_t s16Alpha, s16Beta; } AlphaBeta_TypeDef;
+typedef struct { int16_t s16D, s16Q; } Dq_TypeDef;
 
 /* 一个角度的 cos / sin，Q15（FocMath_SinCos 的返回值） */
-typedef struct { int16_t s16Cos, s16Sin; } sAngle_Trig;
+typedef struct { int16_t s16Cos, s16Sin; } SinCos_TypeDef;
 
 /* 速度斜坡（speed_ctrl.c）：升 / 降步长、当前值，Q31 */
 typedef struct {
     int32_t s32RampUp;    /* 加速时每拍的增量 */
     int32_t s32RampDown;    /* 减速时每拍的减量（正数） */
     int32_t s32State;    /* 当前值 */
-} MLIB_RAMP_T_Q31;
+} Ramp_TypeDef;
 
-/* 一阶滑动平均（QMath_FilterMA）：累加器、窗口 2^u16Sh */
+/* 一阶滑动平均（QMath_LowPass）：累加器、窗口 2^u16Sh */
 typedef struct {
     int32_t  s32Acc;    /* 累加器（稳态 = x * 2^sh - x） */
     uint16_t u16Sh;    /* 移位位数，时间常数约 2^sh 拍 */
-} MLIB_FILTER_MA_T;
+} LowPass_TypeDef;
 
 /* PI 调节器（ctrl_pi.h Pi_Run32 / Pi_Run64）：积分和（Q15 << 15）、增益、限幅、输入、输出 */
 typedef struct {
@@ -44,7 +44,7 @@ typedef struct {
     int32_t qOutMax, qOutMin;    /* 输出上下限（积分也限在这里面，抗饱和） */
     int32_t qInRef, qInMeas;    /* 给定、实测 */
     int32_t qOut;    /* 输出 */
-} tPIParm;
+} PI_TypeDef;
 
 /* 磁链 PLL（flux_pll.c）：角度 / 转速 Q31，积分状态，增益 */
 typedef struct {

@@ -31,7 +31,7 @@ static int32_t s_C, s_D;                /* 叉积 / 点积的一阶低通 */
 static int16_t s_prevSpd;
 static uint16_t s_blocks;
 static uint8_t s_tick, s_havePrev, s_haveCD, s_sawSpin, s_stillDone;
-/* 上次 Run 从 Startup / Spin 退出且之后尚未判定过静止：转子可能仍以低于测速门限（约 30 rpm）的转速滑行，
+/* 上次 Run 从 OpenLoop / Spin 退出且之后尚未判定过静止：转子可能仍以低于测速门限（约 30 rpm）的转速滑行，
  * 短路电流无法反映。若仅等待 FLYBRAKE_TIME 即判静止，IPD / I/F 将作用于仍在转动的转子而导致起动失败。
  * 因此该情况按"检测到过转动"处理：短接制动至停稳（gFly.stillSpinMs，FLY_STILL_END_RPM）后再定位。上电冷起动不受影响 */
 static uint8_t s_mayMove;
@@ -192,7 +192,7 @@ void FlyStart_Init(void)
     }
 }
 
-/* 进入飞车检测（Calib）时清除全部状态，首先进行短脉冲测速 */
+/* 进入飞车检测（FlyCheck）时清除全部状态，首先进行短脉冲测速 */
 void FlyStart_Begin(void)
 {
     pulseBegin();
@@ -234,7 +234,7 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     }
     HAL_PwmShortLowSides(gHal.caliDuty);               /* 三相下桥短接（同时起制动作用） */
     FocMath_ClarkeSat(&gMeas.iabc, &gMeas.iab);
-    /* 静止在上一块末尾判出，下一拍才切换（进入 Calib 后第 FLYBRAKE_TIME*PWM_FREQ + 1 拍切到定位） */
+    /* 静止在上一块末尾判出，下一拍才切换（进入 FlyCheck 后第 FLYBRAKE_TIME*PWM_FREQ + 1 拍切到定位） */
     if (s_stillDone) { gFly.stage = FLY_STAGE_STILL; return FLY_STILL; }
     /* 接管：判定之后第 1 拍计算阻抗角，第 2 拍用当拍电流计算转子角并切换 */
     if (s_catchStep == 1) { s_catchOff = impedanceOffset(gFly.speedCatch); s_catchStep = 2; return FLY_BUSY; }
@@ -262,7 +262,7 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     if (gFly.s16BemfAmpTh >= 0 &&
         gFly.ampM2 < (uint32_t)(((gFly.s16BemfAmpTh >> 1) + 1) * ((gFly.s16BemfAmpTh >> 1) + 1))) {
         /* 电流过小，转速无法准确测量：视为未转动（本电机约 30 rpm 以下）。
-         * 静止计时从进入 Calib 即开始（静止时无暂态需等待） */
+         * 静止计时从进入 FlyCheck 即开始（静止时无暂态需等待） */
         s_havePrev = 0; s_haveCD = 0; s_prevSpd = 0;
         gFly.speed = 0; gFly.stable = 0;
         if (++gFly.still >= (s_sawSpin ? gFly.stillSpinMs : FLY_STILL_BLOCKS)) {   /* 检测到过转动：等待停稳（FLY_STILL_END_RPM） */

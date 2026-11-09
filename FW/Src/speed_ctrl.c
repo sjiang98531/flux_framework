@@ -37,7 +37,7 @@ void SpeedCtrl_LoadGains(void)
 }
 
 /* 上电：斜坡速率、电流上限 SPD_PI_LIMIT、速度 PI 与母线电流限 PI 的增益 / 状态 / 限幅。
- * 母线电流限 PI（piPower）输出范围为 [-iqLimit, 0]：母线电流超过 IBUS_LIMIT_A 时向下限制 iq，平时输出 0 */
+ * 母线电流限 PI（piIbus）输出范围为 [-iqLimit, 0]：母线电流超过 IBUS_LIMIT_A 时向下限制 iq，平时输出 0 */
 void SpeedCtrl_Init(void)
 {
     gSpd.speedRampSt.s32RampUp     = RAMP_UP_Q31;
@@ -51,16 +51,16 @@ void SpeedCtrl_Init(void)
     gSpd.pi.qInMeas = 0;
     gSpd.pi.qOut = 0;
 
-    gSpd.piPower.qKp = POWER_KP;
-    gSpd.piPower.qKi = POWER_KI;
-    gSpd.piPower.qdSum = 0;
-    gSpd.piPower.qInMeas = 0;
-    gSpd.piPower.qOut = 0;
+    gSpd.piIbus.qKp = POWER_KP;
+    gSpd.piIbus.qKi = POWER_KI;
+    gSpd.piIbus.qdSum = 0;
+    gSpd.piIbus.qInMeas = 0;
+    gSpd.piIbus.qOut = 0;
 
     gSpd.pi.qOutMax = gSpd.iqLimit;
     gSpd.pi.qOutMin = -gSpd.iqLimit;
-    gSpd.piPower.qOutMax = 0;                      /* 功率环仅用于母线电流限：只向下限制 */
-    gSpd.piPower.qOutMin = -gSpd.iqLimit;
+    gSpd.piIbus.qOutMax = 0;                      /* 功率环仅用于母线电流限：只向下限制 */
+    gSpd.piIbus.qOutMin = -gSpd.iqLimit;
 }
 
 /* 回馈兜底限幅：返回"阻碍转动方向的 iq"允许的最大值（Q15，>= 0）。正常减速由下方的母线电压控制器
@@ -141,7 +141,7 @@ static int64_t needDist(int32_t c)
  * 而非轨迹整形（a_max 本身随母线电压连续变化，不会跳变）。 */
 static int32_t rampSCurve(int32_t tgt)
 {
-    MLIB_RAMP_T_Q31 *p = &gSpd.speedRampSt;
+    Ramp_TypeDef *p = &gSpd.speedRampSt;
     int32_t v = (int32_t)p->s32State, a = gSpd.rampAcc, j = SPEED_JERK_Q31;
     int64_t e = (int64_t)tgt - v, nv;
     if (e == 0 && a == 0) return v;
@@ -224,7 +224,7 @@ void SpeedCtrl_SpinSlow(void)
             int32_t reg = regenIqAllowed();
             if (gMeas.speed >= 0) s32IqMin = -reg; else s32IqMax = reg;
         }
-#if MTPA_FW_ACTIVE
+#if IDREF_ACTIVE
         /* 电流圆（id_ref.c）：iq 上限 = sqrt(Imax^2 - id^2)，id 取上一拍 IdRef_Slow 的结果（慢环 1 kHz，一拍滞后可忽略）。
          * PI 输出限幅只在此处设定，积分器随之限幅，加速到电流圆边界时不会积分饱和 */
         if (s32IqMax > gIdRef.iqLimit) s32IqMax = gIdRef.iqLimit;
@@ -237,14 +237,14 @@ void SpeedCtrl_SpinSlow(void)
         gSpd.pi.qInMeas = gMeas.speed;
         Pi_Run64(&gSpd.pi);
 
-        gSpd.piPower.qInRef = IBUS_LIMIT_VALUE;    /* 母线电流限 */
-        gSpd.piPower.qInMeas = gMeas.ibusAvg;
-        Pi_Run64(&gSpd.piPower);
+        gSpd.piIbus.qInRef = IBUS_LIMIT_VALUE;    /* 母线电流限 */
+        gSpd.piIbus.qInMeas = gMeas.ibusAvg;
+        Pi_Run64(&gSpd.piIbus);
 
-        s32IqCmd = (int32_t)gSpd.pi.qOut + gSpd.piPower.qOut + s16AccFF;
+        s32IqCmd = (int32_t)gSpd.pi.qOut + gSpd.piIbus.qOut + s16AccFF;
         if (s32IqCmd > s32IqMax) s32IqCmd = s32IqMax;
         if (s32IqCmd < s32IqMin) s32IqCmd = s32IqMin;
-#if !MTPA_FW_ACTIVE
+#if !IDREF_ACTIVE
         gSpd.idqCmd.s16D = gSpd.brakeId;            /* MTPA/弱磁打开时由 IdRef_Slow 叠加 */
 #endif
         gSpd.idqCmd.s16Q = (int16_t)s32IqCmd;
@@ -265,7 +265,7 @@ void SpeedCtrl_OnEnterSpin(int16_t idNow, int16_t iqNow)
     gSpd.speedRampSt.s32State      = gMeas.speed << 16;
     gSpd.rampAcc = 0;
     gSpd.pi.qdSum               = (int32_t)iqNow * 32768;
-    gSpd.piPower.qdSum               = 0;          /* 母线电流限 PI 只向下限制，未限流时积分为 0 */
+    gSpd.piIbus.qdSum               = 0;          /* 母线电流限 PI 只向下限制，未限流时积分为 0 */
 }
 
 /* 零电流跟踪期间每拍调用：速度环不运行，斜坡和积分器跟随估计转速（id = iq = 0），闭合速度环时没有跳变 */
@@ -296,7 +296,7 @@ void SpeedCtrl_BlendStart(int16_t id0, int16_t iq0, int32_t rampStartQ31, int16_
 void SpeedCtrl_ResetRun(void)
 {
     gSpd.pi.qdSum = 0;
-    gSpd.piPower.qdSum = 0;
+    gSpd.piIbus.qdSum = 0;
     gSpd.speedRampSt.s32State = 0;
     gSpd.rampAcc = 0;
     SpeedCtrl_BlendStop();
@@ -347,7 +347,7 @@ void SpeedCtrl_BlendSlow(void)
 }
 
 /* 进入 I/F 时：斜坡速率改为起动用的 STARTUP_SPEED_RAMP（仅用于显示，I/F 按自身开环加速度拖动） */
-void SpeedCtrl_UseStartupRamp(void)
+void SpeedCtrl_UseOpenLoopRamp(void)
 {
     gSpd.rampAcc = 0;
     gSpd.speedRampSt.s32RampUp   = RAMP_STARTUP_Q31;

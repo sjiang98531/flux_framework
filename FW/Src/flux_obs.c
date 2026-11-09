@@ -54,13 +54,13 @@ FORCE_INLINE int32_t addFlux(int32_t x, int32_t dx)
 FORCE_INLINE int16_t lsEff(int16_t ia, int16_t ib)
 {
     int32_t a = QMath_Abs16(ia), b = QMath_Abs16(ib), m, r;
-    if (gGain.lsSatKQ12 <= 0) return gFluxObs.s16KLs;       /* PER_A = 0：不考虑饱和 */
+    if (gGain.lsSatKQ12 <= 0) return gFluxObs.s16KLq;       /* PER_A = 0：不考虑饱和 */
     m = (a > b) ? a + ((3 * b) >> 3) : b + ((3 * a) >> 3);
     m -= gGain.lsKneeQ15;
-    if (m <= 0) return gFluxObs.s16KLs;
+    if (m <= 0) return gFluxObs.s16KLq;
     r = 32768 - ((m * gGain.lsSatKQ12) >> 12);
     if (r < FLUX_LS_MIN_Q15) r = FLUX_LS_MIN_Q15;
-    return (int16_t)(((int32_t)gFluxObs.s16KLs * r) >> 15);
+    return (int16_t)(((int32_t)gFluxObs.s16KLq * r) >> 15);
 }
 
 /* 逆变器电压误差（死区 + 管压降），见 cfg_board.h INVERTER_DT_*。指令电压 = 实际电压 + 误差，
@@ -105,7 +105,7 @@ static void setTarget(int32_t tgt);
 void FluxObs_LoadModel(void)
 {
     gFluxObs.s16KRs = gGain.fluxKrsQ15;
-    gFluxObs.s16KLs = gGain.fluxKlQ15;
+    gFluxObs.s16KLq = gGain.fluxKlQ15;
     gFluxObs.s16NlfoNormQ8 = gGain.nlfoNormQ8;
 #if MOTOR_IPM
     setTarget(FLUX_NOM);
@@ -180,15 +180,15 @@ int16_t FluxObs_TargetMag(void)
 #endif
 
 /* 冷起动（IPD / 定位 -> I/F）时调用：磁链初始化为 |psi_f|∠theta（此时转子位于该角度），观测器从正确状态开始 */
-void FluxObs_BeginStartup(void)
+void FluxObs_BeginOpenLoop(void)
 {
-    /* 仅在冷起动 Align/IPD -> Startup 时调用（由 Est_OnEnterStartupCold 调用，PLL 与转速清零也在该处） */
+    /* 仅在冷起动 Align/IPD -> OpenLoop 时调用（由 Est_OnEnterOpenLoopCold 调用，PLL 与转速清零也在该处） */
     FluxObs_Reset();
     /* psi 初值设为 |psi_f|∠theta_hat 而非 0：若从 0 起步，NLFO 需约 30 ms 建立幅值，期间方向受 Rs / 死区误差影响，
      * PLL 误差接近满量程，可能导致估计角偏转并产生虚假转速。
      * 调用方已设置 gEst.pll.s32Theta = gFoc.theta<<16，因此第一拍 PLL 误差恰好为 0。 */
     {
-        sAngle_Trig a = FocMath_SinCos(gFoc.theta);
+        SinCos_TypeDef a = FocMath_SinCos(gFoc.theta);
         gFluxObs.s32PsiAlF = (int32_t)QMath_MulQ15(FLUX_NOM, a.s16Cos) << 16;
         gFluxObs.s32PsiBeF = (int32_t)QMath_MulQ15(FLUX_NOM, a.s16Sin) << 16;
     }
@@ -198,7 +198,7 @@ void FluxObs_BeginStartup(void)
 void FluxObs_SeedCatch(int16_t theta)
 {
     /* psi_s = psi_r + Lq*i：短接电流较大（1500 rpm 约 2.8 A），不能只初始化 psi_r */
-    sAngle_Trig a = FocMath_SinCos(theta);
+    SinCos_TypeDef a = FocMath_SinCos(theta);
     int16_t kls = lsEff(gMeas.iab.s16Alpha, gMeas.iab.s16Beta);
     FluxObs_Reset();
     gFluxObs.s32PsiAlF = ((int32_t)QMath_MulQ15(FLUX_NOM, a.s16Cos) + QMath_MulQ15(kls, gMeas.iab.s16Alpha)) << 16;
@@ -214,7 +214,7 @@ void FluxObs_SeedCatch(int16_t theta)
  *   6. 输出 psi_r = 相位补偿(psi_s) - L(i)*i，供 PLL 使用。 */
 RAMFUNC void FluxObs_Run(void)
 {
-    MCFLIB_2_ALBE_T_S16 current;
+    AlphaBeta_TypeDef current;
     int16_t va, vb, ea, eb, ia, ib;
     int32_t x, y, corrA, corrB;
     int16_t kls;
@@ -232,7 +232,7 @@ RAMFUNC void FluxObs_Run(void)
     /* 上一拍电压 = 调制器指令 × 母线。gSvpwm.Alpha/Beta 的 32768 = Vbus/√3（相电压幅值），本拍尚未被覆盖；
      * 电流环将 |V| 限制在 vmax（SVPWM 线性区），故指令即为该拍实际输出的平均电压（死区另行补偿），
      * 七段式 / 五段式只差共模分量，αβ 相同。占空比在上一拍确定，乘以本拍采样的母线电压（母线波动时即为实际电压）。
-     * 观测器只在 Startup / Spin 中运行，这两个状态下 PWM 必定在输出；PWM 关闭时状态机在同拍或下一拍离开 Run，
+     * 观测器只在 OpenLoop / Spin 中运行，这两个状态下 PWM 必定在输出；PWM 关闭时状态机在同拍或下一拍离开 Run，
      * 观测器随之复位（Ctrl_FastTick）。18919 = 1/√3（Q15）。 */
     va = (int16_t)(((((int32_t)gSvpwm.Alpha * bus) >> 15) * 18919) >> 15);
     vb = (int16_t)(((((int32_t)gSvpwm.Beta * bus) >> 15) * 18919) >> 15);
@@ -250,8 +250,8 @@ RAMFUNC void FluxObs_Run(void)
     ea = inputClamp((int32_t)va - QMath_MulQ15(gFluxObs.s16KRs, ia));
     eb = inputClamp((int32_t)vb - QMath_MulQ15(gFluxObs.s16KRs, ib));
     gFluxObs.s16Eal = ea; gFluxObs.s16Ebe = eb;
-    ea = inputClamp((int32_t)ea - QMath_FilterMA(ea, &gFluxObs.sEalAvgMA.s32Acc, gFluxObs.sEalAvgMA.u16Sh));
-    eb = inputClamp((int32_t)eb - QMath_FilterMA(eb, &gFluxObs.sEbeAvgMA.s32Acc, gFluxObs.sEbeAvgMA.u16Sh));
+    ea = inputClamp((int32_t)ea - QMath_LowPass(ea, &gFluxObs.sEalAvgMA.s32Acc, gFluxObs.sEalAvgMA.u16Sh));
+    eb = inputClamp((int32_t)eb - QMath_LowPass(eb, &gFluxObs.sEbeAvgMA.s32Acc, gFluxObs.sEbeAvgMA.u16Sh));
     if (++gFluxObs.u8DivCnt >= PSI_MAG_DIV) { gFluxObs.u8DivCnt = 0; }
 
     /* ---- NLFO 径向修正 ------------------------------------------------------

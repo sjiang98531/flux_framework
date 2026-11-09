@@ -199,7 +199,7 @@
 
 /* ===================== 起动公共参数 ====================================== */
 #define PRECHARGE_TIME          20          /* ms，自举电容预充时间（C 类，应按自举电容 RC 及驱动芯片要求确定） */
-#define STARTUP_SPEED_RAMP      60.0        /* rpm/s，Startup（I/F）期间上报给斜坡状态的斜率（开环转速由 I/F 自行控制） */
+#define STARTUP_SPEED_RAMP      60.0        /* rpm/s，OpenLoop（I/F）期间上报给斜坡状态的斜率（开环转速由 I/F 自行控制） */
 
 /* ===================== 顺逆风（飞车）检测 ================================ */
 /* 首先以短脉冲测速（见下）；测不到或结果不一致时退回连续短接测量（flystart.c）：
@@ -236,7 +236,7 @@
  * 等待时间按估计器自身动态计算（cfg_derived.h FLY_SYNC_TICKS）：PLL 误差按 e^(-zeta*wn*t) 衰减，
  * 取 4 个时间常数（98%，本电机 60 ms）；结束时以 PLL 转速重新预置转速滤波器。
  * 零电流时观测器无 Rs*i 误差，为其最准确的工况。代价是此期间转子自由滑行，接管后有少量掉速。 */
-/* 短脉冲测速：进入 Calib 后不长时间短接，而是每 FLY_PULSE_PERIOD_TICKS 施加一个下桥短接脉冲，
+/* 短脉冲测速：进入 FlyCheck 后不长时间短接，而是每 FLY_PULSE_PERIOD_TICKS 施加一个下桥短接脉冲，
  * 电流达到门限（按实测采样噪声计算，见下）且至少 FLY_PULSE_MIN_TICKS 拍后松开（上下桥全关）。
  * 脉冲很短时电阻尚未起作用，电流 ≈ -∫e dt / L，方向与反电势相反：
  *   转子角 = ∠i + sgn(w)*90°，相邻脉冲的夹角 = 一个周期内转过的电角度 -> 转速与转向。
@@ -354,7 +354,7 @@
  *       （MOTOR_IPM = 0 时 id 恒为 0，打开也不起作用）。
  * 弱磁：电压矢量 |V| 超过 (1 - WEAKEN_VOLTAGE_MARGIN) * VMAX 时积分产生负 id，将电压压回限值以内；
  *       表贴与内嵌式电机均适用。本电机在 310 V 母线下约 2088 rpm 达到电压极限。
- * 二者只在 Spin（闭环运行）中生效；回退 Startup / 停机时 id 清零。 */
+ * 二者只在 Spin（闭环运行）中生效；回退 OpenLoop / 停机时 id 清零。 */
 #define CTRL_MTPA_ENABLE        0
 #define CTRL_WEAKEN_ENABLE          0
 #define WEAKEN_VOLTAGE_MARGIN       0.08        /* 电压裕量 */

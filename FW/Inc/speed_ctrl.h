@@ -30,12 +30,12 @@ typedef struct {
     int16_t  blendW;
     int16_t  blendId0, blendIq0;    /* 切换时刻需淡出的 d / q 电流分量（Q15） */
     int16_t  blendAccQ12;       /* 切换时开环加速度 / OPENLOOP_ACC_RPM_S（Q12），斜坡斜率与加速前馈由此开始过渡 */
-    MCFLIB_2_DQ_T_S16 idqCmd;   /* Spin 慢环计算的电流指令（依次经速度环 -> MTPA/弱磁 -> 融合修改），
+    Dq_TypeDef idqCmd;   /* Spin 慢环计算的电流指令（依次经速度环 -> MTPA/弱磁 -> 融合修改），
                                  * 每拍最后通过 FocCore_SetIdqRef 一次性发布到 gFoc.idqRef */
-    MLIB_RAMP_T_Q31 speedRampSt;   /* 速度斜坡的步长与状态 */
+    Ramp_TypeDef speedRampSt;   /* 速度斜坡的步长与状态 */
     int32_t  rampAcc;           /* 速度斜坡当前加速度（Q31 / 慢环拍，带符号），其变化率受 SPEED_RAMP_ROUND_S 限制 */
-    tPIParm  pi;                /* 速度 PI */
-    tPIParm  piPower;           /* 母线电流限 PI（只向下限制 iq） */
+    PI_TypeDef  pi;                /* 速度 PI */
+    PI_TypeDef  piIbus;           /* 母线电流限 PI（只向下限制 iq） */
 } SpeedCtrl_TypeDef;
 
 extern SpeedCtrl_TypeDef gSpd;
@@ -44,12 +44,12 @@ void SpeedCtrl_Init(void);    /* 上电：斜坡速率、电流上限、两个 P
 void SpeedCtrl_LoadGains(void);     /* 从 gGain 重新装载速度 PI 增益（param.c 更新参数时调用） */
 /* Spin 慢环：斜坡 + PI + 前馈，写入 gSpd.idqCmd（不直接写 gFoc.idqRef） */
 void SpeedCtrl_SpinSlow(void);
-/* 进入 Spin（从 Startup 或飞车接管）：恢复运行斜坡率，按当前状态预置斜坡与 PI 积分器 */
+/* 进入 Spin（从 OpenLoop 或飞车接管）：恢复运行斜坡率，按当前状态预置斜坡与 PI 积分器 */
 void SpeedCtrl_OnEnterSpin(int16_t idNow, int16_t iqNow);    /* idNow / iqNow：此刻的电流指令，速度 PI 积分器预置为 iqNow */
 /* 零电流跟踪中每拍：斜坡、积分器跟随估计转速（id = iq = 0） */
 void SpeedCtrl_FollowSpeed(void);
-/* 进入 Startup：速度斜坡改用 STARTUP_SPEED_RAMP */
-void SpeedCtrl_UseStartupRamp(void);
+/* 进入 OpenLoop：速度斜坡改用 STARTUP_SPEED_RAMP */
+void SpeedCtrl_UseOpenLoopRamp(void);
 /* I/F 切换时刻调用：开始融合。(id0, iq0) 为需淡出的分量（叠加在控制器输出上）；
  * 斜坡从 rampStartQ31（开环转速）以 I/F 加速度继续；accScaleQ12 = 开环加速度 / OPENLOOP_ACC_RPM_S */
 void SpeedCtrl_BlendStart(int16_t id0, int16_t iq0, int32_t rampStartQ31, int16_t accScaleQ12, int16_t ff0);

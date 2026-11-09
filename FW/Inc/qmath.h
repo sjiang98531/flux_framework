@@ -35,7 +35,7 @@ FORCE_INLINE int16_t QMath_Abs16(int16_t x)
     return (int16_t)(x < 0 ? -x : x);
 }
 
-/* 32 位饱和加法（结果限在 [INT32_MIN, INT32_MAX]），QMath_FilterMA 内部用。
+/* 32 位饱和加法（结果限在 [INT32_MIN, INT32_MAX]），QMath_LowPass 内部用。
  * 判溢出：两个非负数相加得负数 = 正溢出，两个负数相加得非负数 = 负溢出（用符号位运算，不用分支比较） */
 FORCE_INLINE int32_t QMath_AddSat32Full(int32_t a, int32_t b)
 {
@@ -48,7 +48,7 @@ FORCE_INLINE int32_t QMath_AddSat32Full(int32_t a, int32_t b)
  *   acc += x（饱和），y = acc >> sh，acc -= y（饱和），返回饱和到 Q15 的 y。
  * 等价于 y += (x - y) / 2^sh，时间常数约 2^sh 拍；稳态 acc = x*2^sh - x。
  * 用于母线电压、转速、母线电流的慢环滤波（meas.c）。快环中也有调用，故强制内联。 */
-FORCE_INLINE int16_t QMath_FilterMA(int16_t x, int32_t *acc, uint16_t sh)
+FORCE_INLINE int16_t QMath_LowPass(int16_t x, int32_t *acc, uint16_t sh)
 {
     int32_t a = QMath_AddSat32Full(*acc, x), y = a >> sh, ny = (int32_t)(0u - (uint32_t)y);
     int32_t z = (int32_t)((uint32_t)a - (uint32_t)y);

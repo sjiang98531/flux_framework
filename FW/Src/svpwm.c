@@ -40,7 +40,7 @@ static const SvSector s_svTab[7] = {
  *   六个有效电压矢量将平面分为 6 个扇区，目标电压矢量由所在扇区两侧的有效矢量按作用时间加权合成，
  *   剩余时间施加零矢量。t1、t2 为两个有效矢量各占半周期的比例，由 X/Y/Z 按扇区选取。
  * 母线电流重构：有效矢量作用期间，母线电流等于某一相（或某一相的负值）电流，按 t1、t2 加权即为本周期平均母线电流 */
-RAMFUNC void Svpwm_Calc(Svpwm_TypeDef *u, const MCFLIB_3_ABC_T_S16 *iabc, int16_t *ibusRec)
+RAMFUNC void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibusRec)
 {
     /* X = Vβ，Y = (Vβ + √3Vα)/2，Z = (Vβ − √3Vα)/2（28378 = √3/2 的 Q15） */
     int32_t r3 = (u->Alpha * 28378) >> 15;

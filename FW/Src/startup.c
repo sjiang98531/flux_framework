@@ -1,7 +1,7 @@
 /* ============================================================================
  * @file    startup.c
- * @brief   起动各子状态：Charge（预充）、Calib（飞车检测分发）、Align（IPD / 定位）、Startup（I/F 开环拖动），
- *          以及 I/F 与闭环之间的切换（openLoopHandover：开环 -> 闭环；Startup_PrepareOpenLoop / Commit：闭环 / 接管 -> 开环）。
+ * @brief   起动各子状态：Charge（预充）、FlyCheck（飞车检测分发）、Align（IPD / 定位）、OpenLoop（I/F 开环拖动），
+ *          以及 I/F 与闭环之间的切换（openLoopHandover：开环 -> 闭环；OpenLoop_Prepare / Commit：闭环 / 接管 -> 开环）。
  *          接口说明见 startup.h
  *
  * I/F 开环原理：电流矢量幅值恒定（OPENLOOP_CURRENT_A），角度按设定加速度积分旋转（不依赖转子位置）。
@@ -45,7 +45,7 @@ static uint16_t s_still;                   /* 定位第二段：连续"静止"�
 static volatile uint8_t s_ipd;             /* 1 = Align 子状态正在执行 IPD（慢环写，快环读） */
 
 /* 当前开环转速（Q15），供观测器相位补偿等使用 */
-int16_t Startup_OpenLoopSpeedQ15(void) { return (int16_t)(s_olSpeed >> 16); }
+int16_t OpenLoop_SpeedQ15(void) { return (int16_t)(s_olSpeed >> 16); }
 
 /* 开环目标转速。|指令| >= OPENLOOP_SPIN_MIN_RPM：朝指令方向拖动，下限 OPENLOOP_HANDOVER_RPM（指令更低时先拖到切换转速、切闭环后再降速），
  * 上限 OPENLOOP_FALLBACK_RPM（观测器在此以上可靠）；超过 OPENLOOP_HANDOVER_RPM 后边加速边检查一致性，一致即切换，无需停顿等待。
@@ -75,7 +75,7 @@ static int16_t asinQ15(int32_t x)
 
 /* 由 Spin 慢环查询是否需要回退到 I/F：转速已低于 OPENLOOP_FALLBACK_RPM（观测器可靠下限附近），且指令反向（需过零）
  * 或指令本身低于闭环最低转速时返回 1 */
-uint8_t Startup_OpenLoopWantsFallback(void)
+uint8_t OpenLoop_WantsFallback(void)
 {
     int32_t filt = gMeas.speed, cmd = gSpd.cmd;
     int32_t af = filt < 0 ? -filt : filt;
@@ -105,7 +105,7 @@ void Startup_OnEnterAlign(void)
 
 /* 从闭环回退到 I/F 时的开环电流：至少为 OPENLOOP_CURRENT_A；需能提供此刻的 iq 且负载角不超过 δmax（|iq| / sin(δmax)）；
  * 需过零（反转）时至少为 OPENLOOP_REV_CURRENT_A；不超过 OPENLOOP_WARM_MAX_A */
-int16_t Startup_OpenLoopWarmCurrent(int16_t iq, uint8_t reversal)
+int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
 {
     int32_t cur = OPENLOOP_IQ_Q15, aiq = iq < 0 ? -(int32_t)iq : iq;
     int32_t need = (int32_t)(((int64_t)aiq * OPENLOOP_WARM_KI_Q15) >> 15);      /* |iq| / sin(δmax) */
@@ -116,9 +116,9 @@ int16_t Startup_OpenLoopWarmCurrent(int16_t iq, uint8_t reversal)
 }
 
 /* 进入 I/F 分为"准备 + 提交"两步：
- *   Startup_PrepareOpenLoop：只计算、不修改任何状态，输入全部作为参数（调用者在临界区外调用，可被快环打断）。
+ *   OpenLoop_Prepare：只计算、不修改任何状态，输入全部作为参数（调用者在临界区外调用，可被快环打断）。
  *     计算开环电流起始值 / 目标值、加速度步长，以及开环角相对估计角的偏移 asin(iq / I)。
- *   Startup_CommitOpenLoop：只赋值（几十个时钟，调用者在临界区内调用）。开环角 = 提交时刻的 PLL 角 + 偏移，
+ *   OpenLoop_Commit：只赋值（几十个时钟，调用者在临界区内调用）。开环角 = 提交时刻的 PLL 角 + 偏移，
  *     准备期间即使被快环打断、PLL 角已前进也不受影响。
  * 拆分的目的是将耗时的开方查找与除法移出临界区 / 快环，缩短关中断时间。
  *   warm = 1：从运行状态接管。iq = 闭环此刻的 q 轴电流指令，speedQ15 = 开环起始转速；
@@ -136,7 +136,7 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
          * 为磁链 / 转矩系数偏小 25% 以上留出余量（sin 45° / 0.75 = 0.94 < 1）。
          * 反转（开环需过零）时 I 至少为 OPENLOOP_REV_CURRENT_A——过零段需先将转子制动再反向拖动，转矩需求最大。 */
         int32_t iq = iqNow, aiq = iq < 0 ? -iq : iq, i0, sp;
-        cur = Startup_OpenLoopWarmCurrent((int16_t)iq, revCur);
+        cur = OpenLoop_WarmCurrent((int16_t)iq, revCur);
         /* 起始电流：不直接给到 cur，而是从 max(|iq| / sin45°, cur / 4) 起、按 CURRENT_SLEW_A_S 升至 cur。
          * 回退前闭环已将 id 渐变到 0，切换时刻 d 轴仅增加 i0·cos δ0 = |iq|（δ0 = 45°）；回退时的减速度已与
          * I/F 衔接（approachFallback），|iq| 较小。
@@ -173,21 +173,21 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
 }
 
 /* 冷起动（定位 / IPD 之后）：开环角 = 定位角、零速、额定开环电流 */
-void Startup_PrepareOpenLoopCold(OpenLoopEntry_TypeDef *e)
+void OpenLoop_PrepareCold(OpenLoopEntry_TypeDef *e)
 {
     prepareOpenLoop(0, 0, 0, 0, 0, e);
 }
 
 /* 从运行状态接管（回退 / 飞车）：iqNow = 此刻的 q 轴电流指令；revCur / revAcc = 开环需过零（分别决定开环电流、加速度缩放）；
  * speedQ15 = 开环起始转速 */
-void Startup_PrepareOpenLoopWarm(int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
+void OpenLoop_PrepareWarm(int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
 {
     prepareOpenLoop(1, iqNow, revCur, revAcc, speedQ15, e);
 }
 
 /* 进入 I/F 的"提交"（在临界区内 / 快环中调用，只赋值）：开环目标、开环角（冷起动 = 定位角；接管 = PLL 角 + 预先计算的偏移）、
  * 开环转速、电流、加速度，电流指令沿开环 d 轴 */
-void Startup_CommitOpenLoop(const OpenLoopEntry_TypeDef *e)
+void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e)
 {
     s_olTarget = openLoopTarget();
     Protect_PhaseReset();           /* 缺相窗口从进入 I/F 时重新计 */
@@ -205,22 +205,22 @@ void Startup_CommitOpenLoop(const OpenLoopEntry_TypeDef *e)
     gOpenLoopDiag.stage = OPENLOOP_STAGE_RUN;
 }
 
-/* 飞车接管进入 I/F（快环中执行）：接管时闭环电流 iq = 0（Sup_SwitchCalibOpenLoop 先清零），入口参数除起始转速外
+/* 飞车接管进入 I/F（快环中执行）：接管时闭环电流 iq = 0（Sup_SwitchFlyCheckOpenLoop 先清零），入口参数除起始转速外
  * 均为常数，仅分"开环需过零 / 不过零"两种。上电时（Startup_Init）预先计算，快环中按方向选取一份、填入转速并提交：常数时间 */
 static OpenLoopEntry_TypeDef s_catchIf[2];
 
-void Startup_CommitCatchOpenLoop(int16_t spd)
+void OpenLoop_CommitCatch(int16_t spd)
 {
     OpenLoopEntry_TypeDef e = s_catchIf[(openLoopTarget() > 0) != (spd > 0)];
     int32_t sp = (int32_t)spd << 16;
     if (sp > OPENLOOP_WARM_MAX_Q31) sp = OPENLOOP_WARM_MAX_Q31;
     if (sp < -OPENLOOP_WARM_MAX_Q31) sp = -OPENLOOP_WARM_MAX_Q31;
     e.olSpeed = sp;
-    Startup_CommitOpenLoop(&e);
+    OpenLoop_Commit(&e);
 }
 
 /* 开环需过零（反转）：开环目标方向与当前转速方向相反 */
-uint8_t Startup_OpenLoopReversal(int32_t speedSign)
+uint8_t OpenLoop_Reversal(int32_t speedSign)
 {
     int32_t t = openLoopTarget();
     return (uint8_t)((t > 0) != (speedSign > 0));
@@ -238,7 +238,7 @@ static void openLoopHandover(void)
      * 角度误差引起的转矩逐渐淡出，由速度环补偿，而非一次性形成冲击。
      * 关中断：控制角（runState）、电流指令、积分器必须在同一快环拍间隙内同时切换。 */
     int16_t d = (int16_t)((s_olTheta >> 16) - (gEst.pll.s32Theta >> 16));
-    sAngle_Trig a = FocMath_SinCos(d);
+    SinCos_TypeDef a = FocMath_SinCos(d);
     int16_t i = gFoc.idqRef.s16D;
     int16_t id0 = QMath_MulQ15(i, a.s16Cos), iq0 = QMath_MulQ15(i, a.s16Sin), iqPi, ff0 = 0;
     int32_t ol = s_olSpeed;
@@ -263,7 +263,7 @@ static void openLoopHandover(void)
         /* 速度环：PI 积分器预置为 iqPi（前馈给出 ff0），斜坡延续开环转速与加速度；id0 与 iq0 - iqPi - ff0 由融合叠加并淡出 */
         SpeedCtrl_OnEnterSpin(id0, iqPi);
         SpeedCtrl_BlendStart(id0, (int16_t)(iq0 - iqPi - ff0), ol, (int16_t)s_accScaleQ12, ff0);
-        Sup_SwitchStartupSpin();
+        Sup_SwitchOpenLoopSpin();
         IRQ_UNLOCK();
     }
 }
@@ -276,8 +276,8 @@ void Startup_Init(void)
 
     /* 仅上电时计算一次（含开方与浮点） */
     s_dampQ8 = (int32_t)(ALIGN_C1 * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM * ALIGN_J * 1099511627776.0)) / 1048576.0);
-    Startup_PrepareOpenLoopWarm(0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
-    Startup_PrepareOpenLoopWarm(0, 1, 1, 0, &s_catchIf[1]);
+    OpenLoop_PrepareWarm(0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
+    OpenLoop_PrepareWarm(0, 1, 1, 0, &s_catchIf[1]);
 }
 
 /* 停机复位：预充计数清零 */
@@ -289,7 +289,7 @@ void Startup_ResetRun(void)
 
 
 /* ---------------------------------------------------------------------------
- * Charge：三相下桥轮流导通为自举电容充电，PRECHARGE_TIME 后进入 Calib
+ * Charge：三相下桥轮流导通为自举电容充电，PRECHARGE_TIME 后进入 FlyCheck
  * -------------------------------------------------------------------------*/
 /* 预充快环：上下桥均关闭，三相下桥轮流导通（每拍切换一相），为上桥驱动的自举电容充电；到时进入飞车检测 */
 void Startup_ChargeFast(void)
@@ -304,7 +304,7 @@ void Startup_ChargeFast(void)
     else                               HAL_PwmLowOnC();
 
     if (gStartup.preChargeCnt++ >= gStartup.preChargeCmd) {
-        Sup_SwitchChargeCalib();
+        Sup_SwitchChargeFlyCheck();
     }
 }
 
@@ -315,20 +315,20 @@ void Startup_ChargeSlow(void)
 }
 
 /* ---------------------------------------------------------------------------
- * Calib：飞车检测（flystart.c）。正在转动且转速足够 -> Spin；低速 -> I/F；静止 -> Align；制动不停 -> 故障
+ * FlyCheck：飞车检测（flystart.c）。正在转动且转速足够 -> Spin；低速 -> I/F；静止 -> Align；制动不停 -> 故障
  * -------------------------------------------------------------------------*/
 /* 飞车检测快环：执行 FlyStart_DetectFast，按结论切换到 Align / Spin / I/F 或报故障 */
-void Startup_CalibFast(void)
+void Startup_FlyCheckFast(void)
 {
     switch (FlyStart_DetectFast(gSpd.cmd)) {
     case FLY_STILL:
-        Sup_SwitchCalibAlign();
+        Sup_SwitchFlyCheckAlign();
         break;
     case FLY_CATCH:
-        Sup_SwitchCalibSpin();
+        Sup_SwitchFlyCheckSpin();
         break;
     case FLY_CATCH_OPENLOOP:
-        Sup_SwitchCalibOpenLoop();
+        Sup_SwitchFlyCheckOpenLoop();
         break;
     case FLY_TIMEOUT:
         Sup_CountRestart();
@@ -341,7 +341,7 @@ void Startup_CalibFast(void)
 }
 
 /* 飞车检测慢环：测量滤波；对快环保存的电流平方值开方用于诊断显示（快环不开方） */
-void Startup_CalibSlow(void)
+void Startup_FlyCheckSlow(void)
 {
     Meas_SlowFilter();
     gFly.pulseAmp = (int16_t)QMath_Isqrt32(gFly.pulseM2);     /* 诊断：快环只保存平方 */
@@ -375,7 +375,7 @@ void Startup_AlignSlow(void)
     if (STARTUP_IPD && s_ipd) {
         if (gIpd.state == IPD_STATE_DONE) {
             if (Ipd_Evaluate()) {
-                Sup_SwitchIpdStartup(gIpd.theta);  /* 从测得的 N 极角开始拖动，无需定位 */
+                Sup_SwitchIpdOpenLoop(gIpd.theta);  /* 从测得的 N 极角开始拖动，无需定位 */
             } else {
                 /* 对比度不足（饱和不明显 / 转子在动）：本次退回定位。PWM 已为零电压，电流约为 0。
                  * 先清积分器再清 s_ipd（分别为一次 32 / 8 位写）：快环看到 s_ipd = 0 时积分器已为 0 */
@@ -405,7 +405,7 @@ void Startup_AlignSlow(void)
         if ((s_alignTicks >= ALIGN_MIN_TICKS && s_still >= ALIGN_STILL_TICKS) || s_alignTicks >= ALIGN_MAX_TICKS) {
             gOpenLoopDiag.alignTime = s_alignTicks;
             if (IDENT_TEST && !gIdentCfg.run) Ident_Begin();  /* 参数辨识：不切入 I/F，从此开始测量 */
-            else Sup_SwitchAlignStartup();  /* 观测器初始化为 |psi_f|∠0 */
+            else Sup_SwitchAlignOpenLoop();  /* 观测器初始化为 |psi_f|∠0 */
         }
     }
     Meas_SlowFilter();
@@ -413,10 +413,10 @@ void Startup_AlignSlow(void)
 }
 
 /* ---------------------------------------------------------------------------
- * Startup（I/F）：电流矢量开环旋转（角度 = 开环积分），观测器 + PLL 只跟踪；转速一致后切换到 Spin。
+ * OpenLoop（I/F）：电流矢量开环旋转（角度 = 开环积分），观测器 + PLL 只跟踪；转速一致后切换到 Spin。
  * -------------------------------------------------------------------------*/
 /* I/F 快环：观测器 + PLL 只跟踪；开环转速按加速度步长趋近目标，开环角积分；电流环按开环角运行 */
-void Startup_StartupFast(void)
+void OpenLoop_Fast(void)
 {
     int32_t sp = s_olSpeed, tgt = s_olTarget, step;
     FocCore_Clarke();
@@ -442,7 +442,7 @@ void Startup_StartupFast(void)
  *   缺相检查；运行辨识模式下先测磁链；
  *   开环转速超过切换转速 OPENLOOP_HANDOVER_RPM 后，PLL 转速与开环转速一致（相对误差 < OPENLOOP_AGREE_RATIO）
  *   并持续 OPENLOOP_AGREE_S -> 切闭环；拖动超时仍不一致 -> 堵转故障 */
-void Startup_StartupSlow(void)
+void OpenLoop_Slow(void)
 {
     int32_t ol = s_olSpeed;
     s_olTarget = openLoopTarget();
@@ -450,7 +450,7 @@ void Startup_StartupSlow(void)
     if (s_olCur < s_olCurTarget) {      /* 回退时开环电流升至目标 */
         s_olCur += CURRENT_SLEW_STEP_Q15;
         if (s_olCur > s_olCurTarget) s_olCur = s_olCurTarget;
-        s_accStep = (s_accStepFull * s_olCur) / s_olCurTarget;     /* 32 位，见 Startup_PrepareOpenLoop */
+        s_accStep = (s_accStepFull * s_olCur) / s_olCurTarget;     /* 32 位，见 OpenLoop_Prepare */
         FocCore_SetIdqRef((int16_t)s_olCur, 0);
     }
     gOpenLoopDiag.olSpeed = (int16_t)(ol >> 16);

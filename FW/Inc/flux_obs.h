@@ -21,12 +21,12 @@
 #include "foc_math.h"
 
 typedef struct {
-    int16_t s16KRs, s16KLs, s16KTs;          /* 模型常数 Q15（KLs 即 Lq） */
+    int16_t s16KRs, s16KLq, s16KTs;          /* 模型常数 Q15（KLs 即 Lq） */
     int16_t s16NlfoNormQ8;                   /* NLFO 归一化（Q8），上电 = FLUX_NLFO_NORM_Q8（对应 FLUX_NLFO_TAU_S）。
                                               * 时间常数与其成反比（SH 不变时）：
                                               * 768 = 19.2 ms，613 = 24 ms，460 = 32 ms */
     int32_t s32PsiAlF, s32PsiBeF;            /* 定子磁链 Q16.16 */
-    MLIB_FILTER_MA_T sEalAvgMA, sEbeAvgMA;   /* e 的去直流 */
+    LowPass_TypeDef sEalAvgMA, sEbeAvgMA;   /* e 的去直流 */
     int16_t s16PsiAl, s16PsiBe;              /* 定子磁链 Q15 */
     int16_t s16PsiRAl, s16PsiRBe, s16PsiRMag;/* 转子磁链 Q15（RMag 每 16 拍算一次，诊断用） */
     int16_t s16Eal, s16Ebe;                  /* v - Rs*i（高通之前，诊断用） */
@@ -39,8 +39,8 @@ extern FluxObs_TypeDef gFluxObs;
 void FluxObs_Init(void);            /* 上电 */
 void FluxObs_LoadModel(void);       /* 从 gGain 重新装载 Rs / L / NLFO 归一化（param.c 更新参数时调用） */
 void FluxObs_Reset(void);           /* 清除全部状态（非 Run 状态时每拍调用） */
-/* Align -> Startup：清除观测器、PLL 速度与转速反馈，将 psi 初始化为 |psi_f|∠gFoc.theta */
-void FluxObs_BeginStartup(void);
+/* Align -> OpenLoop：清除观测器、PLL 速度与转速反馈，将 psi 初始化为 |psi_f|∠gFoc.theta */
+void FluxObs_BeginOpenLoop(void);
 /* 飞车接管：清除观测器，将定子磁链初始化为 psi_f∠theta + Lq*i（theta、i 均为本拍采样时刻） */
 void FluxObs_SeedCatch(int16_t theta);
 /* 执行本拍模型。调用前须已计算 gMeas.iab（Clarke），且本拍尚未调制（gSvpwm.Alpha/Beta 仍为上一拍指令）。 */

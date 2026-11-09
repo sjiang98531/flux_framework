@@ -193,8 +193,8 @@ static void acFast(void)
     uint16_t seg = s_acSeg, per = s_acPer[s_acSegF[seg < AC_NSEG ? seg : 0]];
     int16_t ref = 0;
     if (seg < AC_NSEG && !s_acDone) {
-        sAngle_Trig a = FocMath_SinCos((int16_t)(s_acPhi >> 16));
-        sAngle_Trig b = FocMath_SinCos((int16_t)((s_acPhi + s_acDly) >> 16));
+        SinCos_TypeDef a = FocMath_SinCos((int16_t)(s_acPhi >> 16));
+        SinCos_TypeDef b = FocMath_SinCos((int16_t)((s_acPhi + s_acDly) >> 16));
         if (s_acT >= AC_SETTLE * per) {
             /* 死区电压沿注入方向的分量（按本拍电流，模型同 flux_obs.c dtComp）：仅用于将实部还原为 Rs 以作校核 */
             int32_t ia = gMeas.iab.s16Alpha, ibs = ((int32_t)gMeas.iab.s16Beta * 28378) >> 15, xa, xb, xc, ea, eb, e;
@@ -204,7 +204,7 @@ static void acFast(void)
             ea = ((2 * xa - xb - xc) * 10923) >> 15;
             eb = ((xb - xc) * 18919) >> 15;
             {
-                sAngle_Trig d = FocMath_SinCos(s_acTheta);
+                SinCos_TypeDef d = FocMath_SinCos(s_acTheta);
                 e = (((ea * d.s16Cos + eb * d.s16Sin) >> 15) * s_acVph) >> 15;
             }
             s_acIs += ((int32_t)gFoc.idq.s16D * a.s16Sin) >> 15;
@@ -323,8 +323,8 @@ static void rlStart(void)       /* 慢环 */
 /* R/L 快环：alpha 轴输出正弦电压（不使用电流环），对 alpha 电流按"电压生效时刻"的相位做正交积分，每个周期置一次完成 */
 static void rlFast(void)
 {
-    sAngle_Trig a = FocMath_SinCos((int16_t)(s_acPhi >> 16));
-    sAngle_Trig b = FocMath_SinCos((int16_t)((s_acPhi - s_acDly) >> 16));     /* 采样时刻正在起作用的电压的相位 */
+    SinCos_TypeDef a = FocMath_SinCos((int16_t)(s_acPhi >> 16));
+    SinCos_TypeDef b = FocMath_SinCos((int16_t)((s_acPhi - s_acDly) >> 16));     /* 采样时刻正在起作用的电压的相位 */
     if (!s_acDone) {
         int32_t i = gMeas.iab.s16Alpha;
         s_acIs += (i * b.s16Sin) >> 15;

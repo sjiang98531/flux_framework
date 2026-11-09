@@ -121,7 +121,7 @@ uint8_t Ipd_Evaluate(void)
     int32_t x = 0, y = 0, mx = 0, mn = 32767;
     uint16_t k;
     for (k = 0; k < IPD_N; k++) {
-        sAngle_Trig a = FocMath_SinCos(s_dirAngle[k]);
+        SinCos_TypeDef a = FocMath_SinCos(s_dirAngle[k]);
         int32_t p = gIpd.pk[k];
         x += (p * a.s16Cos) >> 15;
         y += (p * a.s16Sin) >> 15;

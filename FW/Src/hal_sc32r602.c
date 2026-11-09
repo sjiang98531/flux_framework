@@ -95,12 +95,12 @@ FORCE_INLINE uint8_t acquireSamples(void)
 }
 
 /* 硬件过流（比较器逐周期保护）中断：母线电流超过比较器门限（DAC 设定）时芯片已自动封锁 PWM，
- * 此处再次关闭输出并置锁存（下一拍快环 M1_FaultDetection 转换为故障），清除中断标志。优先级 0（最高） */
+ * 此处再次关闭输出并置锁存（下一拍快环 faultDetect 转换为故障），清除中断标志。优先级 0（最高） */
 void EPWM_IRQHandler(void)
 {
     if ((EPWM->EPWM_STS & EPWM_STS_CBCIF) != 0) {
         DISABLE_PWMOUT();
-        gHal.ocLatch = 1;             /* 由快环 M1_FaultDetection 转换为 MC_FAULT_I_DCBUS_OVER（直接写故障位会被其清除） */
+        gHal.ocLatch = 1;             /* 由快环 faultDetect 转换为 MC_FAULT_I_DCBUS_OVER（直接写故障位会被其清除） */
         EPWM->EPWM_STS |= EPWM_STS_CBCIF;
     }
 }

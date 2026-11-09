@@ -8,8 +8,8 @@
  * 状态机分两层：
  *   主状态 gSup.mainState：Init（上电一拍）-> Stop（PWM 关闭、等待指令）-> Run（运行）；任何时刻出现故障 -> Fault，
  *     故障消失 FAULTRELEASE_TIME 后回到 Stop。
- *   Run 子状态 gSup.runState：Charge（自举电容预充）-> Calib（飞车检测）-> Align（IPD / 定位）
- *     -> Startup（I/F 开环拖动）-> Spin（闭环）。飞车检测可直接跳到 Startup 或 Spin；Spin 转速过低时回退到 Startup。
+ *   Run 子状态 gSup.runState：Charge（自举电容预充）-> FlyCheck（飞车检测）-> Align（IPD / 定位）
+ *     -> OpenLoop（I/F 开环拖动）-> Spin（闭环）。飞车检测可直接跳到 OpenLoop 或 Spin；Spin 转速过低时回退到 OpenLoop。
  * 每个状态有一个快环函数（每 PWM 周期，ADC 中断）和一个慢环函数（1 kHz，PendSV），由下方函数表分发。
  * 状态切换函数统一命名为 Sup_Switch<源><目标>，切换所需操作（开关桥臂、预置积分器、切换角度来源）在其中一次完成。
  *
@@ -19,7 +19,7 @@
  *   M1_<主状态>_Fast / _Slow             各主状态每拍的处理
  *   softStopSlow                         软停机：电流矢量按限定速率降到 0
  *   Sup_Switch*                          状态切换
- *   M1_FaultDetection                    每拍汇总故障位（硬件过流、配置检查失败、母线过欠压）
+ *   faultDetect                    每拍汇总故障位（硬件过流、配置检查失败、母线过欠压）
  *   Sup_Log                              事件记录（gSupLog，记录最近的状态变化）
  * ==========================================================================*/
 #include "supervisor.h"
@@ -73,27 +73,27 @@ void Sup_Log(uint16_t code, uint16_t arg)
 }
 
 /* 主状态处理函数：快环、慢环各一组，下标 = gSup.mainState（Fault = 0, Init = 1, Stop = 2, Run = 3） */
-static void M1_Fault_Fast(void);
-static void M1_Init_Fast(void);
-static void M1_Stop_Fast(void);
-static void M1_Run_Fast(void);
-static void M1_Fault_Slow(void);
-static void M1_Init_Slow(void);
-static void M1_Stop_Slow(void);
-static void M1_Run_Slow(void);
-static void M1_FaultDetection(void);
+static void faultFast(void);
+static void initFast(void);
+static void stopFast(void);
+static void runFast(void);
+static void faultSlow(void);
+static void initSlow(void);
+static void stopSlow(void);
+static void runSlow(void);
+static void faultDetect(void);
 
-static const pfcn_void_void s_STATE_FAST[4] = {M1_Fault_Fast, M1_Init_Fast, M1_Stop_Fast, M1_Run_Fast};
-static const pfcn_void_void s_STATE_SLOW[4] = {M1_Fault_Slow, M1_Init_Slow, M1_Stop_Slow, M1_Run_Slow};
+static const StateFn_t s_mainFast[4] = {faultFast, initFast, stopFast, runFast};
+static const StateFn_t s_mainSlow[4] = {faultSlow, initSlow, stopSlow, runSlow};
 
-/* Run 子状态表，顺序 = m1_run_substate_t */
-static const pfcn_void_void s_M1_STATE_RUN_TABLE_FAST[5] = {
-    Startup_ChargeFast, Startup_CalibFast, Startup_AlignFast,
-    Startup_StartupFast, Spin_Fast
+/* Run 子状态表，顺序 = RunState_TypeDef */
+static const StateFn_t s_runFast[5] = {
+    Startup_ChargeFast, Startup_FlyCheckFast, Startup_AlignFast,
+    OpenLoop_Fast, Spin_Fast
 };
-static const pfcn_void_void s_M1_STATE_RUN_TABLE_SLOW[5] = {
-    Startup_ChargeSlow, Startup_CalibSlow, Startup_AlignSlow,
-    Startup_StartupSlow, Spin_Slow
+static const StateFn_t s_runSlow[5] = {
+    Startup_ChargeSlow, Startup_FlyCheckSlow, Startup_AlignSlow,
+    OpenLoop_Slow, Spin_Slow
 };
 
 /* ===========================================================================
@@ -128,7 +128,7 @@ void Ctrl_Init(void)
     IdRef_Init();
 }
 
-/* 清除运行状态：每次停机、故障、从 Stop 进入 Run（Charge -> Calib）时调用。
+/* 清除运行状态：每次停机、故障、从 Stop 进入 Run（Charge -> FlyCheck）时调用。
  * 积分器、斜坡、观测器、PLL、各计数器恢复初值，保证每次起动都从相同的初始状态开始 */
 void Ctrl_ResetRunVariables(void)
 {
@@ -148,7 +148,7 @@ void Ctrl_ResetRunVariables(void)
  * 按主状态分发到 M1_<状态>_Fast；非 Run 状态下观测器保持复位 */
 RAMFUNC void Ctrl_FastTick(void)
 {
-    s_STATE_FAST[gSup.mainState]();
+    s_mainFast[gSup.mainState]();
     if (gSup.mainState != MainState_Run) FluxObs_Reset();
 }
 
@@ -158,7 +158,7 @@ static int16_t compSpeed(void)
 {
     if (gSup.mainState != MainState_Run) return 0;
     if (gSup.runState == RunState_Spin) return (int16_t)(gEst.pll.s32Speed >> 16);
-    if (gSup.runState == RunState_Startup) return Startup_OpenLoopSpeedQ15();
+    if (gSup.runState == RunState_OpenLoop) return OpenLoop_SpeedQ15();
     return 0;
 }
 
@@ -178,9 +178,9 @@ void Ctrl_SlowTick(void)
         while (s_msFrac >= (uint16_t)SLOWLOOP_FREQ) { s_msFrac -= (uint16_t)SLOWLOOP_FREQ; gSup.ms++; }
     }
     Diag_SlowBegin();
-    s_STATE_SLOW[gSup.mainState]();
+    s_mainSlow[gSup.mainState]();
     FluxObs_SlowTick(compSpeed(), gMeas.vbusAvg);
-    Protect_BusSlow();                  /* 判定结果由快环 M1_FaultDetection 读取 */
+    Protect_BusSlow();                  /* 判定结果由快环 faultDetect 读取 */
     gFluxDiag.mainState = (uint16_t)gSup.mainState;     /* 状态诊断（1 ms 分辨率，精确时刻见 gSupLog） */
     gFluxDiag.runState = (uint16_t)gSup.runState;
     Diag_SlowTick();
@@ -192,11 +192,11 @@ void Ctrl_SlowTick(void)
  * 主状态
  * =========================================================================*/
 /* Run -> Fault：关闭全部桥臂、记录事件、清除运行状态。全过程关中断（可能在慢环中调用，不能被快环在中间状态打断） */
-static void M1_SwitchRunFault(void)
+static void switchRunFault(void)
 {
     IRQ_LOCK();
     HAL_PwmAllOff();
-    if (gSup.runState >= RunState_Startup) FlyStart_NoteRunEnd();     /* 转子可能仍在滑行 */
+    if (gSup.runState >= RunState_OpenLoop) FlyStart_NoteRunEnd();     /* 转子可能仍在滑行 */
     Sup_Log(SUP_EV_FAULT, (uint16_t)gSup.fault);
     gSup.mainState = MainState_Fault;
     gSup.runState = RunState_Charge;
@@ -207,7 +207,7 @@ static void M1_SwitchRunFault(void)
     IRQ_UNLOCK();
 }
 
-/* 连续重启计数（飞车超时等可恢复故障时加 1，最多 10）。M1_Stop_Slow 中计数 >= 5 时不再自动起动，
+/* 连续重启计数（飞车超时等可恢复故障时加 1，最多 10）。stopSlow 中计数 >= 5 时不再自动起动，
  * 指令归零才清零：防止"故障 -> 重启 -> 故障"无限循环 */
 void Sup_CountRestart(void)
 {
@@ -225,14 +225,14 @@ void Sup_RaiseFault(uint16_t faultId)
 {
     MC_FAULT_SET(gSup.fault, faultId);
     gSup.faultRecord |= gSup.fault;
-    M1_SwitchRunFault();
+    switchRunFault();
 }
 
 /* Run -> Stop：正常停机（软停机完成、转速过低结束跟踪，或指令归零）。关闭桥臂、清除运行状态。调用方已关闭 PWM 输出 */
 void Sup_SwitchRunStop(void)
 {
     IRQ_LOCK();
-    if (gSup.runState >= RunState_Startup) FlyStart_NoteRunEnd();     /* 转子可能仍在滑行 */
+    if (gSup.runState >= RunState_OpenLoop) FlyStart_NoteRunEnd();     /* 转子可能仍在滑行 */
     Sup_Log(SUP_EV_STOP, 0);
     gSup.mainState = MainState_Stop;
     gSup.runState = RunState_Charge;
@@ -244,7 +244,7 @@ void Sup_SwitchRunStop(void)
 }
 
 /* Stop -> Run：收到起动指令。从 Charge（预充）开始；停机期间的硬件过流锁存不带入本次运行 */
-static void M1_SwitchStopRun(void)
+static void switchStopRun(void)
 {
     Sup_Log(SUP_EV_START, gSup.faultRestarts);
     HAL_ClearOcLatch();             /* 停机期间的过流标志不带入新的运行 */
@@ -254,14 +254,14 @@ static void M1_SwitchStopRun(void)
 }
 
 /* Fault 快环：保持 PWM 关闭，持续检测故障（故障消失后由慢环计时回到 Stop） */
-static void M1_Fault_Fast(void)
+static void faultFast(void)
 {
     HAL_PwmAllOff();
-    M1_FaultDetection();
+    faultDetect();
 }
 
 /* Init 快环：上电后第一拍，清除状态后直接进入 Stop */
-static void M1_Init_Fast(void)
+static void initFast(void)
 {
     HAL_PwmAllOff();
     Ctrl_ResetRunVariables();
@@ -270,26 +270,26 @@ static void M1_Init_Fast(void)
 
 /* Stop 快环：PWM 关闭，比较值设为半占空比（下次开启 PWM 时三相电压平衡）；母线平均值直接跟随采样
  * （Stop 时不滤波，保证起动时刻母线归一化准确）；检测故障 */
-static void M1_Stop_Fast(void)
+static void stopFast(void)
 {
     HAL_PwmAllOff();
     HAL_PwmSetHalfDuty();
     Meas_BusFollowSample();
-    M1_FaultDetection();
+    faultDetect();
     if (gSup.fault) gSup.mainState = MainState_Fault;
 }
 
-/* Run 快环：按子状态分发（Charge / Calib / Align / Startup / Spin 的 *_Fast），然后检测故障，有故障立即切换到 Fault */
-RAMFUNC static void M1_Run_Fast(void)
+/* Run 快环：按子状态分发（Charge / FlyCheck / Align / OpenLoop / Spin 的 *_Fast），然后检测故障，有故障立即切换到 Fault */
+RAMFUNC static void runFast(void)
 {
-    s_M1_STATE_RUN_TABLE_FAST[gSup.runState]();
-    M1_FaultDetection();
-    if (gSup.fault) M1_SwitchRunFault();
+    s_runFast[gSup.runState]();
+    faultDetect();
+    if (gSup.fault) switchRunFault();
 }
 
 /* Fault 慢环：照常滤波（母线电压等须始终有效）；电平型故障连续消失 FAULTRELEASE_TIME 后清除本次故障位、回到 Stop。
  * 只计连续无电平型故障的时间：出现即清零。事件型故障（已关 PWM）不阻止释放 */
-static void M1_Fault_Slow(void)
+static void faultSlow(void)
 {
     static uint16_t s_releaseTicks;
 
@@ -304,17 +304,17 @@ static void M1_Fault_Slow(void)
 }
 
 /* Init 慢环：仅做测量滤波 */
-static void M1_Init_Slow(void)
+static void initSlow(void)
 {
     Meas_SlowFilter();
 }
 
 /* Stop 慢环：读取速度指令（gSup.speedCmd -> gSpd.cmd）；指令超过 STOP_TO_RUN_SPEED 且连续重启次数未超限时起动；
  * 指令回到门限以下时清除重启计数 */
-static void M1_Stop_Slow(void)
+static void stopSlow(void)
 {
     gSpd.cmd = gSup.speedCmd;
-    if (abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && (gSup.faultRestarts < SUP_RESTART_LIMIT)) M1_SwitchStopRun();
+    if (abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && (gSup.faultRestarts < SUP_RESTART_LIMIT)) switchStopRun();
     else if (abs(gSpd.cmd) < Q15(STOP_TO_RUN_SPEED / SPEED_MAX)) Sup_ClearRestarts();
     Meas_SlowFilter();
 }
@@ -340,7 +340,7 @@ static uint8_t softStopSlow(void)
  * 返回 1 = 本拍由软停机处理（调用方不再执行子状态慢环） */
 static uint8_t runStopSlow(uint8_t stopReq)
 {
-    uint8_t live = (uint8_t)(gSup.runState == RunState_Spin || gSup.runState == RunState_Startup || gSup.runState == RunState_Align);
+    uint8_t live = (uint8_t)(gSup.runState == RunState_Spin || gSup.runState == RunState_OpenLoop || gSup.runState == RunState_Align);
     if (s_softStop && !stopReq && gSup.runState == RunState_Spin) {
         s_softStop = 0;
         {
@@ -376,7 +376,7 @@ static uint8_t runStopSlow(uint8_t stopReq)
  *   3. 停机指令（|指令| < RUN_TO_STOP_SPEED）或软停机进行中：有电流的子状态先软停（电流降到 0），
  *      完成后若处于闭环且转速足够 -> 零电流跟踪，否则关闭 PWM 回到 Stop。闭环软停期间指令恢复 -> 取消软停继续闭环；
  *   4. 正常情况：按子状态分发慢环函数（预充计时、飞车判定、定位、I/F、速度环）。 */
-static void M1_Run_Slow(void)
+static void runSlow(void)
 {
     uint8_t stopReq;
     gSpd.cmd = gSup.speedCmd;
@@ -389,7 +389,7 @@ static void M1_Run_Slow(void)
         Sup_SwitchRunStop();
         return;
     }
-    s_M1_STATE_RUN_TABLE_SLOW[gSup.runState]();
+    s_runSlow[gSup.runState]();
 }
 
 /* ===========================================================================
@@ -405,9 +405,9 @@ static void bridgeOnZeroVector(void)
     HAL_PwmAllOn();
 }
 
-/* Charge -> Calib（预充完成，开始飞车检测）：上桥关闭、下桥导通（三相短接），比较值为零矢量。
+/* Charge -> FlyCheck（预充完成，开始飞车检测）：上桥关闭、下桥导通（三相短接），比较值为零矢量。
  * 清除运行状态与飞车检测状态 */
-void Sup_SwitchChargeCalib(void)
+void Sup_SwitchChargeFlyCheck(void)
 {
     HAL_PwmAllOff();
     HAL_PwmHighOff();                     /* 飞车检测：上桥关闭、下桥导通（短接） */
@@ -417,11 +417,11 @@ void Sup_SwitchChargeCalib(void)
 
     Ctrl_ResetRunVariables();
     FlyStart_Begin();
-    gSup.runState = RunState_Calib;
+    gSup.runState = RunState_FlyCheck;
 }
 
-/* Calib -> Align（飞车检测判为静止）：开启上下桥互补输出，进入 IPD / 定位（由 Startup_OnEnterAlign 决定先做 IPD 还是直接定位） */
-void Sup_SwitchCalibAlign(void)
+/* FlyCheck -> Align（飞车检测判为静止）：开启上下桥互补输出，进入 IPD / 定位（由 Startup_OnEnterAlign 决定先做 IPD 还是直接定位） */
+void Sup_SwitchFlyCheckAlign(void)
 {
     Sup_Log(SUP_EV_STILL, 0);
     Startup_OnEnterAlign();         /* 定位计时、角度清零 */
@@ -429,10 +429,10 @@ void Sup_SwitchCalibAlign(void)
     bridgeOnZeroVector();
 }
 
-/* Calib -> Spin（飞车检测：转子转速足够，直接接入闭环）。在快环中调用（常数时间赋值）：
+/* FlyCheck -> Spin（飞车检测：转子转速足够，直接接入闭环）。在快环中调用（常数时间赋值）：
  *   用测得的角度 / 转速预置 PLL、观测器（Est_OnCatch），电流指令置 0、q 轴积分器预置为反电势，
  *   开启 PWM（本周期零矢量），进入零电流跟踪（Spin_OnEnterCatch），PLL 收敛后再闭合速度环。 */
-void Sup_SwitchCalibSpin(void)
+void Sup_SwitchFlyCheckSpin(void)
 {
     int16_t spd = gFly.speedCatch;
     Sup_Log(SUP_EV_CATCH_SPIN, (uint16_t)gFly.thetaCatch);
@@ -451,9 +451,9 @@ void Sup_SwitchCalibSpin(void)
     FocCore_SetDecouple(1);
 }
 
-/* Calib -> Startup（飞车检测：转子在转但低于直接闭环门限，接入 I/F 开环）。在快环中调用：
+/* FlyCheck -> OpenLoop（飞车检测：转子在转但低于直接闭环门限，接入 I/F 开环）。在快环中调用：
  *   预置 PLL / 观测器，开环角与开环转速从测得值开始，电流沿转子 d 轴（转矩从 0 开始），随后按 I/F 正常拖动 */
-void Sup_SwitchCalibOpenLoop(void)
+void Sup_SwitchFlyCheckOpenLoop(void)
 {
     int16_t spd = gFly.speedCatch;
     Sup_Log(SUP_EV_CATCH_OPENLOOP, (uint16_t)gFly.thetaCatch);
@@ -461,38 +461,38 @@ void Sup_SwitchCalibOpenLoop(void)
     /* 开环电流沿转子 d 轴（iq = 0 -> 开环角 = 转子角，转矩从 0 开始），q 轴积分器预置为反电势 */
     FocCore_SetIdqRef(gFoc.idqRef.s16D, 0);
     FocCore_PresetPIForSpeed(spd);
-    Startup_CommitCatchOpenLoop(spd);     /* 从 PLL 角（= 接管角外推一拍）和转速开始拖动；入口参数已在上电时计算，常数时间 */
+    OpenLoop_CommitCatch(spd);     /* 从 PLL 角（= 接管角外推一拍）和转速开始拖动；入口参数已在上电时计算，常数时间 */
 
     bridgeOnZeroVector();
 
-    gSup.runState = RunState_Startup;
+    gSup.runState = RunState_OpenLoop;
     SpeedCtrl_PresetRamp(gMeas.speed);
-    SpeedCtrl_UseStartupRamp();
+    SpeedCtrl_UseOpenLoopRamp();
 }
 
-/* 慢环中的切换：耗时计算在临界区外"准备"（Startup_PrepareOpenLoop，只计算、不修改状态），
+/* 慢环中的切换：耗时计算在临界区外"准备"（OpenLoop_Prepare，只计算、不修改状态），
  * 临界区内只"提交"（赋值 + 切换状态），以缩短关中断时间。 */
-void Sup_SwitchAlignStartup(void)
+void Sup_SwitchAlignOpenLoop(void)
 {
     OpenLoopEntry_TypeDef e;
-    Startup_PrepareOpenLoopCold(&e);
+    OpenLoop_PrepareCold(&e);
     {
         IRQ_LOCK();
         Sup_Log(SUP_EV_ALIGN_DONE, 0);
-        Est_OnEnterStartupCold();
-        Startup_CommitOpenLoop(&e);           /* I/F：从定位角、零速开始拖动 */
-        gSup.runState = RunState_Startup;
-        SpeedCtrl_UseStartupRamp();
+        Est_OnEnterOpenLoopCold();
+        OpenLoop_Commit(&e);           /* I/F：从定位角、零速开始拖动 */
+        gSup.runState = RunState_OpenLoop;
+        SpeedCtrl_UseOpenLoopRamp();
         IRQ_UNLOCK();
     }
 }
 
-/* Align（IPD 成功）-> Startup：在慢环中调用，先在临界区外准备 I/F 入口参数，临界区内只赋值。
+/* Align（IPD 成功）-> OpenLoop：在慢环中调用，先在临界区外准备 I/F 入口参数，临界区内只赋值。
  * theta = IPD 测得的 N 极方向（Q15 角度），作为开环起始角 */
-void Sup_SwitchIpdStartup(int16_t theta)
+void Sup_SwitchIpdOpenLoop(int16_t theta)
 {
     OpenLoopEntry_TypeDef e;
-    Startup_PrepareOpenLoopCold(&e);
+    OpenLoop_PrepareCold(&e);
     /* 定位后电流本就在 I/F 方向上；IPD 后电流为 0，开环电流从 1/4 起按 CURRENT_SLEW_A_S 上升（与回退相同），
      * 加速度按电流比例给出，负载角余量不变；d 轴电流阶跃较小 */
     e.olCur = e.olCurTarget >> 2;
@@ -503,44 +503,44 @@ void Sup_SwitchIpdStartup(int16_t theta)
         gFoc.theta = theta;
         gFoc.thetaInv = theta;
         FocCore_PresetPI(0, 0);         /* 电流环已旁路一轮（直接输出电压），积分器从 0 开始 */
-        Est_OnEnterStartupCold();       /* 观测器初始化为 |psi_f|∠theta（N 极），PLL 角 = theta */
-        Startup_CommitOpenLoop(&e);
-        gSup.runState = RunState_Startup;
-        SpeedCtrl_UseStartupRamp();
+        Est_OnEnterOpenLoopCold();       /* 观测器初始化为 |psi_f|∠theta（N 极），PLL 角 = theta */
+        OpenLoop_Commit(&e);
+        gSup.runState = RunState_OpenLoop;
+        SpeedCtrl_UseOpenLoopRamp();
         IRQ_UNLOCK();
     }
 }
 
-/* Startup -> Spin（I/F 开环与观测器转速一致，切换闭环）：速度环从当前开环电流继续（转矩不变），
+/* OpenLoop -> Spin（I/F 开环与观测器转速一致，切换闭环）：速度环从当前开环电流继续（转矩不变），
  * Spin 开始融合（I/F 的 d 轴电流渐变到 0，speed_ctrl.c Blend），打开 dq 解耦 */
-void Sup_SwitchStartupSpin(void)
+void Sup_SwitchOpenLoopSpin(void)
 {
     IRQ_LOCK();
     Sup_Log(SUP_EV_HANDOVER, 0);
     Spin_OnEnter();
     gSup.runState = RunState_Spin;
     /* 先切换状态再请求解耦：保证快环在 Spin 的第一拍转移前馈量。若顺序相反，
-     * 请求可能在仍为 Startup 的一拍中执行，转移的前馈量可能丢失。 */
+     * 请求可能在仍为 OpenLoop 的一拍中执行，转移的前馈量可能丢失。 */
     FocCore_SetDecouple(1);
     IRQ_UNLOCK();
 }
 
-/* Spin -> Startup（回退：闭环转速低于 OPENLOOP_FALLBACK_RPM，或正反转需过零）：
+/* Spin -> OpenLoop（回退：闭环转速低于 OPENLOOP_FALLBACK_RPM，或正反转需过零）：
  * 准备 I/F 入口（开环角延续 PLL 角、开环电流从当前 iq 延续、判断是否反转），临界区内关闭解耦、切换状态 */
-void Sup_SwitchSpinStartup(void)
+void Sup_SwitchSpinOpenLoop(void)
 {
     OpenLoopEntry_TypeDef e;
     /* 准备：输入均为慢环写入的量（iq 指令、滤波转速）或变化很慢的量（PLL 转速符号），可在临界区外读取 */
-    Startup_PrepareOpenLoopWarm(gFoc.idqRef.s16Q, Startup_OpenLoopReversal(gEst.pll.s32Speed), Startup_OpenLoopReversal(gMeas.speed), gMeas.speed, &e);
+    OpenLoop_PrepareWarm(gFoc.idqRef.s16Q, OpenLoop_Reversal(gEst.pll.s32Speed), OpenLoop_Reversal(gMeas.speed), gMeas.speed, &e);
     {
         IRQ_LOCK();
         IdRef_Reset();         /* 回到起动模式：id = 0 */
         FocCore_SetDecouple(0);
         SpeedCtrl_BlendStop();
-        Startup_CommitOpenLoop(&e);           /* I/F：开环角 = 此刻的 PLL 角 + 预先计算的偏移 */
-        gSup.runState = RunState_Startup;
+        OpenLoop_Commit(&e);           /* I/F：开环角 = 此刻的 PLL 角 + 预先计算的偏移 */
+        gSup.runState = RunState_OpenLoop;
         SpeedCtrl_PresetRamp(gMeas.speed);
-        SpeedCtrl_UseStartupRamp();
+        SpeedCtrl_UseOpenLoopRamp();
         IRQ_UNLOCK();
     }
 }
@@ -553,9 +553,9 @@ void Sup_SwitchSpinStartup(void)
  *   硬件过流（事件型）：EPWM 刹车中断只置锁存（gHal.ocLatch），这里取走。若中断直接写故障位，
  *   PWM 已被中断关掉而状态机不知道；
  *   两类都并入 gSup.fault（Run 中据此切到 Fault），并累计到 faultRecord。缺相、超速等事件型故障由各子状态在慢环中报（Sup_RaiseFault） */
-RAMFUNC static void M1_FaultDetection(void)
+RAMFUNC static void faultDetect(void)
 {
-    mcdef_fault_t a = 0;
+    FaultBits_t a = 0;
     if (gFluxDiag.cfgFailCount) MC_FAULT_SET(a, MC_FAULT_CFG);      /* 配置检查未通过：持续报故障，电机不起动（cfg_check.h） */
     {
         uint8_t b = gProt.busFlags;

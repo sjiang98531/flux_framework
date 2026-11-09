@@ -18,14 +18,14 @@
 typedef struct {
     int16_t           theta;        /* Park 用的电角度（Q15 角度，65536 = 一圈） */
     int16_t           thetaInv;     /* 反 Park 用的电角度（含延时补偿） */
-    sAngle_Trig       ang, angInv;  /* 上面两个角的 cos/sin */
-    MCFLIB_2_DQ_T_S16 idq;          /* dq 电流实测 Q15 */
-    MCFLIB_2_DQ_T_S16 idqRef;       /* dq 电流指令 Q15（由速度环、MTPA/弱磁、起动模块写入） */
-    MCFLIB_2_DQ_T_S16 vdq;          /* dq 电压（电流 PI + 前馈输出），Q15（UDC_MAX 基准） */
-    MCFLIB_2_ALBE_T_S16 vab;        /* αβ 电压 */
-    MCFLIB_2_ALBE_T_S16 vabMod;     /* 母线归一化后送调制器的 αβ 电压（32768 = Vbus/√3） */
+    SinCos_TypeDef       ang, angInv;  /* 上面两个角的 cos/sin */
+    Dq_TypeDef idq;          /* dq 电流实测 Q15 */
+    Dq_TypeDef idqRef;       /* dq 电流指令 Q15（由速度环、MTPA/弱磁、起动模块写入） */
+    Dq_TypeDef vdq;          /* dq 电压（电流 PI + 前馈输出），Q15（UDC_MAX 基准） */
+    AlphaBeta_TypeDef vab;        /* αβ 电压 */
+    AlphaBeta_TypeDef vabMod;     /* 母线归一化后送调制器的 αβ 电压（32768 = Vbus/√3） */
     int16_t           vmax;         /* 电压圆半径 = MAX_DUTY * VbusAvg * 2/3 */
-    tPIParm           piD, piQ;     /* d / q 电流 PI */
+    PI_TypeDef           piD, piQ;     /* d / q 电流 PI */
 } FocCore_TypeDef;
 
 extern FocCore_TypeDef gFoc;
@@ -63,12 +63,12 @@ void FocCore_PresetPIForSpeed(int16_t spdQ15);
 void FocCore_SetIdqRef(int16_t d, int16_t q);
 /* 控制坐标系切换为落后 d 角度的新坐标系（新角 = 旧角 - d，a = sin/cos(d)）时，将电流 PI 积分器（电压）同步旋转，
  * 保持电压矢量在空间中不变。调用方需关中断。 */
-void FocCore_RotatePI(sAngle_Trig a);
+void FocCore_RotatePI(SinCos_TypeDef a);
 
 /* 母线归一化：将以 UDC_MAX 为基准的 αβ 电压换算为调制器单位（32768 = Vbus/√3），
  * kvbus = gMeas.kvbus（由 Meas_SlowFilter 计算）：
  *   out = (in * kvbus >> 15) << 5     母线电压波动时自动补偿占空比 */
-FORCE_INLINE void FocCore_BusNormalize(const MCFLIB_2_ALBE_T_S16 *in, int16_t kvbus, MCFLIB_2_ALBE_T_S16 *out)
+FORCE_INLINE void FocCore_BusNormalize(const AlphaBeta_TypeDef *in, int16_t kvbus, AlphaBeta_TypeDef *out)
 {
     out->s16Alpha = (int16_t)(QMath_MulQ15(in->s16Alpha, kvbus) << 5);
     out->s16Beta  = (int16_t)(QMath_MulQ15(in->s16Beta,  kvbus) << 5);

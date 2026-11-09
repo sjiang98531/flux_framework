@@ -31,7 +31,7 @@ static int32_t s_syncSum, s_syncN;              /* 当前块的 PLL 转速累加
 
 static int32_t s_fbLim;                 /* Spin -> I/F 回退前 |id| 的上限（Q15），按电流变化率降到 0；-1 = 未在回退，见 fallbackBlend */
 static int8_t s_spinDir;              /* 进入 Spin 时的指令方向；之后指令反向（需要反转）时清 0 */
-static uint16_t s_u16SpinCheckTime;     /* Spin 中 spinTooSlow 的轮询分频（SPIN_CHECK_TICKS） */
+static uint16_t s_spinCheckTicks;     /* Spin 中 spinTooSlow 的轮询分频（SPIN_CHECK_TICKS） */
 
 /* 符号：+1 / 0 / -1 */
 static int8_t sign16(int16_t x)
@@ -63,7 +63,7 @@ static void spinBeginChecks(void)
 {
     spinEntered();
     Protect_PhaseReset();
-    s_u16SpinCheckTime = 0;
+    s_spinCheckTicks = 0;
 }
 
 /* 停机复位：清除零电流跟踪标志 */
@@ -78,13 +78,13 @@ uint8_t Spin_Tracking(void)
     return s_track;
 }
 
-/* 从 I/F 切入 Spin 时（Sup_SwitchStartupSpin）：记录方向，缺相统计与失速检查重新开始 */
+/* 从 I/F 切入 Spin 时（Sup_SwitchOpenLoopSpin）：记录方向，缺相统计与失速检查重新开始 */
 void Spin_OnEnter(void)
 {
     spinBeginChecks();
 }
 
-/* 飞车直接接入 Spin 时（Sup_SwitchCalibSpin，快环中）：进入零电流跟踪，速度环由零电流跟踪的慢环跟随转速 */
+/* 飞车直接接入 Spin 时（Sup_SwitchFlyCheckSpin，快环中）：进入零电流跟踪，速度环由零电流跟踪的慢环跟随转速 */
 void Spin_OnEnterCatch(void)
 {
     spinBeginChecks();
@@ -203,7 +203,7 @@ static void spinLostLockStop(void)
  * 直接切换会使 d 轴电流阶跃。分两段消除阶跃：
  *  1. 判定需回退后先留在 Spin，将 |id| 上限按电流变化率 CURRENT_SLEW_A_S 降到 0（撤除回馈制动 id，电流只减不增，
  *     观测器不受影响；若在闭环中直接渐变到 I/F 的 d 分量，低速大 id 下电阻误差可能导致观测器失锁）；
- *  2. 进入 I/F 时开环电流从 |iq| / sin(OPENLOOP_WARM_DELTA_DEG) 起、按同一变化率升到目标（Startup_PrepareOpenLoop），
+ *  2. 进入 I/F 时开环电流从 |iq| / sin(OPENLOOP_WARM_DELTA_DEG) 起、按同一变化率升到目标（OpenLoop_Prepare），
  *     切换时刻 d 轴仅增加 |iq|。
  * 两段均使用 CURRENT_SLEW_A_S（= 软停机 = S 形斜坡的最大转矩变化率）。
  * 条件中途不再成立（指令改回）时停止。 */
@@ -212,7 +212,7 @@ static uint8_t fallbackBlend(void)
 {
     int32_t d = gSpd.idqCmd.s16D;
     if (s_fbLim < 0) {
-        if (!Startup_OpenLoopWantsFallback()) return 0;
+        if (!OpenLoop_WantsFallback()) return 0;
         s_fbLim = abs(d);
     } else if (cmdSameDir() && abs(gSpd.cmd) >= OPENLOOP_SPIN_MIN_Q15) {
         /* 开始融合后只依据指令：转速在回退门限附近含噪声，若按转速判断会反复清零、融合无法完成，
@@ -245,10 +245,10 @@ void Spin_Slow(void)
     if (spinLostLock()) { spinLostLockStop(); return; }
     if (fbReady) {
         Sup_Log(SUP_EV_FALLBACK, SUP_FB_OPENLOOP);
-        Sup_SwitchSpinStartup();
+        Sup_SwitchSpinOpenLoop();
     } else if (!cmdOppositeDir()) {    /* 同向，或估计转速恰为 0（指令此处不为 0）：0 也按"转不动"判失锁 */
-        if (++s_u16SpinCheckTime >= SPIN_CHECK_TICKS) {
-            s_u16SpinCheckTime = 0;
+        if (++s_spinCheckTicks >= SPIN_CHECK_TICKS) {
+            s_spinCheckTicks = 0;
             if (spinTooSlow()) {
                 /* Spin 只在 >= 切换转速的区间运行，同向降到 SPIN_LOST_RPM 以下不属于正常减速（正常减速在
                  * OPENLOOP_FALLBACK_RPM 已交给 I/F），判为失锁或堵转：PLL 不可信，同样停机重新检测 */
@@ -261,7 +261,7 @@ void Spin_Slow(void)
          * 转速已很低时才会进入此分支），立即交给 I/F */
         if (abs(gMeas.speed) < OPENLOOP_SPIN_MIN_Q15) {
             Sup_Log(SUP_EV_FALLBACK, SUP_FB_REVERSE);
-            Sup_SwitchSpinStartup();
+            Sup_SwitchSpinOpenLoop();
         }
     }
 

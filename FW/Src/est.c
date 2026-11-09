@@ -36,7 +36,7 @@ RAMFUNC void Est_SpinTick(void)
     Meas_SpeedSource((int16_t)(gEst.pll.s32Speed >> 16));
 }
 
-void Est_OnEnterStartupCold(void)
+void Est_OnEnterOpenLoopCold(void)
 {
     /* 冷起动（定位 / IPD -> I/F）：此前的飞车检测也使用同一个 gEst.pll，其残留速度不能带入新的估计。
      * PLL 角 = 起动角（第一拍 PLL 误差为 0），转速与积分器清零；观测器复位并将磁链初始化为 |psi_f|∠theta。
@@ -44,7 +44,7 @@ void Est_OnEnterStartupCold(void)
     gEst.pll.s32Theta = gFoc.theta << 16;
     gEst.pll.s32Speed = 0; gEst.pll.s32I_1 = 0;
     Meas_SpeedReset();
-    FluxObs_BeginStartup();
+    FluxObs_BeginOpenLoop();
 }
 
 /* 停机复位：PLL 转速与积分器清零（角度保留，下次起动时重新设置） */
