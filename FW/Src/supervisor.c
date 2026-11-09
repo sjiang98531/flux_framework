@@ -287,16 +287,17 @@ RAMFUNC static void M1_Run_Fast(void)
     if (gSup.fault) M1_SwitchRunFault();
 }
 
-/* Fault 慢环：照常滤波（母线电压等须始终有效）；故障连续消失 FAULTRELEASE_TIME 后回到 Stop。
- * 只计连续无故障的时间：故障出现即清零 */
+/* Fault 慢环：照常滤波（母线电压等须始终有效）；电平型故障连续消失 FAULTRELEASE_TIME 后清除本次故障位、回到 Stop。
+ * 只计连续无电平型故障的时间：出现即清零。事件型故障（已关 PWM）不阻止释放 */
 static void M1_Fault_Slow(void)
 {
     static uint16_t s_releaseTicks;
 
     Meas_SlowFilter();
-    if (gSup.fault) {
+    if (gSup.faultActive) {
         s_releaseTicks = 0;
     } else if (++s_releaseTicks > gSup.faultReleaseTicks) {
+        gSup.fault = 0;
         gSup.mainState = MainState_Stop;
         s_releaseTicks = 0;
     }
@@ -547,23 +548,22 @@ void Sup_SwitchSpinStartup(void)
 /* ===========================================================================
  * 保护
  * =========================================================================*/
-/* 每拍（快环）汇总故障位：先清除，再按当前情况重新置位（故障消失后 gSup.fault 自动为 0，faultRecord 保留历史）。
- * 来源：硬件过流（EPWM 刹车中断置位的锁存）、配置检查失败、母线过压 / 欠压。缺相、超速等由 Spin 在慢环中报告 */
+/* 每拍（快环）故障检测：
+ *   电平型（配置检查失败；母线过压 / 欠压，由 protect.c 慢环判定，越限持续 DCBUS_FILT_S 后已关 PWM）重算到 gSup.faultActive；
+ *   硬件过流（事件型）：EPWM 刹车中断只置锁存（gHal.ocLatch），这里取走。若中断直接写故障位，
+ *   PWM 已被中断关掉而状态机不知道；
+ *   两类都并入 gSup.fault（Run 中据此切到 Fault），并累计到 faultRecord。缺相、超速等事件型故障由各子状态在慢环中报（Sup_RaiseFault） */
 RAMFUNC static void M1_FaultDetection(void)
 {
-    MC_FAULT_CLEAR_ALL(gSup.fault);
-    /* 硬件过流：中断中只置锁存，在此转换为故障位。若由中断直接写故障位，会被上一行的清除操作覆盖，
-     * 导致 PWM 已被中断关闭而状态机仍认为在运行。 */
-    if (HAL_TakeOcLatch()) MC_FAULT_SET(gSup.fault, MC_FAULT_I_DCBUS_OVER);
-
-    /* 配置检查未通过：持续报故障，电机不起动（cfg_check.h） */
-    if (gFluxDiag.cfgFailCount) MC_FAULT_SET(gSup.fault, MC_FAULT_CFG);
-
-    {   /* 母线过压 / 欠压（由 protect.c 慢环判定，越限持续 DCBUS_FILT_S 后已关闭 PWM） */
+    mcdef_fault_t a = 0;
+    if (gFluxDiag.cfgFailCount) MC_FAULT_SET(a, MC_FAULT_CFG);      /* 配置检查未通过：持续报故障，电机不起动（cfg_check.h） */
+    {
         uint8_t b = gProt.busFlags;
-        if (b & PROTECT_BUS_OV) MC_FAULT_SET(gSup.fault, MC_FAULT_U_DCBUS_OVER);
-        if (b & PROTECT_BUS_UV) MC_FAULT_SET(gSup.fault, MC_FAULT_U_DCBUS_UNDER);
+        if (b & PROTECT_BUS_OV) MC_FAULT_SET(a, MC_FAULT_U_DCBUS_OVER);
+        if (b & PROTECT_BUS_UV) MC_FAULT_SET(a, MC_FAULT_U_DCBUS_UNDER);
     }
-
+    gSup.faultActive = a;
+    gSup.fault |= a;
+    if (HAL_TakeOcLatch()) MC_FAULT_SET(gSup.fault, MC_FAULT_I_DCBUS_OVER);
     gSup.faultRecord |= gSup.fault;
 }

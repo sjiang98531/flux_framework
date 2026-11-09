@@ -32,6 +32,11 @@ typedef enum _m1_run_substate_t {
     RunState_Spin       = 4,    /* 闭环（spin.c），含零电流跟踪 */
 } m1_run_substate_t;
 
+/* 故障位（bit n = MC_FAULT_x）分两类：
+ *   电平型：条件存在期间一直成立——配置检查失败（CFG）、母线过压 / 欠压。每快环拍重算到 gSup.faultActive。
+ *   事件型：发生一次即报——硬件过流、堵转、缺相、超速、飞车超时。由 Sup_RaiseFault（或过流锁存）置入 gSup.fault。
+ * gSup.fault = 本次 Fault 的故障位：进入 Fault 时两类都锁存，Fault 中电平型全部消失 FAULTRELEASE_TIME 后清零、回到 Stop
+ * （之后由 Stop 按连续重启计数决定是否自动起动）。faultRecord 累计上电以来出现过的全部故障位。 */
 #define MC_FAULT_I_DCBUS_OVER   1   /* 硬件过流 */
 #define MC_FAULT_U_DCBUS_UNDER  2   /* 欠压 */
 #define MC_FAULT_U_DCBUS_OVER   3   /* 过压 */
@@ -41,9 +46,8 @@ typedef enum _m1_run_substate_t {
 #define MC_FAULT_FLY_TIMEOUT    7   /* 飞车检测：短接制动超过 FLY_BRAKE_TIMEOUT_S 仍未停止 */
 #define MC_FAULT_CFG            8   /* 配置检查未通过（cfg_check_list.h，行号见 gFluxDiag.cfgFailLine），不起动 */
 
-/* 故障位操作：置位、全部清除 */
+/* 置故障位 */
 #define MC_FAULT_SET(faults, faultid)   (faults |= ((mcdef_fault_t)1 << faultid))
-#define MC_FAULT_CLEAR_ALL(faults)      (faults = 0)
 
 /* 连续重启（Sup_CountRestart）：计数达到 SUP_RESTART_LIMIT 后 Stop 不再自动起动，指令归零时清零；计数本身封顶 SUP_RESTART_COUNT_MAX */
 #define SUP_RESTART_LIMIT       5
@@ -54,8 +58,9 @@ typedef struct {
     m1_app_mainstate_t mainState;       /* 主状态 */
     m1_run_substate_t  runState;        /* Run 子状态 */
     volatile int16_t   speedCmd;        /* 转速指令 Q15 = rpm * 32768 / SPEED_MAX，由调试器或通信接口写入 */
-    int16_t            fault;           /* 当前故障位（bit n = MC_FAULT_x） */
-    int16_t            faultRecord;     /* 上电以来出现过的故障位 */
+    mcdef_fault_t      fault;           /* 本次 Fault 的故障位（进入 Fault 时锁存，回到 Stop 时清零） */
+    mcdef_fault_t      faultActive;     /* 当前存在的电平型故障（每快环拍重算） */
+    mcdef_fault_t      faultRecord;     /* 上电以来出现过的故障位 */
     uint8_t            faultRestarts;   /* 连续故障 / 起动失败次数；>= 5 时不再自动重启，指令归零后清除 */
     uint16_t           faultReleaseTicks;   /* 故障后自动恢复的等待时间（慢环拍） */
     uint32_t           ms;              /* 上电后的毫秒数（慢环拍），用于事件记录 */
