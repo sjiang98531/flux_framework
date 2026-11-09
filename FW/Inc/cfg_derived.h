@@ -230,8 +230,12 @@
 /* sqrt(K*J) 要开方，在 Startup_Init 里算一次：gain_q8 = ALIGN_C1 * sqrt(K*J) */
 #define ALIGN_C1             (2 * ALIGN_ZETA / (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * MOTOR_PSI_F_WB) \
                                  * UDC_MAX / I_MAX * 256.0)
-/* 定位摆周期的平方 T^2 = 4*pi^2*J/K（s^2）。开方在 Startup_Init 里做一次，得到各段的慢环拍数 */
+/* 定位摆周期的平方 T^2 = 4*pi^2*J/K（s^2），用于配置检查（慢环频率须远高于摆动频率） */
 #define ALIGN_T2_S2          (4.0 * MATH_PI * MATH_PI * ALIGN_J / ALIGN_K_NM)
+/* 定位各段时长（慢环拍） */
+#define ALIGN_MIN_TICKS      ((uint16_t)(ALIGN_MIN_S * SLOWLOOP_FREQ + 0.5))
+#define ALIGN_MAX_TICKS      ((uint16_t)(ALIGN_MAX_S * SLOWLOOP_FREQ + 0.5))
+#define ALIGN_STILL_TICKS    ((uint16_t)(ALIGN_STILL_S * SLOWLOOP_FREQ + 0.5))
 /* "静止"门限：反电势 p*psi_f*w_m（Q15 电压） */
 #define ALIGN_STILL_EMF_Q15_OF(psi) ((int32_t)(ALIGN_STILL_RPM * 2 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS * (psi) / UDC_MAX * 32768.0 + 0.5))
 #define ALIGN_STILL_EMF_Q15  ALIGN_STILL_EMF_Q15_OF(MOTOR_PSI_F_WB)

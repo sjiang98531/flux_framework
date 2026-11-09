@@ -40,7 +40,6 @@ static int32_t s_olCur, s_olCurTarget;      /* 开环电流当前值 / 目标值
 static volatile int32_t s_accStep = OPENLOOP_ACC_STEP_Q31;   /* 快环读 */
 static int32_t s_accStepFull;                         /* 开环电流达到目标后的加速度步长 */
 static int32_t s_dampQ8;                   /* 定位阻尼增益：Q15 电流 / Q15 电压，Q8 */
-static uint16_t s_alignMinTicks, s_alignMaxTicks, s_alignStillTicks;     /* 定位各段时长（慢环拍）= 摆周期 T 的倍数 */
 static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
 static volatile uint8_t s_ipd;             /* 1 = Align 子状态正在执行 IPD（慢环写，快环读） */
@@ -275,12 +274,6 @@ void Startup_Init(void)
     s_dampQ8 = (int32_t)(ALIGN_C1 * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM * ALIGN_J * 1099511627776.0)) / 1048576.0);
     Startup_PrepareOpenLoop(1, 0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
     Startup_PrepareOpenLoop(1, 0, 1, 1, 0, &s_catchIf[1]);
-    {   /* 定位摆周期 T（慢环拍，Q8）= sqrt(T^2 * f^2 * 2^16) */
-        double tq8 = (double)QMath_Isqrt64((uint64_t)(ALIGN_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ * 65536.0));
-        s_alignMinTicks   = (uint16_t)(ALIGN_MIN_T * tq8 / 256.0 + 0.5);
-        s_alignMaxTicks   = (uint16_t)(ALIGN_MAX_T * tq8 / 256.0 + 0.5);
-        s_alignStillTicks = (uint16_t)(ALIGN_STILL_T * tq8 / 256.0 + 0.5);
-    }
 }
 
 /* 停机复位：预充计数清零 */
@@ -406,8 +399,8 @@ void Startup_AlignSlow(void)
     {   /* 0° 定位，满足最短时间后等待停稳 */
         int32_t e = s_emfFilt >> ALIGN_EMF_FILT_SH;
         if (e < 0) e = -e;
-        if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
-        if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
+        if (s_alignTicks > ALIGN_MIN_TICKS && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
+        if ((s_alignTicks >= ALIGN_MIN_TICKS && s_still >= ALIGN_STILL_TICKS) || s_alignTicks >= ALIGN_MAX_TICKS) {
             gOpenLoopDiag.alignTime = s_alignTicks;
             if (IDENT_TEST && !gIdentCfg.run) Ident_Begin();  /* 参数辨识：不切入 I/F，从此开始测量 */
             else Sup_SwitchAlignStartup();  /* 观测器初始化为 |psi_f|∠0 */
