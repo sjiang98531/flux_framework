@@ -21,6 +21,14 @@
 | `FW/Inc/cfg_board.h` | 驱动板参数：时钟、PWM 频率、采样电阻 / 运放增益、母线、死区、转向，以及诊断 / 测试开关 |
 | `FW/Inc/cfg_ctrl.h` | 控制规格：带宽、阻尼、时间常数、斜坡、各类门限（文件头有完整的换电机检查清单） |
 
+各增益按带宽、阻尼、时间常数由电机参数自动换算；以下参数直接以物理值给出，**更换电机时须按 `cfg_ctrl.h` 文件头的检查清单重新确定**：
+
+- 转速门限（`*_RPM`，如切闭环、回退、飞车接管、失锁、零电流跟踪结束、启停门限）：与观测器有关的门限按
+  "反电势占额定母线的比例"估算，n = k · UDC_RATE · 60 / (2π · 极对数 · psi_f)，各门限的 k 写在注释中（见 `cfg_ctrl.h`"转速门限"一节）；
+- 电流上限（`SPD_PI_LIMIT`、`IBUS_LIMIT_A`、`WEAKEN_ID_MIN_A`）：按电机热极限、退磁电流与电源能力确定；
+- 定位时间（`ALIGN_MIN_S` / `ALIGN_STILL_S` / `ALIGN_MAX_S`）：按定位摆周期 T 的 1.6 / 0.2 / 4 倍选取；
+- 观测器最低母线 `FLUX_BUS_MIN_V`。
+
 `FW/Inc/cfg_derived.h` 由以上三个文件自动推导全部定点增益，无需修改；`FW/Inc/cfg_check_list.h` 在编译期 / 上电时检查配置，
 任一项不满足时 `gFluxDiag.cfgFailLine` 给出行号，电机不起动。
 
@@ -52,4 +60,11 @@ IPD 对比度的测量，结果在 `gIdent`，并自动在本次上电期间生�
 
 ## 运行
 
-调试器中写 `gSup.speedCmd`（Q15，`rpm * 32768 / SPEED_MAX`）即可起停与调速；固件版本见 `gFluxDiag.buildTag`。
+调试器中写 `gSup.speedCmd`（Q15，`rpm * 32768 / SPEED_MAX`）即可起停与调速：|指令| 超过 `STOP_TO_RUN_SPEED`（15 rpm）起动，
+低于 `RUN_TO_STOP_SPEED`（12 rpm）软停机。
+
+## 版本
+
+固件版本见 `gFluxDiag.buildTag`（`FW/Inc/cfg_derived.h` 的 `BUILD_TAG`），当前为 `0xF20E0054`。
+本仓库为发布版，与开发仓库 flux_framework 的同号版本控制逻辑一致（发布版不含性能测试工具与诊断计时）。
+各次修改见 git 提交记录。
