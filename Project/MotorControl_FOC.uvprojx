@@ -446,6 +446,11 @@
               <FilePath>..\FW\Src\startup.c</FilePath>
             </File>
             <File>
+              <FileName>openloop.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\FW\Src\openloop.c</FilePath>
+            </File>
+            <File>
               <FileName>spin.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\spin.c</FilePath>

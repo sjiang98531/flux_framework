@@ -29,6 +29,7 @@
 #include "flux_pll.h"
 #include "est.h"
 #include "startup.h"
+#include "openloop.h"
 #include "speed_ctrl.h"
 #include "diag.h"
 #include "id_ref.h"
@@ -120,6 +121,7 @@ void Ctrl_Init(void)
     SpeedCtrl_Init();
     initProtection();
     Startup_Init();
+    OpenLoop_Init();
     FlyStart_Init();
     FocCore_Init();
     FluxPLL_Init(&gEst.pll);

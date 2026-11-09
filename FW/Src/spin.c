@@ -12,6 +12,7 @@
 #include "foc_core.h"
 #include "est.h"
 #include "startup.h"
+#include "openloop.h"
 #include "speed_ctrl.h"
 #include "id_ref.h"
 #include "meas.h"
