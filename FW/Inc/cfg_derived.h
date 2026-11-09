@@ -17,7 +17,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E0053UL
+#define BUILD_TAG            0xF20E0054UL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -120,7 +120,6 @@
 #define W_EMAX_RAD_S            (2 * MATH_PI * SPEED_MAX / 60.0 * POLEPAIRS)
 /* vq_ff = w*psi_f：Q15 速度 -> Q15 电压 */
 #define DECOUPLE_K_EMF_Q15_OF(psi)   Q15(W_EMAX_RAD_S * (psi) / UDC_MAX)
-#define DECOUPLE_K_EMF_Q15           DECOUPLE_K_EMF_Q15_OF(MOTOR_PSI_F_WB)
 /* w*L*i：(Q15 速度 * Q15 电流 >> 15) * K >> 12 -> Q15 电压；K 可能 > 1，用 Q12 */
 #define DECOUPLE_K_L_Q12_OF(L)       ((int32_t)(W_EMAX_RAD_S * (L) * I_MAX / UDC_MAX * 4096.0))
 #define DECOUPLE_K_LQ_Q12            DECOUPLE_K_L_Q12_OF(MOTOR_LQ_H)
@@ -152,12 +151,9 @@
 #define FLUX_NOMINAL_Q15_OF(psi) Q15((psi) / FLUX_PSI_N)
 #define FLUX_NOMINAL_Q15        FLUX_NOMINAL_Q15_OF(MOTOR_PSI_F_WB)
 #define FLUX_KRS_Q15_OF(R)      Q15((R) * I_MAX / FLUX_V_BASE)
-#define FLUX_KRS_Q15            FLUX_KRS_Q15_OF(MOTOR_RS_OHM)
 /* 电流环电压单位（UDC_MAX 基准）下的 Rs：Q15 电流 -> Q15 电压（定位阻尼从 q 轴电压里扣电阻压降用） */
 #define FOC_KRS_Q15_OF(R)       Q15((R) * I_MAX / UDC_MAX)
-#define FOC_KRS_Q15             FOC_KRS_Q15_OF(MOTOR_RS_OHM)
 #define FLUX_KL_Q15_OF(L)       Q15((L) * I_MAX / FLUX_PSI_N)
-#define FLUX_KLQ_Q15            FLUX_KL_Q15_OF(MOTOR_LQ_H)
 /* IPD（cfg_ctrl.h）：对比度门限 Q8 */
 #define IPD_MIN_RATIO_Q8        ((uint16_t)(IPD_MIN_RATIO * 256.0 + 0.5))
 /* IPD 脉冲：时间换成 PWM 拍，电压由目标电流和 d 轴电感算（cfg_ctrl.h 的说明） */
@@ -169,20 +165,14 @@
 /* 逆变器电压误差（cfg_board.h）：每相误差 = bus * KT * clamp(i * K_I / 256, ±32767) / 32768 / 32768
  *   KT  = INVERTER_DT_EFF_S * PWM_FREQ（Q15，母线的比例），K_I = 32768 / I0_Q15（Q8） */
 #define FLUX_DT_KT_Q15_OF(td)   (INVERTER_DT_COMP ? Q15((td) * PWM_FREQ) : 0)
-#define FLUX_DT_KT_Q15          FLUX_DT_KT_Q15_OF(INVERTER_DT_EFF_S)
 #define FLUX_DT_KI_Q8           ((int32_t)(INVERTER_DT_COMP ? 256.0 * I_MAX / INVERTER_DT_I0_A + 0.5 : 0))
 /* 电感饱和（cfg_motor.h）：拐点（Q15 电流）、斜率（Q12，每 Q15 满量程电流）、下限（Q15） */
 #define FLUX_LS_KNEE_Q15_OF(k)  Q15((k) / I_MAX)
 #define FLUX_LS_SAT_K_Q12_OF(p) ((int32_t)((p) * I_MAX * 4096.0 + 0.5))
-#define FLUX_LS_KNEE_Q15        FLUX_LS_KNEE_Q15_OF(MOTOR_LS_SAT_KNEE_A)
-#define FLUX_LS_SAT_K_Q12       FLUX_LS_SAT_K_Q12_OF(MOTOR_LS_SAT_PER_A)
 #define FLUX_LS_MIN_Q15         Q15(MOTOR_LS_SAT_MIN)
 #define FLUX_KTS_Q15            Q15(2.0f * 3.14159265f * FLUX_WN_HZ / PWM_FREQ)
 /* (Ld - Lq) 在"Q15 电流 -> Q15 磁链"单位下，有符号 Q15 */
 #define FLUX_KDL_Q15_OF(ld, lq) Q15(((ld) - (lq)) * I_MAX / FLUX_PSI_N)
-#if MOTOR_IPM
-#define FLUX_KDL_Q15            FLUX_KDL_Q15_OF(MOTOR_LD_H, MOTOR_LQ_H)
-#endif
 
 /* ---- MTPA / 弱磁 ---------------------------------------------------------- */
 #if MOTOR_IPM
@@ -250,12 +240,10 @@
 #define OPENLOOP_FALLBACK_Q31         ((int32_t)(OPENLOOP_FALLBACK_RPM / SPEED_MAX * 2147483648.0))
 /* I/F 加速度对应的加速电流（模型：MOTOR_ACC_RPM_S_PER_A），切换时作为加速前馈的起点 */
 #define OPENLOOP_ACC_FF_IQ_OF(acc)    Q15((OPENLOOP_ACC_RPM_S / (acc)) / I_MAX)
-#define OPENLOOP_ACC_FF_IQ            OPENLOOP_ACC_FF_IQ_OF(MOTOR_ACC_RPM_S_PER_A)
 
 /* ---- 飞车检测（flystart.c） ---- */
 #define FLY_BLOCK_TICKS         (PWM_FREQ / 1000)           /* 每块 1 ms */
 #define FLY_SETTLE_BLOCKS_OF(L, R) ((uint16_t)(FLY_SETTLE_TAUS * (L) / (R) * 1000.0 + 0.5))
-#define FLY_SETTLE_S            (FLY_SETTLE_TAUS * MOTOR_LD_H / MOTOR_RS_OHM)
 #define FLY_SETTLE_BLOCKS       FLY_SETTLE_BLOCKS_OF(MOTOR_LD_H, MOTOR_RS_OHM)
 #define FLY_STILL_BLOCKS        ((uint16_t)(FLYBRAKE_TIME * 1000.0 + 0.5))
 /* 短接制动的转速衰减时间常数 τ = J / B（见 cfg_ctrl.h FLY_STILL_END_RPM）：

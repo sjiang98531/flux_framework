@@ -28,14 +28,6 @@
 
 IdentResult_TypeDef gIdent;
 
-/* 预留接口（在线辨识请求），当前无调用方，返回 IDENT_NOT_IMPLEMENTED */
-IdentState_TypeDef Ident_Request(void)
-{
-    /* 在线辨识需由 supervisor 增加 MainState_Ident 或 Run 子状态 RunState_Ident 并接管 PWM，当前未提供。 */
-    gIdent.state = IDENT_NOT_IMPLEMENTED;
-    return gIdent.state;
-}
-
 /* ===========================================================================
  * 参数辨识模式（IDENT_TEST），说明见 identify.h
  * =========================================================================*/

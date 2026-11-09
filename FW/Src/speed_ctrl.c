@@ -242,14 +242,6 @@ void SpeedCtrl_SpinSlow(void)
     }
 }
 
-/* 进入 Spin 时需从速度 PI 积分器预置值中扣除的加速前馈（避免加速电流被重复计入）。 */
-static int16_t accFFAtSpinEntry(void)
-{
-    /* I/F 起动：切换前开环匀速保持（转矩只承担负载）；飞车接管时电流约为 0。两种情况下均不含加速电流，
-     * 故不扣除前馈，否则进入 Spin 后需等待速度 PI 自行积分出加速电流 */
-    return 0;
-}
-
 /* 进入 Spin（I/F 切换、零电流跟踪转闭环、软停取消）：斜坡从当前实测转速、加速度 0 开始；
  * 速度 PI 积分器预置为当前 iq 指令（转矩连续，进入时无跳变） */
 void SpeedCtrl_OnEnterSpin(void)
@@ -262,7 +254,7 @@ void SpeedCtrl_OnEnterSpin(void)
     gSpd.idqCmd = gFoc.idqRef;          /* 从当前已发布的指令开始 */
     gSpd.speedRampSt.s32State      = gMeas.speed << 16;
     gSpd.rampAcc = 0;
-    gSpd.pi.qdSum               = ((int32_t)gFoc.idqRef.s16Q - accFFAtSpinEntry()) * 32768;
+    gSpd.pi.qdSum               = (int32_t)gFoc.idqRef.s16Q * 32768;
     gSpd.piPower.qdSum               = 0;          /* 母线电流限 PI 只向下限制，未限流时积分为 0 */
 }
 

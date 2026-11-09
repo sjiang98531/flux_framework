@@ -41,10 +41,8 @@ typedef enum _m1_run_substate_t {
 #define MC_FAULT_FLY_TIMEOUT    7   /* 飞车检测：短接制动超过 FLY_BRAKE_TIMEOUT_S 仍未停止 */
 #define MC_FAULT_CFG            8   /* 配置检查未通过（cfg_check_list.h，行号见 gFluxDiag.cfgFailLine），不起动 */
 
-/* 故障位操作：置位、清除、查询、全部清除 */
+/* 故障位操作：置位、全部清除 */
 #define MC_FAULT_SET(faults, faultid)   (faults |= ((mcdef_fault_t)1 << faultid))
-#define MC_FAULT_CLEAR(faults, faultid) (faults &= ~((mcdef_fault_t)1 << faultid))
-#define MC_FAULT_CHECK(faults, faultid) ((faults & ((mcdef_fault_t)1 << faultid)) >> faultid)
 #define MC_FAULT_CLEAR_ALL(faults)      (faults = 0)
 
 /* 状态机、速度指令、故障 */

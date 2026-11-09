@@ -12,7 +12,6 @@
  * ==========================================================================*/
 
 /* 0 < x < 1：能放进 Q15 且不饱和（Q15() 宏超量程只会悄悄饱和，不报错） */
-#define FWC_Q15(x)      ((x) > -0.99997 && (x) < 0.99997)
 #define FWC_POS_Q15(x)  ((x) > 0.0 && (x) < 0.99997)
 
 /* ---- 电机参数本身 -------------------------------------------------------- */
@@ -82,9 +81,8 @@ CFG_CHECK(FLUX_BUS_MIN_BELOW_RATED, FLUX_BUS_MIN_V > 0 && FLUX_BUS_MIN_V < UDC_R
 /* ---- FluxPLL（增益字段是 int16） ------------------------------------------ */
 /* PLL 增益放不进 int16：一般是 FLUX_NOMINAL_Q15 太小（先过 FLUX_NOMINAL_RESOLUTION）或 FLUXPLL_WN_HZ 太高 */
 CFG_CHECK(PLL_GAINS_FIT, FLUXPLL_KP_Q31_PER_ERR <= 32767 && FLUXPLL_KI_Q31_PER_ERR <= 32767)
-/* Ki 只有个位数时带宽量化误差达几十 %。PLL 结构中有增益移位字段（i16PGainSh/i16IGainSh），当前固定为 0；
- * SPEED_MAX 很高（数万 rpm）时可能不满足此项，需启用增益移位。 */
-/* PLL 增益分辨率不足（Kp < 64 或 Ki < 16）：FLUXPLL_WN_HZ 太低，或 SPEED_MAX 很高（需 PLL 增益移位） */
+/* Ki 只有个位数时带宽量化误差达几十 %；SPEED_MAX 很高（数万 rpm）时可能不满足此项，需为 PLL 增加增益移位。 */
+/* PLL 增益分辨率不足（Kp < 64 或 Ki < 16）：FLUXPLL_WN_HZ 太低，或 SPEED_MAX 很高 */
 CFG_CHECK(PLL_GAINS_RESOLUTION, FLUXPLL_KP_Q31_PER_ERR >= 64 && FLUXPLL_KI_Q31_PER_ERR >= 16)
 
 /* ---- dq 解耦前馈：(Q15*Q15>>15) * K 不能溢出 int32 ------------------------- */

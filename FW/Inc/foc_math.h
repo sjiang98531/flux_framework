@@ -4,7 +4,6 @@
  *
  *   FocMath_SinCos     查表正弦 / 余弦
  *   FocMath_SqrtQ15    查表开方
- *   FocMath_RampQ31    斜坡
  *   FocMath_ClarkeSat / FocMath_Park / FocMath_InvPark  坐标变换
  *
  * 查找表定义在 foc_tables.c（按公式生成）。数据类型见 qtypes.h。
@@ -48,16 +47,6 @@ FORCE_INLINE int16_t FocMath_SqrtQ15(int32_t x)
     if (x <= 0) return 0;
     if (x >= (1L << 30)) return g_focSqrtTab[512];
     return g_focSqrtTab[x >> 21];
-}
-
-/* 斜坡：state 以 RampUp / RampDown 的步长走向 target，不越过 target。返回新的 state。 */
-FORCE_INLINE int32_t FocMath_RampQ31(int32_t target, MLIB_RAMP_T_Q31 *p)
-{
-    int32_t st = p->s32State;
-    if (st < target)      { st += p->s32RampUp;   if (st > target) st = target; }
-    else if (st > target) { st -= p->s32RampDown; if (st < target) st = target; }
-    p->s32State = st;
-    return st;
 }
 
 /* Clarke：三相电流 -> 静止两相 αβ（α 沿 A 相）。双电阻采样，c = -a - b 已在 abc 中给出：

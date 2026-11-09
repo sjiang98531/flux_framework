@@ -15,7 +15,6 @@
 /* ---- 时钟与 PWM ---------------------------------------------------------- */
 #define SYSCLK_HSI_72MHz        72000000.0                 /* Hz */
 #define PWM_FREQ                16000                      /* Hz，快环频率 = PWM 频率 */
-#define PWM_PERIOD              ((uint16_t)(SYSCLK_HSI_72MHz / (2 * PWM_FREQ)))  /* EPWM 半周期计数 = 2250 */
 #define DEAD_TIME               (1200)                     /* ns（Hardware_config.h 据此计算死区寄存器） */
 /* 慢环频率（PendSV，快环每 PWM_FREQ/SLOWLOOP_FREQ 拍挂起一次）。必须整除 PWM_FREQ；
  * 下限由配置检查 SLOW_RATE_FITS、BUS_VDC_ABOVE_GRID 确定（本电机约 500 Hz）。 */
@@ -46,7 +45,6 @@
 #define INVERTER_DT_I0_A             0.23            /* A，误差线性过零的电流宽度 */
 #define INVERTER_DT_COMP             1               /* 1 = 在观测器中补偿 */
 #define UDC_MAX                 (475.0)                    /* V，母线采样满量程 = 电压 Q15 基准 */
-#define U_MAX                   (UDC_MAX / 1.732)          /* V */
 /* 母线电容（整流后电解电容 + 薄膜电容）。回馈减速的母线电压控制器（BUS_VDC_*）据此将电压误差换算为能量：
  * E = C * V^2 / 2。 */
 #define BOARD_CBUS_UF           (470.0)                    /* uF */

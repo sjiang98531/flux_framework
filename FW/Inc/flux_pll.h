@@ -11,7 +11,7 @@
  *   s32Speed  Q31 速度，0x80000000 = SPEED_MAX
  *   s32I_1    Q31 速度，积分器
  *   s16PGain / s16IGain  每 1 LSB 误差对应的 Q31 速度增量（比例 / 每拍积分）
- *   s16ThGain SPEED_TO_THETA；各 Sh 字段保留，固定为 0
+ *   s16ThGain SPEED_TO_THETA
  * ==========================================================================*/
 #ifndef FLUX_PLL_H
 #define FLUX_PLL_H

@@ -32,10 +32,7 @@ void FluxPLL_Init(PLL_TypeDef *p)
     /* 增益字段为 int16：超出范围时封顶（否则会回绕为负增益，导致 PLL 正反馈发散）。
      * 封顶时 gFluxDiag.cfgWarn bit2 置位（diag.c）。 */
     FluxPLL_LoadGains(p);
-    p->i16PGainSh  = 0;
-    p->i16IGainSh  = 0;
     p->s16ThGain   = (int16_t)SPEED_TO_THETA;
-    p->i16ThGainSh = 0;
     p->s32Theta    = 0;
     p->s32Speed    = 0;
     p->s32I_1      = 0;

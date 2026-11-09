@@ -21,8 +21,7 @@
 typedef enum {
     IDENT_IDLE = 0,
     IDENT_RUNNING,
-    IDENT_DONE,
-    IDENT_NOT_IMPLEMENTED
+    IDENT_DONE
 } IdentState_TypeDef;
 
 typedef struct {
@@ -52,10 +51,6 @@ typedef struct {
 
 extern IdentResult_TypeDef gIdent;
 
-/* 请求一次辨识（电机须处于 Stop 状态）。当前返回 IDENT_NOT_IMPLEMENTED。 */
-IdentState_TypeDef Ident_Request(void);
-
-
 /* ============================================================================
  * 参数辨识模式（IDENT_TEST，cfg_board.h；默认 0 = 整段在编译期去除）
  *
@@ -83,7 +78,6 @@ IdentState_TypeDef Ident_Request(void);
  * 结果见 gIdent（调试器查看）；IPD 原始数据见 gIpd.pk / perp。
  * ==========================================================================*/
 #define IDENT_DT_N      11
-#define IDENT_IPD_N     IPD_N
 
 typedef struct {
     int16_t  alignDeg;      /* 定位角（电角度，度），下一次起动生效。IPD 脉冲参数用 gIpdCfg（ipd.h） */
