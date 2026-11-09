@@ -18,12 +18,9 @@
 
 FocCore_TypeDef gFoc;
 
-/* 上电初始化：设置母线归一化系数初值（母线尚未滤波），装载电流环增益，清零积分器（输出限幅每拍按电压圆重设） */
+/* 上电初始化：装载电流环增益，清零积分器（输出限幅每拍按电压圆重设） */
 void FocCore_Init(void)
 {
-    /* 母线归一化系数初值（运行中 Meas_SlowFilter 按 VbusAvg 更新） */
-    gMeas.kvbus = Q15(0.866 * UDC_MAX / UDC_RATE / 4);
-
     /* d 轴电流环（用 Ld）、q 轴（用 Lq）：增益由 param.c 按当前参数计算（封顶 65535，见 gGain.cfgWarn） */
     FocCore_LoadGains();
     gFoc.piD.qOutMax = 0;               /* 每拍在 FocCore_CurrentLoop 中按 VMAX 重设 */

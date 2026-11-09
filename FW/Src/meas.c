@@ -8,13 +8,15 @@
 
 Meas_TypeDef gMeas;
 
-/* 上电：设置三个一阶低通的移位位数（由配置的时间常数换算），累加器清零 */
+/* 上电：设置三个一阶低通的移位位数（由配置的时间常数换算），累加器清零，设置母线归一化系数初值 */
 void Meas_Init(void)
 {
     /* 母线电压、母线电流、转速三个滤波器：窗口见 cfg_ctrl.h MEAS_*_FILT / SPEED_FB_FILT_HZ */
     gMeas.speedFilt.u16Sh = SPEED_FB_FILT_SH; gMeas.speedFilt.s32Acc = 0;
     gMeas.vbusFilt.u16Sh = MEAS_VBUS_FILT_SH;  gMeas.vbusFilt.s32Acc = 0;
     gMeas.ibusFilt.u16Sh = MEAS_IBUS_FILT_SH;  gMeas.ibusFilt.s32Acc = 0;
+    /* 母线归一化系数初值：按额定母线，与运行时公式相同（第一个慢环起按 vbusAvg 更新） */
+    gMeas.kvbus = (int16_t)(MEAS_KVBUS_NUM / Q15(UDC_RATE / UDC_MAX));
 }
 
 /* 将转速滤波器直接预置为稳态 w，避免从 0 缓慢上升。用于飞车接管、零电流跟踪转闭环 */

@@ -516,13 +516,15 @@ void Ident_Slow(void)
  *     dn/dt：转速对时间做二次拟合，取滑行起始时刻的斜率（该时刻负载转矩 = 滑行前的电磁转矩；风机类负载随转速变化，
  *     不能用窗口平均斜率）；accRpmSPerA = -(dn/dt) / iq（= Kt / J，即 cfg_motor.h MOTOR_ACC_RPM_S_PER_A 的定义）。
  *   iq 使用估计坐标系的值：角度误差 δ 只使其偏大 1/cos δ（10° 时仅 1.5%）。
- *   起始转速须 >= 1.25 倍 FLY_CATCH（滑行中降到 FLY_CATCH 以下时零电流跟踪会关闭 PWM）。
+ *   起始转速须 >= RUN_MIN_RPM：滑行 RUN_COAST_MS 期间转速须始终高于 TRACK_END_RPM（低于该值零电流跟踪会关闭 PWM）。
  *   同一转速指令只执行一次；修改指令并稳速后再执行一次（结果覆盖，runRpm / runIqA 记录工况）。
  * =========================================================================*/
 #define RUN_STABLE_MS   2000
 #define RUN_PRE_MS      500
 #define RUN_SKIP_MS     20
 #define RUN_COAST_MS    400     /* 滑行时长：越长加速度系数受 PLL 转速噪声影响越小 */
+/* 运行辨识的最低起始转速（经验值）：滑行 RUN_COAST_MS 的掉速须保持在 TRACK_END_RPM 以上，本电机取 315 rpm */
+#define RUN_MIN_RPM     315.0
 static uint8_t  s_rnSt;             /* 0 等待稳速，1 滑行前平均，2 滑行（保持跟踪），3 本指令已完成 */
 static uint16_t s_rnT;
 static int16_t  s_rnCmd;
@@ -545,7 +547,7 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
     if (cmd != s_rnCmd) { s_rnCmd = cmd; s_rnSt = 0; s_rnT = 0; }
     switch (s_rnSt) {
     case 0:
-        if (!tracking && ramp == cmd && abs(w) >= FLY_CATCH_Q15 + (FLY_CATCH_Q15 >> 2)) { if (++s_rnT >= RUN_STABLE_MS) { s_rnT = 0; s_rnIq = s_rnId = s_rnW = 0; s_rnSt = 1; } }
+        if (!tracking && ramp == cmd && abs(w) >= Q15(RUN_MIN_RPM / SPEED_MAX)) { if (++s_rnT >= RUN_STABLE_MS) { s_rnT = 0; s_rnIq = s_rnId = s_rnW = 0; s_rnSt = 1; } }
         else s_rnT = 0;
         break;
     case 1:

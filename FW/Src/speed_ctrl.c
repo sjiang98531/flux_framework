@@ -221,6 +221,12 @@ void SpeedCtrl_SpinSlow(void)
             int32_t reg = regenIqAllowed();
             if (gMeas.speed >= 0) s32IqMin = -reg; else s32IqMax = reg;
         }
+#if MTPA_FW_ACTIVE
+        /* 电流圆（id_ref.c）：iq 上限 = sqrt(Imax^2 - id^2)，id 取上一拍 IdRef_Slow 的结果（慢环 1 kHz，一拍滞后可忽略）。
+         * PI 输出限幅只在此处设定，积分器随之限幅，加速到电流圆边界时不会积分饱和 */
+        if (s32IqMax > gIdRef.iqLimit) s32IqMax = gIdRef.iqLimit;
+        if (s32IqMin < -gIdRef.iqLimit) s32IqMin = -gIdRef.iqLimit;
+#endif
         gSpd.pi.qOutMax = (int16_t)s32IqMax;          /* 速度 PI 积分器随之限幅，不累积 */
         gSpd.pi.qOutMin = (int16_t)s32IqMin;
 

@@ -12,13 +12,6 @@ IdRef_TypeDef gIdRef;
 
 #if MTPA_FW_ACTIVE
 
-/* 将电流圆给出的 iq 上限写入速度 PI 输出限幅（防积分饱和；母线电流限 PI 只向下限制，不修改其上限） */
-static void setIqLimit(int32_t lim)
-{
-    gSpd.pi.qOutMax = lim;
-    gSpd.pi.qOutMin = -lim;
-}
-
 /* 上电：清除 MTPA / 弱磁状态，iq 上限 = 速度环电流上限 */
 void IdRef_Init(void)
 {
@@ -30,12 +23,11 @@ void IdRef_Init(void)
     gIdRef.fwInteg = 0;
 }
 
-/* 停机 / 回退 I/F：id 归零，恢复 iq 上限，内嵌式观测器的磁链目标恢复为 psi_f */
+/* 停机 / 回退 I/F：id 归零，恢复 iq 上限（gIdRef.iqLimit），内嵌式观测器的磁链目标恢复为 psi_f */
 void IdRef_Reset(void)
 {
     IdRef_Init();
     gSpd.idqCmd.s16D = 0;
-    setIqLimit(gSpd.iqLimit);
 #if MOTOR_IPM
     FluxObs_SetIdRef(0);
 #endif
@@ -77,7 +69,7 @@ static int16_t fwId(void)
 }
 
 /* 慢环每拍（Spin，速度环之后）：id = MTPA id + 弱磁 id + 损耗制动 id，限制在电流上限内；
- * 电流圆剩余部分分配给 iq（sqrt(Imax^2 - id^2)），同时设为速度 PI 输出限幅（防积分饱和）；内嵌式电机更新观测器磁链目标 */
+ * 电流圆剩余部分分配给 iq（sqrt(Imax^2 - id^2)），并交给速度环作为下一拍的 PI 输出限幅；内嵌式电机更新观测器磁链目标 */
 void IdRef_Slow(void)
 {
     int32_t imax = gSpd.iqLimit, id, iqLim, iq;
@@ -89,7 +81,8 @@ void IdRef_Slow(void)
     if (id < -imax) id = -imax;
     if (id > imax) id = imax;
 
-    /* 电流圆：iq 上限 sqrt(Imax^2 - id^2)，同时作为速度 PI 的输出限幅 */
+    /* 电流圆：iq 上限 sqrt(Imax^2 - id^2)。本拍 iq 在此限幅；gIdRef.iqLimit 由速度环在下一拍 PI 运行前
+     * 作为输出限幅（含积分器，speed_ctrl.c），限幅只由速度环一处设定 */
     iqLim = (int32_t)QMath_Isqrt32((uint32_t)(imax * imax - id * id));
     iq = gSpd.idqCmd.s16Q;
     if (iq > iqLim) iq = iqLim;
@@ -99,7 +92,6 @@ void IdRef_Slow(void)
     gIdRef.iqLimit = (int16_t)iqLim;
     gSpd.idqCmd.s16D = (int16_t)id;
     gSpd.idqCmd.s16Q = (int16_t)iq;
-    setIqLimit(iqLim);
 #if MOTOR_IPM
     FluxObs_SetIdRef((int16_t)id);
 #endif

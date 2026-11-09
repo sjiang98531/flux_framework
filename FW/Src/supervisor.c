@@ -280,19 +280,18 @@ RAMFUNC static void M1_Run_Fast(void)
     if (gSup.fault) M1_SwitchRunFault();
 }
 
-/* Fault 慢环：照常滤波（母线电压等须始终有效）；故障消失后计时 FAULTRELEASE_TIME 回到 Stop */
+/* Fault 慢环：照常滤波（母线电压等须始终有效）；故障连续消失 FAULTRELEASE_TIME 后回到 Stop。
+ * 只计连续无故障的时间：故障出现即清零 */
 static void M1_Fault_Slow(void)
 {
-    static uint16_t u16FaultTimeCnt;
+    static uint16_t s_releaseTicks;
 
     Meas_SlowFilter();
-    /* 故障消失后等待 FAULTRELEASE_TIME 再回到 Stop */
-    if (!gSup.fault) {
-        u16FaultTimeCnt++;
-        if (u16FaultTimeCnt > gSup.faultReleaseTicks) {
-            gSup.mainState = MainState_Stop;
-            u16FaultTimeCnt = 0;
-        }
+    if (gSup.fault) {
+        s_releaseTicks = 0;
+    } else if (++s_releaseTicks > gSup.faultReleaseTicks) {
+        gSup.mainState = MainState_Stop;
+        s_releaseTicks = 0;
     }
 }
 
