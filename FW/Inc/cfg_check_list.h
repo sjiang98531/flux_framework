@@ -34,6 +34,9 @@ CFG_CHECK(EMF_AT_SPEED_MAX_FITS, FWC_POS_Q15(W_EMAX_RAD_S * MOTOR_PSI_F_WB / UDC
 /* 每拍电角度增量（SPEED_MAX 时）必须 < 180° */
 /* SPEED_MAX 时每个 PWM 周期转过 >= 180° 电角度：SPEED_MAX 太大或 PWM 太低 */
 CFG_CHECK(THETA_STEP_FITS, FWC_POS_Q15(2 * SPEED_MAX * POLEPAIRS / 60.0 / PWM_FREQ))
+/* 启停门限：0 < RUN_TO_STOP < STOP_TO_RUN < SPEED_MAX，且换算为 Q15 后回差至少 1 LSB（否则无回差） */
+CFG_CHECK(START_STOP_SPEED_ORDER, RUN_TO_STOP_SPEED > 0 && STOP_TO_RUN_SPEED < SPEED_MAX &&
+         Q15(STOP_TO_RUN_SPEED / SPEED_MAX) > Q15(RUN_TO_STOP_SPEED / SPEED_MAX))
 
 /* ---- 电流环（Pi_Run32 要求 Kp、Ki <= 65535） ------------------------------ */
 /* 电流环 Kp > 65535：CURRENT_BW_HZ 对这台电机太高（电感大），调低带宽 */

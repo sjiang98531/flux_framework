@@ -38,11 +38,13 @@
 #define OBS_EMF_TO_RPM(k)       ((k) * UDC_RATE * 60.0 / (2 * 3.14159265358979 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB))
 
 /* ===================== 启停 ============================================== */
-/* 外环为速度环。转速指令的启停门限以反电势比例表示。
+/* 外环为速度环。转速指令的启停门限（rpm，指令绝对值）：|指令| > STOP_TO_RUN_SPEED 时起动，
+ * |指令| < RUN_TO_STOP_SPEED 时停机，二者之间为回差，防止指令在门限附近抖动时反复起停。
+ * 这是对"转速指令"的判断，与观测器能力无关，故直接以 rpm 给出。
  * 停机均为软停机：先将电流按 CURRENT_SLEW_A_S（见"斜坡"）降到 0，再关闭 PWM
  * （本电机 4 A/s：闭环 0.3 A 约 75 ms，I/F 1 A 约 0.25 s）。 */
-#define STOP_TO_RUN_SPEED       OBS_EMF_TO_RPM(0.0035723)   /* 本电机 15 rpm */
-#define RUN_TO_STOP_SPEED       OBS_EMF_TO_RPM(0.0028578)   /* 本电机 12 rpm */
+#define STOP_TO_RUN_SPEED       15.0        /* rpm，起动门限 */
+#define RUN_TO_STOP_SPEED       12.0        /* rpm，停机门限（须小于起动门限） */
 
 /* ===================== PI 实现 ============================================ */
 /* 所有 PI 均使用带防溢出的定点 PI（ctrl_pi.h）。 */
