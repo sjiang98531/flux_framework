@@ -23,6 +23,7 @@ RAMFUNC static void dqPI(void);
 /* 上电初始化：装载电流环增益，清零积分器（输出限幅每拍按电压圆重设） */
 void FocCore_Init(void)
 {
+    Svpwm_Init(&gSvpwm, (int16_t)gHal.pwmPeriod);      /* 比较值满量程 = EPWM 周期计数（中心对齐，HAL_InitParams 已算好） */
     /* d 轴电流环（用 Ld）、q 轴（用 Lq）：增益由 param.c 按当前参数计算（封顶 65535，见 gGain.cfgWarn） */
     FocCore_LoadGains();
     gFoc.piD.qOutMax = 0;               /* 每拍在 FocCore_CurrentLoop 中按 VMAX 重设 */
@@ -35,9 +36,6 @@ void FocCore_Init(void)
     gFoc.piQ.qdSum = 0;
     gFoc.piQ.qInMeas = 0;
     gFoc.piQ.qOut = 0;
-
-    /* 转速反馈清零（经 Meas_SlowFilter 滤波得到 gMeas.speed） */
-    Meas_SpeedSource(0);
 }
 
 /* 从 gGain 装载两个电流 PI 的 Kp / Ki（上电及参数更新时） */
@@ -203,7 +201,7 @@ RAMFUNC void FocCore_Modulate(uint8_t mode)
     gSvpwm.Alpha = gFoc.vabMod.s16Alpha;
     gSvpwm.Beta = gFoc.vabMod.s16Beta;
     Svpwm_Calc(&gSvpwm, &gMeas.iabc, (int16_t *)&gMeas.ibusRec);
-    HAL_PwmWriteCompares(&gSvpwm);
+    HAL_PwmWriteCompares(gSvpwm.CompA, gSvpwm.CompB, gSvpwm.CompC);
 }
 
 /* 旁路电流环，直接输出 αβ 电压（Q15，UDC_MAX 基准）。用于 IPD 脉冲、参数辨识注入 */
@@ -222,5 +220,5 @@ void FocCore_ModulateZero(void)
     gSvpwm.Alpha = 0;
     gSvpwm.Beta = 0;
     Svpwm_Calc(&gSvpwm, &gMeas.iabc, (int16_t *)&gMeas.ibusRec);
-    HAL_PwmWriteCompares(&gSvpwm);
+    HAL_PwmWriteCompares(gSvpwm.CompA, gSvpwm.CompB, gSvpwm.CompC);
 }

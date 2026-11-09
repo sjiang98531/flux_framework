@@ -120,6 +120,7 @@ void Ctrl_Init(void)
     SpeedCtrl_Init();
     initProtection();
     Startup_Init();
+    FlyStart_Init();
     FocCore_Init();
     FluxPLL_Init(&gEst.pll);
     Diag_Init();
@@ -213,6 +214,12 @@ void Sup_CountRestart(void)
     if (gSup.faultRestarts < SUP_RESTART_COUNT_MAX) gSup.faultRestarts++;
 }
 
+/* 指令归零：清除连续重启计数（Stop 状态、零电流跟踪中） */
+void Sup_ClearRestarts(void)
+{
+    gSup.faultRestarts = 0;
+}
+
 /* 报故障：置故障位（gSup.fault，同时累计到 faultRecord 便于追溯），立即切换到 Fault（关闭 PWM） */
 void Sup_RaiseFault(uint16_t faultId)
 {
@@ -240,7 +247,7 @@ void Sup_SwitchRunStop(void)
 static void M1_SwitchStopRun(void)
 {
     Sup_Log(SUP_EV_START, gSup.faultRestarts);
-    gSup.hwOcLatch = 0;             /* 停机期间的过流标志不带入新的运行 */
+    HAL_ClearOcLatch();             /* 停机期间的过流标志不带入新的运行 */
     gSup.mainState = MainState_Run;
     gSup.runState = RunState_Charge;
     HAL_FgSetDuty(0);
@@ -267,7 +274,7 @@ static void M1_Stop_Fast(void)
 {
     HAL_PwmAllOff();
     HAL_PwmSetHalfDuty();
-    gMeas.vbusAvg = gMeas.vbus;
+    Meas_BusFollowSample();
     M1_FaultDetection();
     if (gSup.fault) gSup.mainState = MainState_Fault;
 }
@@ -307,7 +314,7 @@ static void M1_Stop_Slow(void)
 {
     gSpd.cmd = gSup.speedCmd;
     if (abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && (gSup.faultRestarts < SUP_RESTART_LIMIT)) M1_SwitchStopRun();
-    else if (abs(gSpd.cmd) < Q15(STOP_TO_RUN_SPEED / SPEED_MAX)) gSup.faultRestarts = 0;
+    else if (abs(gSpd.cmd) < Q15(STOP_TO_RUN_SPEED / SPEED_MAX)) Sup_ClearRestarts();
     Meas_SlowFilter();
 }
 
@@ -337,7 +344,7 @@ static uint8_t runStopSlow(uint8_t stopReq)
         s_softStop = 0;
         {
             IRQ_LOCK();
-            SpeedCtrl_OnEnterSpin();        /* 斜坡从当前转速、积分器从当前 iq 继续 */
+            SpeedCtrl_OnEnterSpin(gFoc.idqRef.s16D, gFoc.idqRef.s16Q);        /* 斜坡从当前转速、积分器从当前 iq 继续 */
             IRQ_UNLOCK();
         }
     }
@@ -409,7 +416,6 @@ void Sup_SwitchChargeCalib(void)
 
     Ctrl_ResetRunVariables();
     FlyStart_Begin();
-    gStartup.preChargeCnt = 0;
     gSup.runState = RunState_Calib;
 }
 
@@ -439,7 +445,7 @@ void Sup_SwitchCalibSpin(void)
     bridgeOnZeroVector();         /* 本周期仍为零矢量（= 短接），下一拍由电流环接手 */
 
     SpeedCtrl_BlendStop();
-    Spin_OnEnterCatch();            /* 先跟踪后控制：零电流跟踪，估计器收敛后再闭合速度环；速度环初始化推迟到下一个慢环周期 */
+    Spin_OnEnterCatch();            /* 先跟踪后控制：零电流跟踪，估计器收敛后再闭合速度环；速度环由零电流跟踪的慢环跟随转速 */
     gSup.runState = RunState_Spin;
     FocCore_SetDecouple(1);
 }
@@ -468,7 +474,7 @@ void Sup_SwitchCalibOpenLoop(void)
 void Sup_SwitchAlignStartup(void)
 {
     OpenLoopEntry_TypeDef e;
-    Startup_PrepareOpenLoop(0, 0, 0, 0, 0, &e);
+    Startup_PrepareOpenLoopCold(&e);
     {
         IRQ_LOCK();
         Sup_Log(SUP_EV_ALIGN_DONE, 0);
@@ -485,7 +491,7 @@ void Sup_SwitchAlignStartup(void)
 void Sup_SwitchIpdStartup(int16_t theta)
 {
     OpenLoopEntry_TypeDef e;
-    Startup_PrepareOpenLoop(0, 0, 0, 0, 0, &e);
+    Startup_PrepareOpenLoopCold(&e);
     /* 定位后电流本就在 I/F 方向上；IPD 后电流为 0，开环电流从 1/4 起按 CURRENT_SLEW_A_S 上升（与回退相同），
      * 加速度按电流比例给出，负载角余量不变；d 轴电流阶跃较小 */
     e.olCur = e.olCurTarget >> 2;
@@ -510,7 +516,6 @@ void Sup_SwitchStartupSpin(void)
 {
     IRQ_LOCK();
     Sup_Log(SUP_EV_HANDOVER, 0);
-    SpeedCtrl_OnEnterSpin();
     Spin_OnEnter();
     gSup.runState = RunState_Spin;
     /* 先切换状态再请求解耦：保证快环在 Spin 的第一拍转移前馈量。若顺序相反，
@@ -525,7 +530,7 @@ void Sup_SwitchSpinStartup(void)
 {
     OpenLoopEntry_TypeDef e;
     /* 准备：输入均为慢环写入的量（iq 指令、滤波转速）或变化很慢的量（PLL 转速符号），可在临界区外读取 */
-    Startup_PrepareOpenLoop(1, gFoc.idqRef.s16Q, Startup_OpenLoopReversal(gEst.pll.s32Speed), Startup_OpenLoopReversal(gMeas.speed), gMeas.speed, &e);
+    Startup_PrepareOpenLoopWarm(gFoc.idqRef.s16Q, Startup_OpenLoopReversal(gEst.pll.s32Speed), Startup_OpenLoopReversal(gMeas.speed), gMeas.speed, &e);
     {
         IRQ_LOCK();
         IdRef_Reset();         /* 回到起动模式：id = 0 */
@@ -549,10 +554,7 @@ RAMFUNC static void M1_FaultDetection(void)
     MC_FAULT_CLEAR_ALL(gSup.fault);
     /* 硬件过流：中断中只置锁存，在此转换为故障位。若由中断直接写故障位，会被上一行的清除操作覆盖，
      * 导致 PWM 已被中断关闭而状态机仍认为在运行。 */
-    if (gSup.hwOcLatch) {
-        gSup.hwOcLatch = 0;
-        MC_FAULT_SET(gSup.fault, MC_FAULT_I_DCBUS_OVER);
-    }
+    if (HAL_TakeOcLatch()) MC_FAULT_SET(gSup.fault, MC_FAULT_I_DCBUS_OVER);
 
     /* 配置检查未通过：持续报故障，电机不起动（cfg_check.h） */
     if (gFluxDiag.cfgFailCount) MC_FAULT_SET(gSup.fault, MC_FAULT_CFG);

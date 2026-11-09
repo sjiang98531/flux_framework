@@ -178,6 +178,20 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
     }
 }
 
+/* 上电：判"在转"的电流门限；检测到过转动后"等待停稳"的时间 = FLYBRAKE_TIME + τ·ln(门限转速 / 残余转速)
+ * （ln 用 atanh 级数，上电算一次，不链接 libm） */
+void FlyStart_Init(void)
+{
+    gFly.s16BemfAmpTh = Q15(FLYCURRENT_TH_PU);
+    {
+        double x = FLY_STILL_RPM / FLY_STILL_END_RPM, y = (x - 1.0) / (x + 1.0), y2 = y * y, t = y, ln = 0.0, ms;
+        int k;
+        for (k = 1; k < 60; k += 2) { ln += t / k; t *= y2; }
+        ms = FLY_STILL_BLOCKS + FLY_BRAKE_TAU_S * 2.0 * ln * 1000.0;
+        gFly.stillSpinMs = (uint16_t)(ms > 60000.0 ? 60000.0 : ms);
+    }
+}
+
 /* 进入飞车检测（Calib）时清除全部状态，首先进行短脉冲测速 */
 void FlyStart_Begin(void)
 {

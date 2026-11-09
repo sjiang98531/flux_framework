@@ -58,7 +58,6 @@ typedef struct {
     int16_t            faultRecord;     /* 上电以来出现过的故障位 */
     uint8_t            faultRestarts;   /* 连续故障 / 起动失败次数；>= 5 时不再自动重启，指令归零后清除 */
     uint16_t           faultReleaseTicks;   /* 故障后自动恢复的等待时间（慢环拍） */
-    volatile uint8_t   hwOcLatch;       /* 硬件过流中断置 1，快环故障检测时转换为 MC_FAULT_I_DCBUS_OVER */
     uint32_t           ms;              /* 上电后的毫秒数（慢环拍），用于事件记录 */
 } Supervisor_TypeDef;
 
@@ -125,5 +124,6 @@ void Sup_SwitchRunStop(void);
 void Sup_RaiseFault(uint16_t faultId);
 /* 连续重启计数 +1（上限 10）：会自动重启的故障 / 失锁各计一次，Stop 中达到 5 次后不再自动起动，指令归零时清零 */
 void Sup_CountRestart(void);
+void Sup_ClearRestarts(void);    /* 指令归零时清除连续重启计数 */
 
 #endif

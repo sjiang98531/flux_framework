@@ -124,7 +124,7 @@ int16_t Startup_OpenLoopWarmCurrent(int16_t iq, uint8_t reversal)
  *   warm = 1：从运行状态接管。iq = 闭环此刻的 q 轴电流指令，speedQ15 = 开环起始转速；
  *     revCur / revAcc = 开环需过零（目标方向与 PLL 转速 / 起始转速方向相反），分别决定开环电流和加速度缩放。
  *   warm = 0：冷起动（定位结束），开环角 = 定位角、零速。 */
-void Startup_PrepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
+static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
 {
     int32_t cur = OPENLOOP_IQ_Q15;
     e->warm = warm;
@@ -170,6 +170,19 @@ void Startup_PrepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_
      * 加速度按同一比例给出，负载角余量（OPENLOOP_ACC_RPM_S 取最大加速度的 1/3）全程保持不变。
      * accStepFull * 电流 < 2^31 由配置检查 OPENLOOP_ACC_STEP_FITS 保证（32 位乘除） */
     e->accStep = (e->accStepFull * cur) / e->olCurTarget;
+}
+
+/* 冷起动（定位 / IPD 之后）：开环角 = 定位角、零速、额定开环电流 */
+void Startup_PrepareOpenLoopCold(OpenLoopEntry_TypeDef *e)
+{
+    prepareOpenLoop(0, 0, 0, 0, 0, e);
+}
+
+/* 从运行状态接管（回退 / 飞车）：iqNow = 此刻的 q 轴电流指令；revCur / revAcc = 开环需过零（分别决定开环电流、加速度缩放）；
+ * speedQ15 = 开环起始转速 */
+void Startup_PrepareOpenLoopWarm(int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
+{
+    prepareOpenLoop(1, iqNow, revCur, revAcc, speedQ15, e);
 }
 
 /* 进入 I/F 的"提交"（在临界区内 / 快环中调用，只赋值）：开环目标、开环角（冷起动 = 定位角；接管 = PLL 角 + 预先计算的偏移）、
@@ -241,39 +254,30 @@ static void openLoopHandover(void)
     if (s_olSpeed < 0 && iqPi > 0) iqPi = 0;
     {
         IRQ_LOCK();
-        FocCore_SetIdqRef(id0, iqPi);       /* Sup_SwitchStartupSpin -> SpeedCtrl_OnEnterSpin 以此预置速度 PI */
+        FocCore_SetIdqRef(id0, iq0);        /* 本拍电流矢量保持不变 */
         FocCore_RotatePI(a);
         gOpenLoopDiag.deltaAtHandover = d;
         gOpenLoopDiag.iqAtHandover = iq0;
         gOpenLoopDiag.handovers++;
         gOpenLoopDiag.stage = OPENLOOP_STAGE_HANDOVER;
+        /* 速度环：PI 积分器预置为 iqPi（前馈给出 ff0），斜坡延续开环转速与加速度；id0 与 iq0 - iqPi - ff0 由融合叠加并淡出 */
+        SpeedCtrl_OnEnterSpin(id0, iqPi);
+        SpeedCtrl_BlendStart(id0, (int16_t)(iq0 - iqPi - ff0), ol, (int16_t)s_accScaleQ12, ff0);
         Sup_SwitchStartupSpin();
-        FocCore_SetIdqRef(id0, iq0);        /* 本拍电流矢量保持不变 */
-        gSpd.idqCmd.s16Q = iqPi;            /* Spin 慢环中速度环从 iqPi 开始，iq0 - iqPi 由融合叠加 */
-        SpeedCtrl_BlendStart(id0, (int16_t)(iq0 - iqPi - ff0), ol, (int16_t)s_accScaleQ12, ff0);   /* 速度 PI 给出 iqPi、前馈给出 ff0，融合只叠加剩余部分 */
         IRQ_UNLOCK();
     }
 }
 
-/* 上电：预充时间、飞车门限及"检测到转动后等待停稳"的时间（含 ln，上电计算一次）、定位阻尼增益及各段时长（摆周期的倍数）、
- * 飞车接管进入 I/F 的两份入口参数（同向 / 过零） */
+/* 上电：预充时间、定位阻尼增益、飞车接管进入 I/F 的两份入口参数（同向 / 过零） */
 void Startup_Init(void)
 {
     gStartup.preChargeCmd = PWM_FREQ / 1000.0 * PRECHARGE_TIME;
 
-    gFly.s16BemfAmpTh = Q15(FLYCURRENT_TH_PU);
-    {   /* 检测到过转动时的"等待停稳"时间：FLYBRAKE_TIME + τ·ln(门限转速 / 残余转速)。ln 用 atanh 级数计算（上电一次，不链接 libm） */
-        double x = FLY_STILL_RPM / FLY_STILL_END_RPM, y = (x - 1.0) / (x + 1.0), y2 = y * y, t = y, ln = 0.0, ms;
-        int k;
-        for (k = 1; k < 60; k += 2) { ln += t / k; t *= y2; }
-        ms = FLY_STILL_BLOCKS + FLY_BRAKE_TAU_S * 2.0 * ln * 1000.0;
-        gFly.stillSpinMs = (uint16_t)(ms > 60000.0 ? 60000.0 : ms);
-    }
 
     /* 仅上电时计算一次（含开方与浮点） */
     s_dampQ8 = (int32_t)(ALIGN_C1 * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM * ALIGN_J * 1099511627776.0)) / 1048576.0);
-    Startup_PrepareOpenLoop(1, 0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
-    Startup_PrepareOpenLoop(1, 0, 1, 1, 0, &s_catchIf[1]);
+    Startup_PrepareOpenLoopWarm(0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
+    Startup_PrepareOpenLoopWarm(0, 1, 1, 0, &s_catchIf[1]);
 }
 
 /* 停机复位：预充计数清零 */

@@ -15,7 +15,6 @@
 #include "supervisor.h"
 #include "diag.h"
 #include "SC_it.h"
-#include "svpwm.h"
 #include "compiler.h"
 
 __align(4) u16 ADC_DMABuff[14];          /* ADC -> DMA 缓冲（SC_Init.c 配置 DMA 目标地址） */
@@ -101,7 +100,7 @@ void EPWM_IRQHandler(void)
 {
     if ((EPWM->EPWM_STS & EPWM_STS_CBCIF) != 0) {
         DISABLE_PWMOUT();
-        gSup.hwOcLatch = 1;             /* 由快环 M1_FaultDetection 转换为 MC_FAULT_I_DCBUS_OVER（直接写故障位会被其清除） */
+        gHal.ocLatch = 1;             /* 由快环 M1_FaultDetection 转换为 MC_FAULT_I_DCBUS_OVER（直接写故障位会被其清除） */
         EPWM->EPWM_STS |= EPWM_STS_CBCIF;
     }
 }
@@ -164,16 +163,16 @@ void HAL_PwmSetHalfDuty(void)
 
 /* 将 SVPWM 计算的三相比较值写入 EPWM（下一个 PWM 周期生效）。
  * 通道对应：EPWM_DT[4] / [2] / [0] = A / B / C 相；RUN_DIR = CCW 时 A、B 对调（与采样侧的对调配套） */
-RAMFUNC void HAL_PwmWriteCompares(const Svpwm_TypeDef *u)
+RAMFUNC void HAL_PwmWriteCompares(int16_t cmpA, int16_t cmpB, int16_t cmpC)
 {
 #if (RUN_DIR == RUN_CW)
-    EPWM->EPWM_DT[4] = u->CompA;
-    EPWM->EPWM_DT[2] = u->CompB;
+    EPWM->EPWM_DT[4] = cmpA;
+    EPWM->EPWM_DT[2] = cmpB;
 #elif (RUN_DIR == RUN_CCW)
-    EPWM->EPWM_DT[2] = u->CompA;
-    EPWM->EPWM_DT[4] = u->CompB;
+    EPWM->EPWM_DT[2] = cmpA;
+    EPWM->EPWM_DT[4] = cmpB;
 #endif
-    EPWM->EPWM_DT[0] = u->CompC;
+    EPWM->EPWM_DT[0] = cmpC;
 }
 
 /* 三相下桥全开、上桥全关 = 三相绕组短接（用于飞车检测、制动）。cmp 为比较值（决定下桥导通占空比，gHal.caliDuty） */
@@ -229,12 +228,10 @@ void HAL_StartInterrupts(void)
 /* HAL 自身参数（由 Ctrl_Init 最先调用）：
  *   pwmPeriod   EPWM 周期计数（中心对齐，72 MHz / 2 / PWM_FREQ = 2250）
  *   slowLoopDiv 快环每多少拍挂起一次慢环（PWM_FREQ / SLOWLOOP_FREQ = 16）
- *   caliDuty    飞车短接时下桥的比较值（周期的 CALIPWMPERCENT）
- *   以及 SVPWM 的半周期 */
+ *   caliDuty    飞车短接时下桥的比较值（周期的 CALIPWMPERCENT） */
 void HAL_InitParams(void)
 {
     gHal.pwmPeriod = (uint16_t)(SYSCLK_HSI_72MHz / 2 / PWM_FREQ);
     gHal.slowLoopDiv = PWM_FREQ / SLOWLOOP_FREQ;
     gHal.caliDuty = (gHal.pwmPeriod * CALIPWMPERCENT);
-    Svpwm_Init(&gSvpwm, (int16_t)(SYSCLK_HSI_72MHz / PWM_FREQ / 2));
 }

@@ -12,6 +12,7 @@
 #include "foc_math.h"
 #include "qmath.h"
 #include "meas.h"
+#include "svpwm.h"
 
 /* 电流环状态。角度由估计模块（闭环）或起动模块（定位、开环）每拍写入。 */
 typedef struct {

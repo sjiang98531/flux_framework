@@ -22,7 +22,6 @@
 #include <stdlib.h>
 #include "compiler.h"
 
-static volatile uint8_t s_spinEntryPending;     /* 飞车直接进入 Spin 后，速度环初始化推迟到下一个慢环周期 */
 /* 零电流跟踪：Spin 中 id = iq = 0、PWM 保持输出、观测器与 PLL 持续跟踪转子，速度环不闭合。
  * 两个入口：飞车接管、闭环中停机（软停机电流降到 0 后）；两个出口：指令恢复 -> 闭合速度环，
  * 转速低于观测器可靠下限 -> 关闭 PWM 回到 Stop。见 Spin_TrackSlow。 */
@@ -67,10 +66,9 @@ static void spinBeginChecks(void)
     s_u16SpinCheckTime = 0;
 }
 
-/* 停机复位：清除"待初始化速度环"与零电流跟踪标志 */
+/* 停机复位：清除零电流跟踪标志 */
 void Spin_Reset(void)
 {
-    s_spinEntryPending = 0;
     s_track = 0;
 }
 
@@ -86,11 +84,10 @@ void Spin_OnEnter(void)
     spinBeginChecks();
 }
 
-/* 飞车直接接入 Spin 时（Sup_SwitchCalibSpin，快环中）：进入零电流跟踪，速度环初始化推迟到下一个慢环周期 */
+/* 飞车直接接入 Spin 时（Sup_SwitchCalibSpin，快环中）：进入零电流跟踪，速度环由零电流跟踪的慢环跟随转速 */
 void Spin_OnEnterCatch(void)
 {
     spinBeginChecks();
-    s_spinEntryPending = 1;         /* SpeedCtrl_OnEnterSpin 推迟到下一个慢环周期（减少快环负担，且避免与慢环同时访问 gSpd） */
     Spin_TrackBegin();
 }
 
@@ -128,12 +125,11 @@ void Spin_TrackSlow(void)
     uint8_t want = (uint8_t)(abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && !(IDENT_TEST && Ident_HoldTrack()));
     uint16_t n = s_trackN;
 
-    s_spinEntryPending = 0;
-    SpeedCtrl_OnEnterSpin();            /* 斜坡、积分器跟随估计转速，id = iq = 0 */
+    SpeedCtrl_FollowSpeed();            /* 速度环不运行：斜坡、积分器跟随估计转速，id = iq = 0 */
     FocCore_SetIdqRef(0, 0);
     Meas_SlowFilter();
     SpeedCtrl_ShowRampState();          /* 仅用于显示：跟踪中斜坡 = 估计转速（速度环不运行，否则会停留在停机前的指令） */
-    if (!want) gSup.faultRestarts = 0;  /* 与 Stop 状态相同：指令归零时清除连续重启计数 */
+    if (!want) Sup_ClearRestarts();     /* 与 Stop 状态相同：指令归零时清除连续重启计数 */
     if (Protect_OverSpeed(gMeas.speed)) {
         Sup_RaiseFault(MC_FAULT_SPEED_OC);
         return;
@@ -149,7 +145,7 @@ void Spin_TrackSlow(void)
          * 使用平均值而非最后一拍：PLL 瞬时转速含噪声，按单拍预置会使速度环闭合瞬间产生电流冲击 */
         Sup_Log(SUP_EV_TRACK_END, 1);
         Meas_SpeedPreset(w);
-        SpeedCtrl_OnEnterSpin();
+        SpeedCtrl_OnEnterSpin(0, 0);
         spinBeginChecks();
         s_track = 0;
     } else if (abs(w) < TRACK_END_Q15) {
@@ -238,10 +234,6 @@ static uint8_t fallbackBlend(void)
 void Spin_Slow(void)
 {
     uint8_t fbReady;
-    if (s_spinEntryPending) {       /* 飞车直接接管：斜坡从当前转速开始 */
-        s_spinEntryPending = 0;
-        SpeedCtrl_OnEnterSpin();
-    }
     SpeedCtrl_SpinSlow();
     IdRef_Slow();          /* id 指令（MTPA + 弱磁）与 iq 限幅；功能关闭时为空函数 */
     SpeedCtrl_BlendSlow();  /* I/F 切换融合：切换遗留分量叠加其上并逐渐淡出 */

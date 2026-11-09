@@ -15,7 +15,6 @@
 #include "cfg_derived.h"
 #include "compiler.h"
 #include "qtypes.h"
-#include "svpwm.h"
 #include "hal_sc32r602.h"      /* 芯片移植头文件：更换芯片时修改此行 */
 
 /* 移植头文件必须提供（快环热路径，宏 / 内联）：
@@ -26,8 +25,8 @@
 
 /* 三相比较值均设为半周期（50% 占空比） */
 void HAL_PwmSetHalfDuty(void);
-/* 将 gSvpwm.CompA/B/C 写入比较寄存器（相序由 RUN_DIR 决定） */
-void HAL_PwmWriteCompares(const Svpwm_TypeDef *u);
+/* 写三相比较值（下一个 PWM 周期生效；相序由 RUN_DIR 决定） */
+void HAL_PwmWriteCompares(int16_t cmpA, int16_t cmpB, int16_t cmpC);
 /* 飞车检测：上桥全关、下桥全开（三相对地短接），三相比较值 = cmp */
 void HAL_PwmShortLowSides(uint16_t cmp);
 /* FG 输出（TIM0 PWMA）占空比 */
@@ -38,16 +37,30 @@ typedef struct {
     uint16_t slowLoopDiv;           /* 快环拍数 / 慢环拍 */
     uint16_t caliDuty;              /* 飞车检测短接下桥时的比较值 */
     uint16_t adcNoisePk;            /* 上电零点校准时测到的电流采样噪声峰值（ADC 码，两相取大，含 1 码量化） */
+    volatile uint8_t ocLatch;       /* 硬件过流锁存：EPWM 刹车中断置 1，快环故障检测取走（HAL_TakeOcLatch） */
 } Hal_TypeDef;
 
 extern Hal_TypeDef gHal;
+
+/* 硬件过流锁存：取走并清除（快环故障检测调用），1 = 期间发生过过流 */
+FORCE_INLINE uint8_t HAL_TakeOcLatch(void)
+{
+    uint8_t f = gHal.ocLatch;
+    if (f) gHal.ocLatch = 0;
+    return f;
+}
+/* 清除锁存（Stop -> Run：停机期间的过流标志不带入新的运行） */
+FORCE_INLINE void HAL_ClearOcLatch(void)
+{
+    gHal.ocLatch = 0;
+}
 
 /* 上电初始化，main() 按以下顺序调用：
  *   HAL_InitHardware()    外设（时钟、GPIO、ADC、运放、EPWM、定时器、DMA），此时中断尚未开启
  *   HAL_InitParams()      HAL 自身参数（PWM 周期、慢环分频，写入 gHal），由 Ctrl_Init 调用
  *   HAL_StartInterrupts() 配置优先级（硬件过流 > 快环 > 慢环）后开中断，快环开始运行 */
 void HAL_InitHardware(void);    /* 外设初始化（Board/Src/SC_Init.c） */
-void HAL_InitParams(void);    /* PWM 周期、慢环分频、短接占空比、SVPWM 半周期 */
+void HAL_InitParams(void);    /* PWM 周期、慢环分频、短接占空比 */
 void HAL_StartInterrupts(void);    /* 配置中断优先级并开中断 */
 /* 驱动板自检（cfg_board.h PWM_DEBUG = 1）：三相固定 25% 占空比，不运行控制，不返回 */
 void HAL_PwmDebugLoop(void);

@@ -48,6 +48,11 @@ FORCE_INLINE void Meas_SpeedSource(int16_t raw)
 {
     gMeas.speedRaw = raw;
 }
+/* Stop 状态每拍：母线平均值直接跟随采样（不滤波），保证起动时刻的母线归一化准确 */
+FORCE_INLINE void Meas_BusFollowSample(void)
+{
+    gMeas.vbusAvg = gMeas.vbus;
+}
 void Meas_SpeedPreset(int16_t w);   /* 将滤波器预置为稳态 w，gMeas.speed = w（飞车接管、零电流跟踪转闭环时；不修改 speedRaw） */
 void Meas_SpeedReset(void);         /* 来源、滤波值、累加器全部清零（停机复位、冷起动） */
 void Meas_SpeedHoldZero(void);      /* 仅将滤波值置 0（定位 / IPD：转子静止，屏蔽来源的残留值） */

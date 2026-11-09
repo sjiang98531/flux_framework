@@ -71,6 +71,7 @@ typedef enum {
     FLY_CATCH_OPENLOOP,       /* FLY_LOW_MIN_RPM ~ 上述门限 -> 直接进入 I/F 开环 */
     FLY_TIMEOUT         /* 制动超时 -> 故障 */
 } FlyVerdict_t;
+void FlyStart_Init(void);       /* 上电：电流门限、检测到过转动后等待停稳的时间 */
 /* 进入 Calib 时调用：清除状态 */
 void FlyStart_Begin(void);
 /* Run 从 Startup / Spin 退出（停机、故障）时调用：转子可能仍在滑行，下次飞车检测按"检测到过转动"等待停稳 */

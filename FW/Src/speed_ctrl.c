@@ -204,6 +204,7 @@ void SpeedCtrl_SpinSlow(void)
             int32_t st = gSpd.speedRampSt.s32State;
             gSpd.speedRampSt.s32RampUp   = (st < 0 && gSpd.cmd > 0) ? RAMP_REV_Q31 : RAMP_UP_Q31;
             gSpd.speedRampSt.s32RampDown = (st > 0 && gSpd.cmd < 0) ? RAMP_REV_Q31 : RAMP_DOWN_Q31;
+            /* 以上每拍重设运行速率；下面两步按需要再压低减速一侧的步长（直接改 s32RampUp / s32RampDown） */
             approachFallback();     /* 回退 I/F 时刻的减速度 = I/F 过零的减速度 */
             busVdcLimit();          /* 减速侧步长按允许回馈功率限制（给定始终可实现） */
         }
@@ -252,18 +253,25 @@ void SpeedCtrl_SpinSlow(void)
 
 /* 进入 Spin（I/F 切换、零电流跟踪转闭环、软停取消）：斜坡从当前实测转速、加速度 0 开始；
  * 速度 PI 积分器预置为当前 iq 指令（转矩连续，进入时无跳变） */
-void SpeedCtrl_OnEnterSpin(void)
+void SpeedCtrl_OnEnterSpin(int16_t idNow, int16_t iqNow)
 {
     gSpd.speedRampSt.s32RampUp     = RAMP_UP_Q31;
     gSpd.speedRampSt.s32RampDown   = RAMP_DOWN_Q31;
     gSpd.brakeId = 0;
     gSpd.brakeIdQ15x = 0;
     gSpd.vdcLam = 0;
-    gSpd.idqCmd = gFoc.idqRef;          /* 从当前已发布的指令开始 */
+    gSpd.idqCmd.s16D = idNow;           /* 从调用方给出的此刻电流指令开始 */
+    gSpd.idqCmd.s16Q = iqNow;
     gSpd.speedRampSt.s32State      = gMeas.speed << 16;
     gSpd.rampAcc = 0;
-    gSpd.pi.qdSum               = (int32_t)gFoc.idqRef.s16Q * 32768;
+    gSpd.pi.qdSum               = (int32_t)iqNow * 32768;
     gSpd.piPower.qdSum               = 0;          /* 母线电流限 PI 只向下限制，未限流时积分为 0 */
+}
+
+/* 零电流跟踪期间每拍调用：速度环不运行，斜坡和积分器跟随估计转速（id = iq = 0），闭合速度环时没有跳变 */
+void SpeedCtrl_FollowSpeed(void)
+{
+    SpeedCtrl_OnEnterSpin(0, 0);
 }
 
 /* I/F 切闭环时开始融合：记录切换时刻开环电流在观测器坐标系中的 d / q 分量（id0 / iq0），之后按 blendW 0 -> 1

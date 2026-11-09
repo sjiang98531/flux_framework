@@ -62,7 +62,8 @@ typedef struct {
     int32_t  olCur, olCurTarget;    /* 开环电流起始值 / 目标值（Q15），起始值 < 目标值时按 CURRENT_SLEW_A_S 上升 */
     int32_t  accScaleQ12, accStepFull, accStep;    /* 加速度缩放（开环电流 / 额定开环电流，Q12）、电流到目标后的加速度步长、起始加速度步长（Q31 / 快环拍） */
 } OpenLoopEntry_TypeDef;
-void Startup_PrepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e);    /* 准备（临界区外，只计算） */
+void Startup_PrepareOpenLoopCold(OpenLoopEntry_TypeDef *e);    /* 准备（临界区外，只计算）：冷起动 */
+void Startup_PrepareOpenLoopWarm(int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e);    /* 准备：从运行状态接管 */
 void Startup_CommitOpenLoop(const OpenLoopEntry_TypeDef *e);    /* 提交（临界区内，只赋值） */
 uint8_t Startup_OpenLoopReversal(int32_t speedSign);    /* 开环目标方向与 speedSign 相反（I/F 需过零）时返回 1 */
 /* 飞车接管进入 I/F（快环中调用，常数时间）：使用上电时预先计算的入口参数（iq = 0）+ 接管转速 */

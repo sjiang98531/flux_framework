@@ -45,7 +45,9 @@ void SpeedCtrl_LoadGains(void);     /* 从 gGain 重新装载速度 PI 增益（
 /* Spin 慢环：斜坡 + PI + 前馈，写入 gSpd.idqCmd（不直接写 gFoc.idqRef） */
 void SpeedCtrl_SpinSlow(void);
 /* 进入 Spin（从 Startup 或飞车接管）：恢复运行斜坡率，按当前状态预置斜坡与 PI 积分器 */
-void SpeedCtrl_OnEnterSpin(void);
+void SpeedCtrl_OnEnterSpin(int16_t idNow, int16_t iqNow);    /* idNow / iqNow：此刻的电流指令，速度 PI 积分器预置为 iqNow */
+/* 零电流跟踪中每拍：斜坡、积分器跟随估计转速（id = iq = 0） */
+void SpeedCtrl_FollowSpeed(void);
 /* 进入 Startup：速度斜坡改用 STARTUP_SPEED_RAMP */
 void SpeedCtrl_UseStartupRamp(void);
 /* I/F 切换时刻调用：开始融合。(id0, iq0) 为需淡出的分量（叠加在控制器输出上）；
