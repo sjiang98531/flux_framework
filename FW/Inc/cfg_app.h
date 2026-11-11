@@ -25,7 +25,7 @@
  *   STARTUP_MODE_ALIGN  定位（静音起动）：0.8 ~ 2 s，无脉冲噪声，转子先被拉到 0°（可能先反转一小段） */
 #define STARTUP_MODE_IPD        0
 #define STARTUP_MODE_ALIGN      1
-#define STARTUP_MODE            STARTUP_MODE_IPD
+#define STARTUP_MODE            STARTUP_MODE_ALIGN
 
 /* 起停门限（对转速指令判断）：|指令| > STOP_TO_RUN_SPEED 起动，< RUN_TO_STOP_SPEED 停机，二者之间为回差 */
 #define STOP_TO_RUN_SPEED       15.0        /* rpm，起动门限 */
@@ -50,10 +50,10 @@
 
 /* ---- 定位（STARTUP_MODE_ALIGN，以及 IPD 检测失败时）----
  * 定位电流下转子相当于单摆，周期 T（本电机 0.5 s；惯量越大、磁链越小则越长）。 */
-#define ALIGN_MIN_S             0.8         /* s，最短定位时间（约 1.6 T）。偶发起动失步、重启后才起动成功时加长 */
-#define ALIGN_STILL_RPM         8.4         /* rpm，转子停稳判据（k 约 0.2%）。每次都等满 ALIGN_MAX_S 时调高 */
+#define ALIGN_MIN_S             0.1         /* s，最短定位时间（约 1.6 T）。偶发起动失步、重启后才起动成功时加长 */
+#define ALIGN_STILL_RPM         10         /* rpm，转子停稳判据（k 约 0.2%）。每次都等满 ALIGN_MAX_S 时调高 */
 #define ALIGN_STILL_S           0.2         /* s，低于上述转速并持续该时间判为停稳（约 0.4 T，不小于 0.3 T） */
-#define ALIGN_MAX_S             2.0         /* s，最长定位时间（约 4 T），超时直接进入拖动 */
+#define ALIGN_MAX_S             0.5         /* s，最长定位时间（约 4 T），超时直接进入拖动 */
 
 /* ---- 开环拖动（I/F）与闭环的交接 ---- */
 #define OPENLOOP_HANDOVER_RPM   105.0       /* rpm，I/F 切入闭环的转速（k 约 2.5%）。切换瞬间抖动或无法切入（报堵转）时调高 */

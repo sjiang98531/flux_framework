@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<JScopeProject>
+  <FileVersion major="1" minor="1" />
+  <Project>
+    <Configuration>
+      <JLink>
+        <Options Connection="1" IsRTTSession="0" IsRTTWithTimeStamp="0" IsRTTPlus="0" SamplingPeriod="1" SerialNo="0" JTAG_IRPre="0" JTAG_DRPre="0" IP="" TargetDevice="Cortex-M0" Nickname="" InterfaceSpeed="4000" TargetInterface="SWD" />
+      </JLink>
+      <ElfFile Name="C:\Users\SOC\foc_rel\Output\SOC_FOC_SDK_V1_0.axf" />
+      <DataFile Name="" />
+      <Scope>
+        <Options TimeResolutionUs="1000" />
+      </Scope>
+      <Trigger>
+        <Options Level="0" Symbol="runState" On="0" Auto="0" Rise="0" Fall="0" />
+      </Trigger>
+    </Configuration>
+    <Windows>
+      <Graph Show="1" />
+      <Watch Show="1" />
+    </Windows>
+    <SelectedSymbols>
+      <Symbol>
+        <Options Name="speedCmd" NameWithParents="gSup.speedCmd" Address="0x20000018" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="255" GraphColorGreen="0" GraphColorBlue="0" Offset="4" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="ramp" NameWithParents="gSpd.ramp" Address="0x20000284" Type="short" TypeID="11" Size="2" YResolution="800" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="255" GraphColorGreen="200" GraphColorBlue="0" Offset="6" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="speed" NameWithParents="gMeas.speed" Address="0x20000412" Type="short" TypeID="11" Size="2" YResolution="800" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="120" GraphColorGreen="0" GraphColorBlue="200" Offset="8" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="iq" NameWithParents="gFoc.idq.s16Q" Address="0x2000038A" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="0" GraphColorGreen="160" GraphColorBlue="0" Offset="10" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="iqRef" NameWithParents="gFoc.idqRef.s16Q" Address="0x2000038E" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="200" GraphColorGreen="0" GraphColorBlue="120" Offset="12" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="ibusAvg" NameWithParents="gMeas.ibusAvg" Address="0x2000040C" Type="short" TypeID="11" Size="2" YResolution="200" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="0" GraphColorGreen="200" GraphColorBlue="120" Offset="14" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="vbusAvg" NameWithParents="gMeas.vbusAvg" Address="0x20000406" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="0" GraphColorGreen="120" GraphColorBlue="255" Offset="16" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="runState" NameWithParents="gSup.runState" Address="0x20000014" Type="unsigned short" TypeID="7" Size="2" YResolution="1" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="0" GraphColorGreen="0" GraphColorBlue="0" Offset="18" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="mainState" NameWithParents="gSup.mainState" Address="0x20000010" Type="unsigned short" TypeID="7" Size="2" YResolution="1" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="60" GraphColorGreen="60" GraphColorBlue="60" Offset="20" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="fault" NameWithParents="gSup.fault" Address="0x2000001A" Type="unsigned short" TypeID="7" Size="2" YResolution="1" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="255" GraphColorGreen="0" GraphColorBlue="255" Offset="22" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+    </SelectedSymbols>
+  </Project>
+</JScopeProject>
