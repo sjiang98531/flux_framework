@@ -69,6 +69,8 @@ CFG_CHECK(FLUX_LS_SAT_SANE, MOTOR_LS_SAT_KNEE_A >= 0 && MOTOR_LS_SAT_KNEE_A < I_
 /* 逆变器电压误差参数：KT 要有分辨率（> 0 时至少 16 LSB）且 < 0.1 个周期；I0 在电流量程内，斜率不溢出 */
 CFG_CHECK(INVERTER_DT_SANE, !INVERTER_DT_COMP || (INVERTER_DT_EFF_S * PWM_FREQ * 32768.0 >= 16 && INVERTER_DT_EFF_S * PWM_FREQ < 0.1 &&
          INVERTER_DT_I0_A > 0.01 && INVERTER_DT_I0_A < I_MAX && 256.0 * I_MAX / INVERTER_DT_I0_A < 60000.0))
+/* 起动方式默认值只能取两种之一 */
+CFG_CHECK(STARTUP_MODE_VALID, STARTUP_MODE == STARTUP_MODE_IPD || STARTUP_MODE == STARTUP_MODE_ALIGN)
 /* IPD 脉冲电压超出线性调制区（MAX_DUTY 电压圆，额定母线）：目标电流太大或脉冲太短（加长 IPD_PULSE_S）；
  * 脉冲 < 8 拍（波形太粗）或等待 < 4 拍 */
 CFG_CHECK(IPD_PULSE_FITS, IPD_PULSE_V > 0 && IPD_PULSE_V < MAX_DUTY * UDC_RATE * 2.0 / 3.0 &&
@@ -139,6 +141,10 @@ CFG_CHECK(RAMP_FIXEDPOINT_FITS, SPEED_JERK_Q31 >= 1 && 4294967296.0 / (2.0 * SPE
 CFG_CHECK(OPENLOOP_TICKS_FIT, ALIGN_MAX_S * SLOWLOOP_FREQ < 65535.0 &&
          ALIGN_MIN_S > 0 && ALIGN_STILL_S > 0 && ALIGN_MAX_S > ALIGN_MIN_S + ALIGN_STILL_S && FLY_SETTLE_BLOCKS >= 1 &&
          OPENLOOP_TIMEOUT_S * SLOWLOOP_FREQ < 65536 && OPENLOOP_AGREE_S * SLOWLOOP_FREQ < 65536)
+
+/* 定位判停稳的持续时间不小于 0.3 个摆动周期 T（见 cfg_ctrl.h ALIGN_STILL_S：离定位轴 90° 的回摆端点处，
+ * q 轴反电势约 0.28 T 内无法反映转子运动）。更换电机（惯量、磁链）或修改定位电流后 T 改变，须重新确定 */
+CFG_CHECK(ALIGN_STILL_COVERS_SWING, ALIGN_STILL_S * ALIGN_STILL_S >= 0.09 * ALIGN_T2_S2)
 
 /* ---- 飞车检测 ------------------------------------------------------------ */
 /* 短脉冲测速：脉冲周期至少 4 拍（SPEED_MAX 时 120° 电角度换成的拍数太少：PWM 太低或 SPEED_MAX 太高） */

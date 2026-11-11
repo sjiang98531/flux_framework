@@ -29,7 +29,7 @@ static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波�
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
 static volatile uint8_t s_ipd;             /* 1 = Align 子状态正在执行 IPD（慢环写，快环读） */
 
-/* 进入 Align（飞车检测判为静止）：清除定位状态。默认先执行 IPD（STARTUP_IPD = 1），IPD 结果不可信时再定位；
+/* 进入 Align（飞车检测判为静止）：清除定位状态。起动方式为 IPD（gStartup.mode）时先执行 IPD，结果不可信时再定位；否则直接定位。
  * 辨识模式（IDENT_TEST）下定位到指定角或按辨识流程执行 */
 void Startup_OnEnterAlign(void)
 {
@@ -44,14 +44,16 @@ void Startup_OnEnterAlign(void)
     else {
         /* 运行辨识（run = 1）正常起动：上一次静止测量停在 phase 4，需清除，否则 Align 会一直交由测量程序处理 */
         if (IDENT_TEST) Ident_Idle();
-        if (STARTUP_IPD) { Ipd_Start(); s_ipd = 1; gOpenLoopDiag.stage = OPENLOOP_STAGE_IPD; }    /* 先检测初始位置，检测失败再定位 */
+        /* 起动方式仅在此处读取一次：本轮中途修改 gStartup.mode 不影响正在执行的 IPD / 定位 */
+        if (gStartup.mode == STARTUP_MODE_IPD) { Ipd_Start(); s_ipd = 1; gOpenLoopDiag.stage = OPENLOOP_STAGE_IPD; }    /* 先检测初始位置，检测失败再定位 */
     }
 }
 
-/* 上电：预充时间、定位阻尼增益 */
+/* 上电：预充时间、定位阻尼增益、起动方式默认值 */
 void Startup_Init(void)
 {
     gStartup.preChargeCmd = PWM_FREQ / 1000.0 * PRECHARGE_TIME;
+    gStartup.mode = STARTUP_MODE;
 
     /* 仅上电时计算一次（含开方与浮点） */
     s_dampQ8 = (int32_t)(ALIGN_C1 * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM * ALIGN_J * 1099511627776.0)) / 1048576.0);
@@ -132,7 +134,7 @@ void Startup_AlignFast(void)
 {
     FocCore_Clarke();
     if (IDENT_TEST && Ident_Fast()) return;     /* 参数辨识的脉冲段：调制由辨识程序输出 */
-    if (STARTUP_IPD && s_ipd) { Ipd_Fast(); return; }      /* IPD：旁路电流环，直接输出脉冲电压 */
+    if (s_ipd) { Ipd_Fast(); return; }      /* IPD：旁路电流环，直接输出脉冲电压 */
     gFoc.theta = s_alignTheta;
     gFoc.thetaInv = gFoc.theta;
     FocCore_CurrentLoop();
@@ -148,7 +150,7 @@ void Startup_AlignSlow(void)
     int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15;
     int32_t emf, iq;
     if (IDENT_TEST && Ident_Active()) { Ident_Slow(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
-    if (STARTUP_IPD && s_ipd) {
+    if (s_ipd) {
         if (gIpd.state == IPD_STATE_DONE) {
             if (Ipd_Evaluate()) {
                 Sup_SwitchIpdOpenLoop(gIpd.theta);  /* 从测得的 N 极角开始拖动，无需定位 */

@@ -8,9 +8,10 @@
  *        └─ 静止 -> Align -> OpenLoop（I/F）-> Spin
  *
  *   I/F（开环拖动）：
- *     Align 子状态首先执行 IPD（STARTUP_IPD，ipd.h）：以 12 个方向的电压脉冲确定 N 极角，直接从该角进入 OpenLoop，
+ *     Align 子状态按起动方式 gStartup.mode（上电默认 STARTUP_MODE，cfg_ctrl.h）二选一：
+ *     IPD（STARTUP_MODE_IPD，ipd.h）：以 12 个方向的电压脉冲确定 N 极角，直接从该角进入 OpenLoop，
  *       电流从 1/4 起按 CURRENT_SLEW_A_S 升至 OPENLOOP_CURRENT_A（加速度同比例）；对比度不足时退回定位。
- *     Align：d 轴电流斜坡升至 ALIGN_A，在 0° 等待转子停稳；
+ *     定位（STARTUP_MODE_ALIGN，静音起动）：d 轴电流斜坡升至 ALIGN_A，在 0° 等待转子停稳；
  *       定位期间按 q 轴反电势施加阻尼电流（转子等效为无阻尼单摆）
  *     OpenLoop：电流 OPENLOOP_CURRENT_A 沿开环角方向（与定位电流连续），开环角按
  *       OPENLOOP_ACC_RPM_S 加速到 OPENLOOP_HANDOVER_RPM 并保持；观测器 + PLL 同步跟踪（不参与控制）。
@@ -33,11 +34,12 @@ typedef struct {
     uint16_t preChargeCmd;      /* 预充时长（快环拍） */
     uint16_t preChargeCnt;      /* 预充计时 */
     uint8_t  preChargePhase;    /* 预充时轮流导通 A/B/C 下桥：0/1/2 */
+    volatile uint8_t mode;      /* 起动方式 STARTUP_MODE_IPD / STARTUP_MODE_ALIGN（调试器或上位机可改，下次起动生效；其他值按定位处理） */
 } Startup_TypeDef;
 
 extern Startup_TypeDef gStartup;
 
-void Startup_Init(void);    /* 上电：预充时间、定位阻尼增益 */
+void Startup_Init(void);    /* 上电：预充时间、定位阻尼增益、起动方式默认值 */
 /* 停机 / 故障复位：预充计数清零 */
 void Startup_ResetRun(void);
 

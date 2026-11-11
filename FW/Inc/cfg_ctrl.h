@@ -24,7 +24,7 @@
  *   FLY_LOW_MIN_RPM、FLY_STILL_RPM、ALIGN_STILL_RPM、SPIN_LOST_RPM、TRACK_END_RPM、FLUX_HPF_COMP_MIN_RPM、PWM_5SEG_RPM
  * 首次上电调试时确认（已写成额定值的倍数，一般无需修改，但与负载有关）：
  *   OPENLOOP_CURRENT_A / OPENLOOP_ACC_RPM_S（I/F 拖动电流、加速度，负载越重电流越大）、
- *   STARTUP_IPD（饱和不明显时自动退回定位，也可直接关闭）、
+ *   STARTUP_MODE（起动方式：IPD 快但有脉冲声，定位静音但慢；饱和不明显时 IPD 自动退回定位）、
  *   IPD_PEAK_A / IPD_PULSE_S（噪声与对比度的折中）、SPD_PI_LIMIT / IBUS_LIMIT_A（相电流、母线电流上限）
  * 一般无需修改（按带宽 / 阻尼 / 时间常数给出的设计指标，随电机自动换算）：
  *   CURRENT_BW_HZ、SPEED_WN_HZ / ZETA、FLUXPLL_*、FLUX_*（观测器）、BUS_*（母线电压环）、FLY_*（飞车）、各滤波时间常数
@@ -122,7 +122,6 @@
 /* 初始位置检测（IPD，见 ipd.h）：静止时依次施加 12 个方向的电压脉冲，根据磁路饱和造成的电流差异找出 N 极，
  * 直接从该角度开始 I/F 拖动，省去定位时间（约 1 s）及定位时转子被拉动的冲击。
  * 要求电机具有可测的饱和效应：峰值最大/最小 < IPD_MIN_RATIO 判为失败，本次自动退回定位。
- * STARTUP_IPD = 0 时始终使用定位。
  * 脉冲波形（IPD_PULSE_SHAPE，运行时可通过 gIpdCfg.shape 切换）：
  *   方波（+V 半宽、-V 半宽，电流为三角波）：同样峰值下时间最短、冲量最小，但边沿陡、噪声偏尖；
  *   正弦一个周期（电流为钟形，峰值 V*T/(pi*L)）：无尖角，但同样峰值需 1.6 倍时间，转矩冲量更大。
@@ -132,7 +131,16 @@
  *   方波 V = I*L/(T/2)，正弦 V = I*pi*L/T（I 为不饱和方向的峰值）。更换电机自动换算；
  *   计算电压超过调制上限时配置检查报错（需加长 T）。
  *   本电机 0.6 A、1 ms 方波；N 极方向因饱和电流更大（约 2.3 倍）。 */
-#define STARTUP_IPD             1
+/* 起动方式：静止起动时确定转子初始角的方法。两种方式均编入固件，运行时选择：
+ *   STARTUP_MODE_IPD    脉冲检测初始位置：约 0.13 s，转子不动；12 个脉冲有可闻噪声。检测失败（对比度不足）时本次自动退回定位。
+ *   STARTUP_MODE_ALIGN  定位（静音起动）：d 轴电流按 ALIGN_RAMP_A_S 升至 ALIGN_A，将转子拉到 0°，耗时 0.8~2 s；
+ *                       电流变化率受限、无脉冲，无可闻噪声。代价：起动较慢；转子会被拉动（最多半个电周期，可能先反转）；
+ *                       转子恰好停在 180° 死点时本次起动会失步，报堵转后自动重启（小概率，见下文"定位"）。
+ * STARTUP_MODE 为上电默认值；运行中可修改 gStartup.mode（调试器或上位机通信），下一次起动生效（进入 Align 时读取一次）。
+ * 飞车接管（转子在转时直接接管）与 Spin 回退 I/F 不受其影响。 */
+#define STARTUP_MODE_IPD        0
+#define STARTUP_MODE_ALIGN      1
+#define STARTUP_MODE            STARTUP_MODE_IPD
 #define IPD_PULSE_SHAPE         0           /* 0 方波，1 正弦 */
 #define IPD_PEAK_A              (0.8 * MOTOR_I_RATED_A)     /* A，不饱和方向的电流峰值（本电机 0.6 A） */
 #define IPD_PULSE_S             1.0e-3      /* s，单个方向的脉冲总宽（方波正负各一半） */
@@ -149,9 +157,14 @@
 /* 最短定位时间：死点附近（转矩约为 0）需先等转子离开死点再摆回，约 1.5 个周期，取约 1.6 T。 */
 #define ALIGN_MIN_S          0.8         /* s */
 /* 定位结束条件：满足最短时间后，转子转速（由反电势估计）低于 ALIGN_STILL_RPM 并持续 ALIGN_STILL_S，
- * 才开始拖动。摆到端点时速度也会短暂过零，持续窗口应长于端点附近的停留时间（约 0.2 T）。 */
+ * 才开始拖动。摆到端点时速度也会短暂过零，持续窗口应长于端点附近"看似静止"的时间。
+ * 最坏的端点位于离定位轴 90° 处（从死点附近摆下后的第一个回摆端点）：判据使用定位坐标系 q 轴的反电势
+ * e_q = w*psi_f*cos(偏角)，此处转速过零、cos 也过零，e_q 按 t^3 增长：w = a*t，偏角变化 a*t^2/2，
+ * a = (2*pi/T)^2（电角加速度），e_q 低于门限 w_th 的时间 = 2*(2*w_th/a^2)^(1/3)。
+ * 本电机 T = 0.5 s、门限 8.4 rpm 时为 0.14 s（0.28 T），另加反电势滤波延迟。取约 0.4 T
+ * （配置检查 ALIGN_STILL_COVERS_SWING 要求不小于 0.3 T）。 */
 #define ALIGN_STILL_RPM      8.4         /* rpm（反电势约 0.2% 额定母线） */
-#define ALIGN_STILL_S        0.1         /* s */
+#define ALIGN_STILL_S        0.2         /* s */
 /* 最长定位时间（到时直接拖动）= 最短时间 + 阻尼衰减到 2% 的时间 4/(zeta*wn) ≈ 1.6 T + 2.55 T（zeta 0.25），取约 4 T。 */
 #define ALIGN_MAX_S          2.0         /* s */
 /* 定位阻尼：电流闭环定位等效于无阻尼单摆（风机低速几乎无摩擦），转子持续摆动，
