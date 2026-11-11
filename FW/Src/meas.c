@@ -11,7 +11,7 @@ Meas_TypeDef gMeas;
 /* 上电：设置三个一阶低通的移位位数（由配置的时间常数换算），累加器清零，设置母线归一化系数初值 */
 void Meas_Init(void)
 {
-    /* 母线电压、母线电流、转速三个滤波器：窗口见 cfg_ctrl.h MEAS_*_FILT / SPEED_FB_FILT_HZ */
+    /* 母线电压、母线电流、转速三个滤波器：窗口见 cfg_internal.h MEAS_*_FILT / SPEED_FB_FILT_HZ */
     gMeas.speedFilt.u16Sh = SPEED_FB_FILT_SH; gMeas.speedFilt.s32Acc = 0;
     gMeas.vbusFilt.u16Sh = MEAS_VBUS_FILT_SH;  gMeas.vbusFilt.s32Acc = 0;
     gMeas.ibusFilt.u16Sh = MEAS_IBUS_FILT_SH;  gMeas.ibusFilt.s32Acc = 0;

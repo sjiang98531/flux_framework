@@ -20,7 +20,6 @@
 #include "meas.h"
 #include "est.h"
 #include "svpwm.h"
-#include "diag.h"
 #include "qmath.h"
 #include "compiler.h"
 #include "param.h"
@@ -30,22 +29,19 @@ FluxObs_TypeDef gFluxObs;
 /* FMAX：积分状态（磁链 << 16）限幅 = 0.9 满量程；PSI_LIMIT：转子磁链分量限幅 = 32768 / sqrt(2)（两分量平方和不溢出） */
 #define FMAX ((int32_t)29491L * 65536L)
 #define PSI_LIMIT 23170
-#define PSI_MAG_DIV 16      /* |psi_r|（诊断）每 PSI_MAG_DIV 拍开方一次 */
 /* psi_f（磁链 LSB）及 |psi_f|^2：运行时参数（param.c gGain） */
 #define FLUX_NOM    gGain.fluxNomQ15
 #define FLUX_NOM2   gGain.fluxNom2
 
-/* 反电势输入限幅到 ±0.9 满量程，超限时计数（gFluxDiag.inputSatCount，正常应始终为 0） */
+/* 反电势输入限幅到 ±0.9 满量程 */
 FORCE_INLINE int16_t inputClamp(int32_t x)
 {
-    if (x > 29491 || x < -29491) gFluxDiag.inputSatCount++;
     return (int16_t)QMath_Clamp(x, 29491);
 }
-/* 磁链积分一步（饱和），超限时计数（同上） */
+/* 磁链积分一步（饱和） */
 FORCE_INLINE int32_t addFlux(int32_t x, int32_t dx)
 {
     int32_t sum = x + dx;
-    if (sum > FMAX || sum < -FMAX) gFluxDiag.inputSatCount++;
     return QMath_Clamp(sum, FMAX);
 }
 
@@ -91,10 +87,8 @@ void FluxObs_Reset(void)
     gFluxObs.s32PsiAlF = 0; gFluxObs.s32PsiBeF = 0;
     gFluxObs.sEalAvgMA.s32Acc = 0; gFluxObs.sEbeAvgMA.s32Acc = 0;
     gFluxObs.s16PsiAl = 0; gFluxObs.s16PsiBe = 0;
-    gFluxObs.s16PsiRAl = 0; gFluxObs.s16PsiRBe = 0; gFluxObs.s16PsiRMag = 0;
-    gFluxObs.s16Eal = 0; gFluxObs.s16Ebe = 0;
-    gFluxObs.u8DivCnt = 0; gFluxObs.haveCurrent = 0;
-    gFluxDiag.voltageAlpha = 0; gFluxDiag.voltageBeta = 0;
+    gFluxObs.s16PsiRAl = 0; gFluxObs.s16PsiRBe = 0;
+    gFluxObs.haveCurrent = 0;
 }
 
 #if MOTOR_IPM
@@ -148,7 +142,6 @@ void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg)
 /* 内嵌式：有效磁链幅值目标 = psi_f + (Ld-Lq)*id。快环读取这些量（各为一次 32 位读取，
  * 更新时最多有一拍新旧值混用，无害）。 */
 static volatile int32_t s_target2, s_nlfoNorm;     /* |target|^2；256 / |target|^2 的定点（fq 计算见 FluxObs_Run） */
-static volatile int16_t s_targetMag;
 
 /* 内嵌式：设置 NLFO 幅值目标及对应归一化系数（慢环中执行，允许除法） */
 static void setTarget(int32_t tgt)
@@ -157,7 +150,6 @@ static void setTarget(int32_t tgt)
     if (tgt < FLUX_NOM / 2) tgt = FLUX_NOM / 2;   /* 限制 norm <= 4 倍标称值，防止溢出 */
     if (tgt > PSI_LIMIT) tgt = PSI_LIMIT;
     t2 = tgt * tgt;
-    s_targetMag = (int16_t)tgt;
     s_target2 = t2;
     s_nlfoNorm = (int32_t)(((int64_t)gGain.nlfoNormQ8 * FLUX_NOM2) / t2);       /* 慢环，允许除法 */
 }
@@ -166,16 +158,6 @@ static void setTarget(int32_t tgt)
 void FluxObs_SetIdRef(int16_t idQ15)
 {
     setTarget(FLUX_NOM + (((int32_t)gGain.fluxKdlQ15 * idQ15) >> 15));
-}
-
-int16_t FluxObs_TargetMag(void)
-{
-    return s_targetMag;
-}
-#else
-int16_t FluxObs_TargetMag(void)
-{
-    return FLUX_NOM;
 }
 #endif
 
@@ -236,7 +218,6 @@ RAMFUNC void FluxObs_Run(void)
      * 观测器随之复位（Ctrl_FastTick）。18919 = 1/√3（Q15）。 */
     va = (int16_t)(((((int32_t)gSvpwm.Alpha * bus) >> 15) * 18919) >> 15);
     vb = (int16_t)(((((int32_t)gSvpwm.Beta * bus) >> 15) * 18919) >> 15);
-    gFluxDiag.voltageAlpha = va; gFluxDiag.voltageBeta = vb;
 
     /* 电阻压降使用区间平均电流（时间积分量）；Ls*i 使用本拍瞬时值（状态量） */
     ia = current.s16Alpha; ib = current.s16Beta;
@@ -249,10 +230,8 @@ RAMFUNC void FluxObs_Run(void)
 
     ea = inputClamp((int32_t)va - QMath_MulQ15(gFluxObs.s16KRs, ia));
     eb = inputClamp((int32_t)vb - QMath_MulQ15(gFluxObs.s16KRs, ib));
-    gFluxObs.s16Eal = ea; gFluxObs.s16Ebe = eb;
     ea = inputClamp((int32_t)ea - QMath_LowPass(ea, &gFluxObs.sEalAvgMA.s32Acc, gFluxObs.sEalAvgMA.u16Sh));
     eb = inputClamp((int32_t)eb - QMath_LowPass(eb, &gFluxObs.sEbeAvgMA.s32Acc, gFluxObs.sEbeAvgMA.u16Sh));
-    if (++gFluxObs.u8DivCnt >= PSI_MAG_DIV) { gFluxObs.u8DivCnt = 0; }
 
     /* ---- NLFO 径向修正 ------------------------------------------------------
      *     corr = Gain * psi_r * (|psi_f|^2 - |psi_r|^2)
@@ -297,12 +276,5 @@ RAMFUNC void FluxObs_Run(void)
         x = ((ps * c + pb * s) >> 15) - lia;
         y = ((pb * c - ps * s) >> 15) - lib;
     }
-    if (x > PSI_LIMIT || x < -PSI_LIMIT || y > PSI_LIMIT || y < -PSI_LIMIT) gFluxDiag.fluxSatCount++;
     gFluxObs.s16PsiRAl = (int16_t)QMath_Clamp(x, PSI_LIMIT); gFluxObs.s16PsiRBe = (int16_t)QMath_Clamp(y, PSI_LIMIT);
-
-    /* |psi_r| 仅用于诊断 / 置信度，每 16 拍开方一次 */
-    if (gFluxObs.u8DivCnt == PSI_MAG_DIV / 2) {
-        gFluxObs.s16PsiRMag = FocMath_SqrtQ15((int32_t)gFluxObs.s16PsiRAl * gFluxObs.s16PsiRAl +
-                                       (int32_t)gFluxObs.s16PsiRBe * gFluxObs.s16PsiRBe);
-    }
 }

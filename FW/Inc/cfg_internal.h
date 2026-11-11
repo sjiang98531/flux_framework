@@ -1,37 +1,28 @@
 /* ============================================================================
- * @file    cfg_ctrl.h
- * @brief   控制规格配置（物理单位）
+ * @file    cfg_internal.h
+ * @brief   内部控制规格（物理单位），正常使用无需修改
  *
- * 本文件只描述"期望的控制效果"：带宽（Hz）、阻尼比、斜坡（rpm/s）、电流（A）、时间（s）。
- * 所有定点增益由 cfg_derived.h 根据本文件、cfg_motor.h、cfg_board.h 自动换算。
+ * 配置分三层：电机 cfg_motor.h、应用 cfg_app.h、内部（本文件），另有驱动板 cfg_board.h（见 cfg_app.h 文件头）。
+ * 本文件描述"期望的控制效果"：带宽（Hz）、阻尼比、时间常数（s）、额定值的倍数，全部由电机参数、驱动板参数
+ * 和应用层配置自动换算；定点增益由 cfg_derived.h 计算。更换电机或应用时无需修改本文件。
+ * 已移至 cfg_app.h 的宏在原位置保留一行"见 cfg_app.h"，其原理说明仍在本文件。
  *
  * 参数分三类：
  *   A 类  物理输入：实测值或器件手册值（主要在 cfg_motor.h / cfg_board.h）；
  *   B 类  设计指标及其推导量：带宽、阻尼、时间常数，以及由 A/B 类推出的量；
- *   C 类  经验值：暂无物理推导，已在对应注释中标明。
- *
- * ---- 更换电机 / 驱动板检查清单 -------------------------------------------------
- * 必须修改（其余参数均据此自动换算）：
- *   cfg_motor.h  极对数、Rs、Ld/Lq、psi_f、MOTOR_ACC_RPM_S_PER_A（转矩 -> 加速度）、
- *                铭牌额定电流 / 转速 / 功率、电感饱和 MOTOR_LS_SAT_*（未知时 PER_A = 0 关闭）
- *   cfg_board.h  采样电阻 / 运放增益、母线额定值 / 量程、PWM 频率、死区 INVERTER_DT_*、转向 RUN_DIR
- *   Rs、死区、Ld/Lq、L(i)、psi_f、加速度系数可用参数辨识模式测量（cfg_board.h IDENT_TEST = 1，
- *   结果在 gIdent，见 identify.h）。辨识结束后结果自动写入运行参数（仅 RAM，见 param.h；
- *   辨识值须在配置值的 1/3 ~ 3 倍以内才会采用）。长期使用应将 gParam 抄回 cfg_motor.h / cfg_board.h。
- *   极对数与铭牌额定值须手工填写。
- * 更换电机后须重新确定的转速门限（直接以 rpm 给出，不随电机参数自动换算，估算方法见"转速门限"一节）：
- *   OPENLOOP_HANDOVER_RPM、OPENLOOP_SPIN_MIN_RPM、OPENLOOP_FALLBACK_RPM、FLY_CATCH_RPM、FLY_REV_SPIN_MIN_RPM、
- *   FLY_LOW_MIN_RPM、FLY_STILL_RPM、ALIGN_STILL_RPM、SPIN_LOST_RPM、TRACK_END_RPM、FLUX_HPF_COMP_MIN_RPM、PWM_5SEG_RPM
- * 首次上电调试时确认（已写成额定值的倍数，一般无需修改，但与负载有关）：
- *   OPENLOOP_CURRENT_A / OPENLOOP_ACC_RPM_S（I/F 拖动电流、加速度，负载越重电流越大）、
- *   STARTUP_MODE（起动方式：IPD 快但有脉冲声，定位静音但慢；饱和不明显时 IPD 自动退回定位）、
- *   IPD_PEAK_A / IPD_PULSE_S（噪声与对比度的折中）、SPD_PI_LIMIT / IBUS_LIMIT_A（相电流、母线电流上限）
- * 一般无需修改（按带宽 / 阻尼 / 时间常数给出的设计指标，随电机自动换算）：
- *   CURRENT_BW_HZ、SPEED_WN_HZ / ZETA、FLUXPLL_*、FLUX_*（观测器）、BUS_*（母线电压环）、FLY_*（飞车）、各滤波时间常数
- * 经验值（C 类）：POWER_KP / POWER_KI（母线电流限 PI）
+ *   C 类  经验值：暂无物理推导，已在对应注释中标明（POWER_KP / POWER_KI、PRECHARGE_TIME）。
  * ==========================================================================*/
-#ifndef CFG_CTRL_H
-#define CFG_CTRL_H
+#ifndef CFG_INTERNAL_H
+#define CFG_INTERNAL_H
+
+/* ===================== 定标 ============================================== */
+/* 速度标幺基准：Q15 速度 32767 对应 SPEED_MAX rpm，同时也是 PLL 速度上限（s32Speed 在 2^31 处饱和）。
+ * 仅为定标量，须高于超速保护转速（配置检查 SPEED_OC_FITS）。 */
+#define SPEED_MAX               3200.0
+/* 极对数别名（Board/ 下的板级代码使用） */
+#define POLEPAIRS               MOTOR_POLE_PAIRS
+/* 电感饱和模型的下限（相对 MOTOR_LQ_H）：割线电感 L(i) 最低降到该倍数（拐点与斜率为电机参数，见 cfg_motor.h） */
+#define MOTOR_LS_SAT_MIN        0.5
 
 /* ===================== 转速门限 ========================================== */
 /* 所有转速门限均直接以 rpm（机械转速）给出。
@@ -49,8 +40,8 @@
  * 这是对"转速指令"的判断，与观测器能力无关，故直接以 rpm 给出。
  * 停机均为软停机：先将电流按 CURRENT_SLEW_A_S（见"斜坡"）降到 0，再关闭 PWM
  * （本电机 4 A/s：闭环 0.3 A 约 75 ms，I/F 1 A 约 0.25 s）。 */
-#define STOP_TO_RUN_SPEED       15.0        /* rpm，起动门限 */
-#define RUN_TO_STOP_SPEED       12.0        /* rpm，停机门限（须小于起动门限） */
+/* STOP_TO_RUN_SPEED：见 cfg_app.h */
+/* RUN_TO_STOP_SPEED：见 cfg_app.h */
 
 /* ===================== 电流环 ============================================ */
 /* 零极点对消设计：Kp = 2*pi*BW*L，Ki = 2*pi*BW*Rs（d 轴用 Ld，q 轴用 Lq）。
@@ -86,7 +77,7 @@
 #define SPEED_FB_FILT_HZ        (0.35 * FLUXPLL_WN_HZ)      /* 本电机 5.25 Hz -> 32 拍（实际 4.97 Hz） */
 /* 速度环输出限幅（相电流峰值）：为加减速、换向留出余量（回馈电流同样受此限制）；
  * 上限受电机热极限与退磁电流约束，需要限制回馈泵升时可减小。 */
-#define SPD_PI_LIMIT            4.0         /* A */
+/* SPD_PI_LIMIT：见 cfg_app.h */
 
 /* 轨迹前馈：iq_ff = J * d(w*)/dt / Kt = (每拍斜坡增量换算为 rpm/s) / b，加速、减速均施加。
  * 二自由度速度控制：给定轨迹（斜坡）的加速度由前馈直接给出转矩，PI 只修正负载与模型误差。
@@ -99,8 +90,8 @@
 #define IBUS_LIMIT_A            3.5         /* A */
 
 /* ===================== 斜坡 ============================================== */
-#define SPEED_RAMP_UP           200.0       /* rpm/s */
-#define SPEED_RAMP_DOWN         200.0
+/* SPEED_RAMP_UP：见 cfg_app.h */
+/* SPEED_RAMP_DOWN：见 cfg_app.h */
 /* 反转（指令与当前转速反号）时过零前的减速斜率。同向调速仍使用上面两个斜率；反转需先将转速降到
  * OPENLOOP_FALLBACK_RPM 再交给 I/F，此段使用较大斜率。母线电压控制器（BUS_VDC_*）按回馈功率限制时，
  * 实际减速可能更慢。 */
@@ -138,9 +129,9 @@
  *                       转子恰好停在 180° 死点时本次起动会失步，报堵转后自动重启（小概率，见下文"定位"）。
  * STARTUP_MODE 为上电默认值；运行中可修改 gStartup.mode（调试器或上位机通信），下一次起动生效（进入 Align 时读取一次）。
  * 飞车接管（转子在转时直接接管）与 Spin 回退 I/F 不受其影响。 */
-#define STARTUP_MODE_IPD        0
-#define STARTUP_MODE_ALIGN      1
-#define STARTUP_MODE            STARTUP_MODE_IPD
+/* STARTUP_MODE_IPD：见 cfg_app.h */
+/* STARTUP_MODE_ALIGN：见 cfg_app.h */
+/* STARTUP_MODE：见 cfg_app.h */
 #define IPD_PULSE_SHAPE         0           /* 0 方波，1 正弦 */
 #define IPD_PEAK_A              (0.8 * MOTOR_I_RATED_A)     /* A，不饱和方向的电流峰值（本电机 0.6 A） */
 #define IPD_PULSE_S             1.0e-3      /* s，单个方向的脉冲总宽（方波正负各一半） */
@@ -155,7 +146,7 @@
 #define ALIGN_A              (0.8 * MOTOR_I_RATED_A)     /* A，本电机 0.6 A */
 #define ALIGN_RAMP_A_S       3.0         /* A/s，定位电流上升斜率 */
 /* 最短定位时间：死点附近（转矩约为 0）需先等转子离开死点再摆回，约 1.5 个周期，取约 1.6 T。 */
-#define ALIGN_MIN_S          0.8         /* s */
+/* ALIGN_MIN_S：见 cfg_app.h */
 /* 定位结束条件：满足最短时间后，转子转速（由反电势估计）低于 ALIGN_STILL_RPM 并持续 ALIGN_STILL_S，
  * 才开始拖动。摆到端点时速度也会短暂过零，持续窗口应长于端点附近"看似静止"的时间。
  * 最坏的端点位于离定位轴 90° 处（从死点附近摆下后的第一个回摆端点）：判据使用定位坐标系 q 轴的反电势
@@ -163,10 +154,10 @@
  * a = (2*pi/T)^2（电角加速度），e_q 低于门限 w_th 的时间 = 2*(2*w_th/a^2)^(1/3)。
  * 本电机 T = 0.5 s、门限 8.4 rpm 时为 0.14 s（0.28 T），另加反电势滤波延迟。取约 0.4 T
  * （配置检查 ALIGN_STILL_COVERS_SWING 要求不小于 0.3 T）。 */
-#define ALIGN_STILL_RPM      8.4         /* rpm（反电势约 0.2% 额定母线） */
-#define ALIGN_STILL_S        0.2         /* s */
+/* ALIGN_STILL_RPM：见 cfg_app.h */
+/* ALIGN_STILL_S：见 cfg_app.h */
 /* 最长定位时间（到时直接拖动）= 最短时间 + 阻尼衰减到 2% 的时间 4/(zeta*wn) ≈ 1.6 T + 2.55 T（zeta 0.25），取约 4 T。 */
-#define ALIGN_MAX_S          2.0         /* s */
+/* ALIGN_MAX_S：见 cfg_app.h */
 /* 定位阻尼：电流闭环定位等效于无阻尼单摆（风机低速几乎无摩擦），转子持续摆动，
  * 若拖动开始时转子仍在运动则易失步。q 轴反电势正比于转子转速，按其反向施加少量 q 轴电流即构成阻尼。
  * ALIGN_ZETA 为摆的阻尼比，0 表示不加阻尼。不宜过大：反电势计算需减去 Rs*iq，Rs 配置误差会形成正反馈，
@@ -176,7 +167,7 @@
  * 加速度取拖动电流可产生的最大加速度（MOTOR_ACC_RPM_S_PER_A * OPENLOOP_CURRENT_A，本电机 0.75 A 约 376 rpm/s）
  * 的 1/3 作为余量，更换电机时按惯量自动缩放。
  * 切换转速应使反电势远大于电压误差：取反电势约 2.5% 额定母线（105 rpm 时约 7.7 V）。 */
-#define OPENLOOP_CURRENT_A            (1.0 * MOTOR_I_RATED_A)     /* A，本电机 0.75 A */
+/* OPENLOOP_CURRENT_A：见 cfg_app.h */
 #define OPENLOOP_ACC_RPM_S            (0.33 * MOTOR_ACC_RPM_S_PER_A * OPENLOOP_CURRENT_A)   /* rpm/s（本电机 124 rpm/s） */
 /* Spin -> I/F 回退（热接管）时的开环电流：开环转矩 = I·Kt·sin(δ)，δ 超过 90° 即失步。
  *   I = max(OPENLOOP_CURRENT_A, |回退时的 iq| / sin(OPENLOOP_WARM_DELTA_DEG))：负载角 δ 不超过 45°，
@@ -186,13 +177,13 @@
 #define OPENLOOP_WARM_DELTA_DEG       45.0
 #define OPENLOOP_REV_CURRENT_A        (OPENLOOP_CURRENT_A / 0.75)       /* A，本电机 1.0 A */
 #define OPENLOOP_WARM_MAX_A           (2.0 * MOTOR_I_RATED_A)     /* A，本电机 1.5 A */
-#define OPENLOOP_HANDOVER_RPM         105.0       /* rpm（反电势约 2.5% 额定母线） */
+/* OPENLOOP_HANDOVER_RPM：见 cfg_app.h */
 /* 闭环运行的最低指令转速：|指令| 低于该值时电机以指令转速开环（I/F）运行。
  * 闭环可运行到比切换转速更低的转速，因此该值低于 OPENLOOP_HANDOVER_RPM。 */
-#define OPENLOOP_SPIN_MIN_RPM         59.0        /* rpm（反电势约 1.4% 额定母线） */
+/* OPENLOOP_SPIN_MIN_RPM：见 cfg_app.h */
 /* Spin 失锁判据：指令同向、估计转速却降到该值以下（正常减速在 OPENLOOP_FALLBACK_RPM 已交给 I/F，同向降到此值
  * 只可能是观测器失锁或堵转）-> 停机并重新进行飞车检测。每 SPIN_CHECK_S 检查一次。C 类经验值。 */
-#define SPIN_LOST_RPM           40.0        /* rpm */
+/* SPIN_LOST_RPM：见 cfg_app.h */
 #define SPIN_CHECK_S            0.010       /* s */
 /* 闭环 -> I/F 的回退转速：指令反向或 |指令| < OPENLOOP_SPIN_MIN_RPM 时，Spin 减速到此转速即交给 I/F
  * （此时观测器仍锁定，交接角度准确），由开环带过零点，反向后再切回闭环。
@@ -200,7 +191,7 @@
  * 观测器在 200 rpm 以下开始失准；加速时两者同向，低转速仍可靠。
  * 回退只取决于指令（反向 / 低于 OPENLOOP_SPIN_MIN_RPM），切换只在指令同向且 >= OPENLOOP_SPIN_MIN_RPM 时发生，
  * 二者互斥，不会来回跳变。 */
-#define OPENLOOP_FALLBACK_RPM         252.0       /* rpm（反电势约 6% 额定母线） */
+/* OPENLOOP_FALLBACK_RPM：见 cfg_app.h */
 /* 切换融合时间：切换后 id 从 I/F 电流的 d 分量渐变到 0、加速前馈渐入所用的时间。
  * 观测器角度误差引起的转矩在此期间淡出，需让速度环来得及补偿：取速度环时间常数 1/(2*pi*SPEED_WN_HZ)。 */
 #define OPENLOOP_BLEND_S              (1.0 / (2.0 * 3.14159265359 * SPEED_WN_HZ))     /* 本电机 0.20 s */
@@ -223,14 +214,14 @@
 
 #define FLYBRAKE_TIME           0.1         /* s，短路电流低于门限持续该时间即判为静止 */
 /* 静止判定转速：短路电流 = 反电势 / |Rs + jwL|，低速时约为 反电势 / Rs。以该转速下的短路电流作为
- * "在转"的电流门限 FLYCURRENT_TH_PU（本电机约 0.158 A），仅与电机参数有关，与采样电路无关。 */
-#define FLY_STILL_RPM           31.5        /* rpm（反电势约 0.75% 额定母线） */
+ * "在转"的电流门限 FLYCURRENT_TH_PU（本电机约 0.316 A），仅与电机参数有关，与采样电路无关。 */
+/* FLY_STILL_RPM：见 cfg_app.h */
 /* 制动后等待停稳：短路电流低于门限只说明转速低于 FLY_STILL_RPM，
  * 转子可能仍在转动。短接时低速制动转矩 ≈ B·ω，B = 1.5 p² ψf² / Rs，转速按 τ = J / B 指数衰减
  * （J 由 MOTOR_ACC_RPM_S_PER_A 反推，本电机 τ ≈ 0.4 s）。若检测到过转动，电流低于门限后再短接
  * FLYBRAKE_TIME + τ·ln(门限转速 / FLY_STILL_END_RPM) 才开始定位（本电机约 1.2 s）；
  * 始终静止（冷起动）时仍为 FLYBRAKE_TIME，起动时间不受影响。 */
-#define FLY_STILL_END_RPM       2.0         /* rpm，开始定位时允许的残余转速 */
+/* FLY_STILL_END_RPM：见 cfg_app.h */
 #define FLYCURRENT_TH_PU        (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB \
                                  / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX）：FLY_STILL_RPM 下的短路电流 */
 #define CALIPWMPERCENT          (0.99)      /* 短接时下桥占空比 */
@@ -239,7 +230,7 @@
  * 转速低于该值才关闭 PWM 回到 Stop。在跟踪期间重新给指令可直接闭环加速，无需飞车检测。
  * 跟踪期间零电流、无 Rs*i 误差，角度很准；限制因素是重新加速时带电流的那一刻，死区补偿误差越大、
  * 转速越低，角度误差越大。须不低于 OPENLOOP_HANDOVER_RPM（cfg_check_list.h 检查）。 */
-#define TRACK_END_RPM           130.0       /* rpm */
+/* TRACK_END_RPM：见 cfg_app.h */
 /* 短接后等待电流暂态衰减再开始测量：暂态按 L/R 衰减（本电机 3.1 ms），实际衰减约为模型值的 2 倍，
  * 取 10 倍 L/R（约 5 个实际时间常数，暂态 < 1%）。 */
 #define FLY_SETTLE_TAUS         10.0        /* x L/R（本电机 31 ms） */
@@ -272,13 +263,13 @@
 #define FLY_PULSE_N             6
 #define FLY_BRAKE_TIMEOUT_S     10.0        /* s，短接制动超过该时间仍未停止（如持续受风）-> 故障 */
 /* 低于 FLY_CATCH_RPM 但 >= FLY_LOW_MIN_RPM：按测得的角度 / 转速直接进入 I/F 开环（与 Spin 回退相同的接法），省去制动和定位 */
-#define FLY_LOW_MIN_RPM         42.0        /* rpm，更低则制动；须高于静止门限 FLY_STILL_RPM（反电势约 1% 额定母线） */
+/* FLY_LOW_MIN_RPM：见 cfg_app.h */
 /* 转子与指令反向时：与同向相同，按转子自身方向接管（>= FLY_REV_SPIN_MIN_RPM 进 Spin，>= FLY_LOW_MIN_RPM 进 I/F），
  * 随后走正常换向流程：速度环减速 -> OPENLOOP_FALLBACK_RPM 回退 I/F -> I/F 过零 -> 反向切闭环。
  * 全程受控、电流有限幅，与运行中直接给反转指令为同一路径。 */
 /* 反向接管时直接进入 Spin 的下限：需与回退点 OPENLOOP_FALLBACK_RPM 保持足够距离（约 2 倍），使 Spin 中的 PLL 有时间收敛；
  * 更低则直接进入 I/F（见 flystart.c）。 */
-#define FLY_REV_SPIN_MIN_RPM    504.0       /* rpm */
+/* FLY_REV_SPIN_MIN_RPM：见 cfg_app.h */
 
 /* ===================== 回馈减速：母线电压控制 ==================================
  * 物理背景：无制动电阻、整流桥不能回馈电网时，减速过程中转子动能只能进入母线电容，或在电机 / 逆变器中转为热量。
@@ -351,7 +342,7 @@
 /* 去直流的相位补偿：反电势先高通再积分，等效 1/(s+wc)，磁链角超前 atan(wc/w)
  * （wc = 1/0.256 s：80 rpm 时 5.3°，30 rpm 时 14°）。按估计转速将输出 psi_s 反向旋转该角度
  * （慢环计算 sin/cos，快环 4 次乘法）；转速低于 FLUX_HPF_COMP_MIN_RPM 时不补偿，到 2 倍该转速线性补满。 */
-#define FLUX_HPF_COMP_MIN_RPM   21.0        /* rpm（反电势约 0.5% 额定母线） */
+/* FLUX_HPF_COMP_MIN_RPM：见 cfg_app.h */
 /* 补偿所用转速：Spin 中使用 PLL 转速；I/F 拖动时使用开环转速（转子同步，比估计值可靠）；
  * 定位、飞车检测、停机时不补偿。 */
 
@@ -381,6 +372,6 @@
 /* ===================== PWM 调制方式 ======================================== */
 /* 七段式 -> 五段式（不连续 PWM，开关损耗减少约 1/3，但低调制比时电流畸变较大）的切换转速。
  * 本质上由调制比（反电势 / 母线）决定，更换电机时宜保持调制比约 0.26（反电势约 15% 额定母线）。 */
-#define PWM_5SEG_RPM            640.0       /* rpm */
+/* PWM_5SEG_RPM：见 cfg_app.h */
 
 #endif

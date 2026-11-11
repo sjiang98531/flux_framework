@@ -8,7 +8,7 @@
  *        └─ 静止 -> Align -> OpenLoop（I/F）-> Spin
  *
  *   I/F（开环拖动）：
- *     Align 子状态按起动方式 gStartup.mode（上电默认 STARTUP_MODE，cfg_ctrl.h）二选一：
+ *     Align 子状态按起动方式 gStartup.mode（上电默认 STARTUP_MODE，cfg_app.h）二选一：
  *     IPD（STARTUP_MODE_IPD，ipd.h）：以 12 个方向的电压脉冲确定 N 极角，直接从该角进入 OpenLoop，
  *       电流从 1/4 起按 CURRENT_SLEW_A_S 升至 OPENLOOP_CURRENT_A（加速度同比例）；对比度不足时退回定位。
  *     定位（STARTUP_MODE_ALIGN，静音起动）：d 轴电流斜坡升至 ALIGN_A，在 0° 等待转子停稳；
@@ -47,7 +47,7 @@ void Startup_ResetRun(void);
 void Startup_ChargeFast(void);    /* 预充：三相下桥轮流导通为自举电容充电，到时进入飞车检测 */
 void Startup_ChargeSlow(void);    /* 预充：仅滤波 */
 void Startup_FlyCheckFast(void);    /* 飞车检测：执行检测，按结论切换状态 */
-void Startup_FlyCheckSlow(void);    /* 飞车检测：滤波、诊断量开方 */
+void Startup_FlyCheckSlow(void);    /* 飞车检测：测量滤波 */
 void Startup_AlignFast(void);    /* IPD 输出脉冲 / 定位运行电流环 */
 void Startup_AlignSlow(void);    /* IPD 判定 / 定位电流斜坡 + 阻尼 + 判停稳 */
 

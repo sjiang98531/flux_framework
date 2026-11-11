@@ -7,13 +7,12 @@
  *   读取电流 / 母线 -> Ctrl_FastTick()（状态机快环）-> 按分频挂起慢环
  * 慢环 = PendSV：快环每 PWM_FREQ / SLOWLOOP_FREQ 拍挂起一次，优先级最低（3），可被快环（ADC，1）、
  * 硬件过流（EPWM，0）随时抢占。只要快环 + 慢环的 CPU 占用低于 100%，慢环即严格每 16 个 PWM 周期执行一次，
- * 与 PWM 同相，不受 main() 中其他代码影响。上一次慢环尚未完成又到期 = 超时（gFluxDiag.slowOverrun 计数）。
+ * 与 PWM 同相，不受 main() 中其他代码影响。
  * ==========================================================================*/
 #include "hal.h"
 #include "meas.h"
 #include "protect.h"
 #include "supervisor.h"
-#include "diag.h"
 #include "SC_it.h"
 #include "compiler.h"
 
@@ -105,15 +104,10 @@ void EPWM_IRQHandler(void)
     }
 }
 
-static volatile uint8_t s_slowBusy;     /* 慢环（PendSV）执行中 */
-
-/* 慢环中断（PendSV，最低优先级，见 HAL_StartInterrupts）：ADC 中断每 16 拍挂起一次。
- * s_slowBusy 供快环判断"上一次慢环尚未完成"（超时计数） */
+/* 慢环中断（PendSV，最低优先级，见 HAL_StartInterrupts）：ADC 中断每 16 拍挂起一次 */
 void PendSV_Handler(void)
 {
-    s_slowBusy = 1;
     Ctrl_SlowTick();
-    s_slowBusy = 0;
 }
 
 /* 快环中断：ADC 序列转换结束（每个 PWM 周期一次，采样时刻由 EPWM 触发，位于 PWM 周期中点）。
@@ -129,11 +123,8 @@ RAMFUNC void ADC_IRQHandler(void)
             Ctrl_FastTick();
             if (++s_u8SlowDiv >= gHal.slowLoopDiv) {
                 s_u8SlowDiv = 0;
-                /* 上一次慢环仍在执行（被本拍抢占）或仍挂起未开始 = 超时；PendSV 只有一个挂起位，本次相当于丢弃 */
-                if ((s_slowBusy || (SCB->ICSR & SCB_ICSR_PENDSVSET_Msk)) && gFluxDiag.slowOverrun < 0xFFFF) gFluxDiag.slowOverrun++;
                 SCB->ICSR = SCB_ICSR_PENDSVSET_Msk;
             }
-            gFluxDiag.sampleCount++;
         }
     }
 }

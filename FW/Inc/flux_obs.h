@@ -28,10 +28,9 @@ typedef struct {
     int32_t s32PsiAlF, s32PsiBeF;            /* 定子磁链 Q16.16 */
     LowPass_TypeDef sEalAvgMA, sEbeAvgMA;   /* e 的去直流 */
     int16_t s16PsiAl, s16PsiBe;              /* 定子磁链 Q15 */
-    int16_t s16PsiRAl, s16PsiRBe, s16PsiRMag;/* 转子磁链 Q15（RMag 每 16 拍算一次，诊断用） */
-    int16_t s16Eal, s16Ebe;                  /* v - Rs*i（高通之前，诊断用） */
+    int16_t s16PsiRAl, s16PsiRBe;            /* 转子磁链 Q15 */
     int16_t previousIa, previousIb;          /* 上一拍 αβ 电流（求两拍平均） */
-    uint8_t u8DivCnt, haveCurrent;           /* 16 拍分频计数（|psi_r| 诊断）；previousIa/Ib 有效 */
+    uint8_t haveCurrent;                     /* previousIa/Ib 有效 */
 } FluxObs_TypeDef;
 
 extern FluxObs_TypeDef gFluxObs;
@@ -45,8 +44,6 @@ void FluxObs_BeginOpenLoop(void);
 void FluxObs_SeedCatch(int16_t theta);
 /* 执行本拍模型。调用前须已计算 gMeas.iab（Clarke），且本拍尚未调制（gSvpwm.Alpha/Beta 仍为上一拍指令）。 */
 void FluxObs_Run(void);
-/* 当前 |psi_r| 的目标值（Q15 磁链），用于诊断 / 置信度 */
-int16_t FluxObs_TargetMag(void);
 /* 慢环每拍：按转速更新去直流相位补偿，按母线平均值更新死区电压误差幅值 */
 void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg);
 #if MOTOR_IPM

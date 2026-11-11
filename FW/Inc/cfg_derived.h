@@ -2,7 +2,7 @@
  * @file    cfg_derived.h
  * @brief   配置总入口及自动推导的定点常量
  *
- *   cfg_board.h  驱动板（HAL）     cfg_motor.h  电机本体     cfg_ctrl.h  控制规格
+ *   cfg_board.h  驱动板（HAL）     cfg_motor.h  电机（必改）     cfg_app.h  应用（按需改）与调试项     cfg_internal.h  内部（无需修改）
  *
  * 本文件只做单位换算与定点化，正常调参无需修改。增益一律截断取整（与 Q15() 宏一致）。
  * ==========================================================================*/
@@ -11,13 +11,14 @@
 
 #include "cfg_board.h"
 #include "cfg_motor.h"
-#include "cfg_ctrl.h"
+#include "cfg_app.h"
+#include "cfg_internal.h"
 #include "qtypes.h"
 
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E005CUL
+#define BUILD_TAG            0xF20E005DUL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -34,7 +35,7 @@
                                  (SPEED_FB_FILT_TICKS) <= 64.0 ? 6 : 7)
 #define SPEED_FB_FILT_REAL_HZ   (SLOWLOOP_FREQ / (2.0 * MATH_PI * (double)(1 << SPEED_FB_FILT_SH)))    /* 取整后实际的转速滤波截止频率 Hz */
 
-/* 母线门限排布（cfg_ctrl.h"门限排布"）：测量延迟 Td 内最大回馈能量对应的电压升 dV_d，从过压门限往下每 dV_d 一档 */
+/* 母线门限排布（cfg_internal.h"门限排布"）：测量延迟 Td 内最大回馈能量对应的电压升 dV_d，从过压门限往下每 dV_d 一档 */
 /* 时间常数 -> 一阶移位滤波的位数：窗口 2^SH 拍取最接近 tau * f 的 2 的幂（对数意义四舍五入），0~13 */
 #define SH_FOR_TICKS(t)      ((t) < 1.414 ? 0 : (t) < 2.828 ? 1 : (t) < 5.657 ? 2 : (t) < 11.31 ? 3 : (t) < 22.63 ? 4 : \
                                  (t) < 45.25 ? 5 : (t) < 90.51 ? 6 : (t) < 181.0 ? 7 : (t) < 362.0 ? 8 : (t) < 724.1 ? 9 : \
@@ -154,9 +155,9 @@
 /* 电流环电压单位（UDC_MAX 基准）下的 Rs：Q15 电流 -> Q15 电压（定位阻尼从 q 轴电压里扣电阻压降用） */
 #define FOC_KRS_Q15_OF(R)       Q15((R) * I_MAX / UDC_MAX)
 #define FLUX_KL_Q15_OF(L)       Q15((L) * I_MAX / FLUX_PSI_N)
-/* IPD（cfg_ctrl.h）：对比度门限 Q8 */
+/* IPD（cfg_internal.h）：对比度门限 Q8 */
 #define IPD_MIN_RATIO_Q8        ((uint16_t)(IPD_MIN_RATIO * 256.0 + 0.5))
-/* IPD 脉冲：时间换成 PWM 拍，电压由目标电流和 d 轴电感算（cfg_ctrl.h 的说明） */
+/* IPD 脉冲：时间换成 PWM 拍，电压由目标电流和 d 轴电感算（cfg_internal.h 的说明） */
 #define IPD_PULSE_TICKS         ((uint16_t)(IPD_PULSE_S * PWM_FREQ + 0.5))
 #define IPD_GAP_TICKS           ((uint16_t)(IPD_GAP_S * PWM_FREQ + 0.5))
 #define IPD_PULSE_V_OF(L)       (IPD_PULSE_SHAPE ? IPD_PEAK_A * MATH_PI * (L) / IPD_PULSE_S \
@@ -246,7 +247,7 @@
 #define FLY_SETTLE_BLOCKS_OF(L, R) ((uint16_t)(FLY_SETTLE_TAUS * (L) / (R) * 1000.0 + 0.5))
 #define FLY_SETTLE_BLOCKS       FLY_SETTLE_BLOCKS_OF(MOTOR_LD_H, MOTOR_RS_OHM)
 #define FLY_STILL_BLOCKS        ((uint16_t)(FLYBRAKE_TIME * 1000.0 + 0.5))
-/* 短接制动的转速衰减时间常数 τ = J / B（见 cfg_ctrl.h FLY_STILL_END_RPM）：
+/* 短接制动的转速衰减时间常数 τ = J / B（见 cfg_internal.h FLY_STILL_END_RPM）：
  *   Kt = 1.5 p ψf（N·m/A），J = Kt / (MOTOR_ACC_RPM_S_PER_A · 2π/60)，B = 1.5 p² ψf² / Rs（N·m·s/rad，低速 ωL << Rs） */
 #define FLY_KT_NM_A             (1.5 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB)    /* 转矩常数 N·m/A */
 #define FLY_J_KGM2              (FLY_KT_NM_A / (MOTOR_ACC_RPM_S_PER_A * 2.0 * MATH_PI / 60.0))    /* 转动惯量 kg·m²（由加速度系数反推） */

@@ -9,7 +9,7 @@
  *   最大相平均 |i| 低于 PHASELESS_RATIO 倍噪声峰值（gHal.adcNoisePk，上电自测）的窗口不做判断：
  *   电流过小时断相与噪声无法区分，宁可不判也不误判（轻载风机）。
  *   窗口 2 s 内未转满（低于约 24 rpm）则丢弃重新开始，同时防止累加溢出。
- * 超速：|转速| > PROTECT_SPEED_OC_RPM，门限由反电势与母线电压推导（cfg_ctrl.h）。
+ * 超速：|转速| > PROTECT_SPEED_OC_RPM，门限由反电势与母线电压推导（cfg_internal.h）。
  * 堵转：由失锁停机 -> 重新检测 -> I/F 超时（MC_FAULT_ROTOR_BLOCKED）处理。
  * ==========================================================================*/
 #ifndef PROTECT_H
@@ -23,7 +23,6 @@ typedef struct {
     uint32_t sumAbsC;
     uint32_t sampleN;                 /* 当前窗口的快环拍数 */
     uint32_t angleAcc;               /* 当前窗口转过的电角度（|转速 Q15| 的慢环累加） */
-    uint16_t ratioLastX16;         /* 上一个已判断窗口：最大 / 最小 x 16（诊断用） */
     int16_t  ovpCmd;                    /* 母线过压门限 Q15 */
     int16_t  uvpCmd;                    /* 母线欠压门限 Q15 */
     volatile uint8_t busFlags;          /* 母线越限判定（PROTECT_BUS_OV / UV，慢环写、快环读） */

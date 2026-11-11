@@ -73,7 +73,7 @@ static int16_t regenIqAllowed(void)
     return (int16_t)(((BUS_REGEN_FULL_Q15 - v) * BUS_REGEN_K_Q12) >> 12);
 }
 
-/* 母线电压控制器（原理见 cfg_ctrl.h"回馈减速"）。在斜坡运行之前调用：
+/* 母线电压控制器（原理见 cfg_internal.h"回馈减速"）。在斜坡运行之前调用：
  * 斜坡朝 0 方向运行（减速、回馈方向）时，将该侧步长限制为"允许回馈功率所能支持的减速度"：
  *   step = min(额定, K * (Vref^2 - V^2) / |n|)
  * 同时计算受限程度 lam = 1 - step / 额定，供损耗制动 id 使用。只读写 gSpd，慢环调用。 */

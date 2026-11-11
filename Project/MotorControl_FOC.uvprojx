@@ -391,9 +391,14 @@
               <FilePath>..\FW\Inc\cfg_motor.h</FilePath>
             </File>
             <File>
-              <FileName>cfg_ctrl.h</FileName>
+              <FileName>cfg_app.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\FW\Inc\cfg_ctrl.h</FilePath>
+              <FilePath>..\FW\Inc\cfg_app.h</FilePath>
+            </File>
+            <File>
+              <FileName>cfg_internal.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\FW\Inc\cfg_internal.h</FilePath>
             </File>
             <File>
               <FileName>cfg_board.h</FileName>

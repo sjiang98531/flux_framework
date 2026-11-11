@@ -41,7 +41,7 @@ static uint8_t s_catchStep;             /* 接管分三拍完成，避免单拍�
 static uint32_t s_catchOff;             /* 阻抗角 + 90°（2^32 = 一圈） */
 
 /* ===========================================================================
- * 短脉冲测速（见 cfg_ctrl.h"短脉冲测速"）
+ * 短脉冲测速（见 cfg_internal.h"短脉冲测速"）
  *   P_ON：下桥短接，电流达到门限 s_pIth2 且至少 FLY_PULSE_MIN_TICKS 拍（第一个脉冲），或达到第一个脉冲的长度后松开
  *   P_GAP：上下桥全关（电流经二极管迅速降到 0），补足 FLY_PULSE_PERIOD_TICKS 后施加下一个脉冲
  *   每个脉冲末记录一次电流矢量；相邻两次的夹角 = 一个脉冲周期内转过的电角度
@@ -94,7 +94,6 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
                           : ((m2 < s_pIth2 || s_pTick < FLY_PULSE_MIN_TICKS) && s_pTick < FLY_PULSE_MAX_TICKS))
             return FLY_BUSY;
         HAL_PwmLowOff();                                /* 松开：上下桥全关 */
-        gFly.pulseM2 = (uint32_t)m2;                    /* 幅值的平方；开方（仅用于诊断显示）在慢环执行 */
         if (!gFly.pulseLen) {
             gFly.pulseLen = s_pTick;
             if (m2 < s_pIth2) return pulseFallback(FLY_PR_TOO_SLOW);     /* 最长脉冲也达不到精度要求的电流：转速太低（或静止） */
@@ -166,8 +165,6 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
         gFly.speedCatch = s_pSpd;
         gFly.speed = s_pSpd;
         gFly.stage = FLY_STAGE_CATCH;
-        gFly.catches++;
-        gFly.pulseCatches++;
         s_pState = P_DONE;
         if (w >= flySpinMin((s_pSpd > 0) == (cmdSign > 0))) { gFly.pulseResult = FLY_PR_SPIN; return FLY_CATCH; }
         gFly.pulseResult = FLY_PR_OPENLOOP;
@@ -198,7 +195,7 @@ void FlyStart_Begin(void)
     pulseBegin();
     s_sumA = 0; s_sumB = 0; s_tick = 0; s_blocks = 0;
     s_havePrev = 0; s_haveCD = 0; s_sawSpin = s_mayMove; s_prevSpd = 0; s_stillDone = 0; s_catchStep = 0;
-    gFly.stage = FLY_STAGE_SETTLE; gFly.amp = 0; gFly.ampM2 = 0; gFly.pulseM2 = 0; gFly.speed = 0; gFly.stable = 0; gFly.still = 0; gFly.brakeMs = 0;
+    gFly.stage = FLY_STAGE_SETTLE; gFly.ampM2 = 0; gFly.speed = 0; gFly.stable = 0; gFly.still = 0; gFly.brakeMs = 0;
 }
 
 /* 转子角 = 电流方向 + sgn(w) * (90° + atan(|w|Lq/Rs))。分两拍计算：
@@ -243,7 +240,6 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
         s_catchStep = 0;
         gFly.thetaCatch = catchAngle(gFly.speedCatch, s_catchOff);
         gFly.stage = FLY_STAGE_CATCH;
-        gFly.catches++;
         return (w >= flySpinMin((gFly.speedCatch > 0) == (cmdSign > 0))) ? FLY_CATCH : FLY_CATCH_OPENLOOP;
     }
     s_sumA += gMeas.iab.s16Alpha;
@@ -256,8 +252,7 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     b = s_sumB / (2 * FLY_BLOCK_TICKS);
     s_sumA = 0; s_sumB = 0;
     gFly.brakeMs++;
-    /* 快环不开方：判据 2*floor(sqrt(m)) <= th 等价于 m < (floor(th/2) + 1)^2（整数意义上精确）；
-     * 显示用的 gFly.amp 由慢环对 ampM2 开方得到 */
+    /* 快环不开方：判据 2*floor(sqrt(m)) <= th 等价于 m < (floor(th/2) + 1)^2（整数意义上精确） */
     gFly.ampM2 = (uint32_t)(a * a + b * b);
     if (gFly.s16BemfAmpTh >= 0 &&
         gFly.ampM2 < (uint32_t)(((gFly.s16BemfAmpTh >> 1) + 1) * ((gFly.s16BemfAmpTh >> 1) + 1))) {
@@ -266,7 +261,6 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
         s_havePrev = 0; s_haveCD = 0; s_prevSpd = 0;
         gFly.speed = 0; gFly.stable = 0;
         if (++gFly.still >= (s_sawSpin ? gFly.stillSpinMs : FLY_STILL_BLOCKS)) {   /* 检测到过转动：等待停稳（FLY_STILL_END_RPM） */
-            if (s_sawSpin) gFly.brakes++;
             s_stillDone = 1;
             s_mayMove = 0;
         }
@@ -299,7 +293,7 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
                 gFly.stable = 0;
             }
             s_prevSpd = spd;
-            if (gFly.stable >= FLY_STABLE_MS) {     /* 同向、反向均按转子自身方向接管（见 cfg_ctrl.h"转子与指令反向时"） */
+            if (gFly.stable >= FLY_STABLE_MS) {     /* 同向、反向均按转子自身方向接管（见 cfg_internal.h"转子与指令反向时"） */
                 gFly.speedCatch = spd;
                 s_catchStep = 1;                    /* 后续两拍完成接管（2 拍内转速变化可忽略） */
                 return FLY_BUSY;

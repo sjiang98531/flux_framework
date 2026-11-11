@@ -20,7 +20,6 @@
  *   softStopSlow                         软停机：电流矢量按限定速率降到 0
  *   Sup_Switch*                          状态切换
  *   faultDetect                    每拍汇总故障位（硬件过流、配置检查失败、母线过欠压）
- *   Sup_Log                              事件记录（gSupLog，记录最近的状态变化）
  * ==========================================================================*/
 #include "supervisor.h"
 #include "hal.h"
@@ -44,35 +43,10 @@
 #include "compiler.h"
 
 Supervisor_TypeDef gSup = { MainState_Init, RunState_Charge };
-volatile SupLog_TypeDef gSupLog;
 /* 状态切换的临界区 IRQ_LOCK / IRQ_UNLOCK 见 hal.h（例：若 Spin -> I/F 回退时先写入 I/F 电流而 runState 仍为 Spin，
  * 快环会按估计角将开环电流施加到 d 轴）。 */
 
-/* 事件记录：每次状态切换、故障、接管等记录一条（事件码 SUP_EV_*，arg 为附加参数，例如接管角），
- * 同时记录当时的时间、状态、转速、指令、母线、iq。环形缓冲 SUP_LOG_N 条，gSupLog.lastCode 为最近一条的事件码。
- * 出现异常时查看 gSupLog.e[] 即可追溯发生过程。 */
 static uint8_t s_softStop;                      /* 软停机进行中 */
-void Sup_Log(uint16_t code, uint16_t arg)
-{
-    /* 快环与慢环均会调用：关中断以保证单条记录完整 */
-    volatile SupEvent_TypeDef *e;
-    IRQ_LOCK();
-    e = &gSupLog.e[gSupLog.count % SUP_LOG_N];
-    e->ms = gSup.ms;
-    e->code = code;
-    e->arg = arg;
-    e->main = (uint8_t)gSup.mainState;
-    e->run = (uint8_t)gSup.runState;
-    e->speed = gMeas.speed;
-    e->pll = (int16_t)(gEst.pll.s32Speed >> 16);
-    e->cmd = gSpd.cmd;
-    e->vbus = gMeas.vbusAvg;
-    e->iq = gFoc.idq.s16Q;
-    gSupLog.lastCode = code;
-    gSupLog.count++;
-    IRQ_UNLOCK();
-}
-
 /* 主状态处理函数：快环、慢环各一组，下标 = gSup.mainState（Fault = 0, Init = 1, Stop = 2, Run = 3） */
 static void faultFast(void);
 static void initFast(void);
@@ -165,29 +139,12 @@ static int16_t compSpeed(void)
 }
 
 /* 慢环入口：在 PendSV 中断中调用，由快环每 16 拍挂起一次（1 kHz），优先级低于快环（可被快环打断）。
- * 先统计慢环间隔（slowGap，名义 16 拍）与毫秒时间戳，再按主状态分发到 M1_<状态>_Slow，
- * 然后更新观测器慢变量（相位补偿、死区幅值）、母线过欠压判定、置信度诊断，最后记录慢环时长（slowDur）。 */
+ * 按主状态分发到 M1_<状态>_Slow，然后更新观测器慢变量（相位补偿、死区幅值）与母线过欠压判定。 */
 void Ctrl_SlowTick(void)
 {
-    static uint32_t s_prev;
-    uint32_t n0 = gFluxDiag.sampleCount;
-    gFluxDiag.slowGap = (uint16_t)(n0 - s_prev);
-    if (gFluxDiag.slowGap > gFluxDiag.slowGapMax) gFluxDiag.slowGapMax = gFluxDiag.slowGap;
-    s_prev = n0;
-    {   /* 毫秒时间戳（用于事件记录），慢环频率不是 1 kHz 时同样正确：每拍加 1000 / f ms，余数累计 */
-        static uint16_t s_msFrac;
-        s_msFrac += 1000u;
-        while (s_msFrac >= (uint16_t)SLOWLOOP_FREQ) { s_msFrac -= (uint16_t)SLOWLOOP_FREQ; gSup.ms++; }
-    }
-    Diag_SlowBegin();
     s_mainSlow[gSup.mainState]();
     FluxObs_SlowTick(compSpeed(), gMeas.vbusAvg);
     Protect_BusSlow();                  /* 判定结果由快环 faultDetect 读取 */
-    gFluxDiag.mainState = (uint16_t)gSup.mainState;     /* 状态诊断（1 ms 分辨率，精确时刻见 gSupLog） */
-    gFluxDiag.runState = (uint16_t)gSup.runState;
-    Diag_SlowTick();
-    gFluxDiag.slowDur = (uint16_t)(gFluxDiag.sampleCount - n0);
-    if (gFluxDiag.slowDur > gFluxDiag.slowDurMax) gFluxDiag.slowDurMax = gFluxDiag.slowDur;
 }
 
 /* ===========================================================================
@@ -199,7 +156,6 @@ static void switchRunFault(void)
     IRQ_LOCK();
     HAL_PwmAllOff();
     if (gSup.runState >= RunState_OpenLoop) FlyStart_NoteRunEnd();     /* 转子可能仍在滑行 */
-    Sup_Log(SUP_EV_FAULT, (uint16_t)gSup.fault);
     gSup.mainState = MainState_Fault;
     gSup.runState = RunState_Charge;
     HAL_PwmHighOff();
@@ -235,7 +191,6 @@ void Sup_SwitchRunStop(void)
 {
     IRQ_LOCK();
     if (gSup.runState >= RunState_OpenLoop) FlyStart_NoteRunEnd();     /* 转子可能仍在滑行 */
-    Sup_Log(SUP_EV_STOP, 0);
     gSup.mainState = MainState_Stop;
     gSup.runState = RunState_Charge;
     HAL_PwmHighOff();
@@ -248,7 +203,6 @@ void Sup_SwitchRunStop(void)
 /* Stop -> Run：收到起动指令。从 Charge（预充）开始；停机期间的硬件过流锁存不带入本次运行 */
 static void switchStopRun(void)
 {
-    Sup_Log(SUP_EV_START, gSup.faultRestarts);
     HAL_ClearOcLatch();             /* 停机期间的过流标志不带入新的运行 */
     gSup.mainState = MainState_Run;
     gSup.runState = RunState_Charge;
@@ -361,7 +315,6 @@ static uint8_t runStopSlow(uint8_t stopReq)
         s_softStop = 0;
         if (gSup.runState == RunState_Spin && abs(gMeas.speed) >= TRACK_END_Q15) {
             /* 闭环中停机：不关 PWM，进入零电流跟踪（保持转子状态，滑行中再给指令无需飞车检测） */
-            Sup_Log(SUP_EV_TRACK, (uint16_t)gMeas.speed);
             Spin_TrackBegin();
         } else {
             HAL_PwmAllOff();
@@ -425,7 +378,6 @@ void Sup_SwitchChargeFlyCheck(void)
 /* FlyCheck -> Align（飞车检测判为静止）：开启上下桥互补输出，进入 IPD / 定位（由 Startup_OnEnterAlign 决定先做 IPD 还是直接定位） */
 void Sup_SwitchFlyCheckAlign(void)
 {
-    Sup_Log(SUP_EV_STILL, 0);
     Startup_OnEnterAlign();         /* 定位计时、角度清零 */
     gSup.runState = RunState_Align;
     bridgeOnZeroVector();
@@ -437,7 +389,6 @@ void Sup_SwitchFlyCheckAlign(void)
 void Sup_SwitchFlyCheckSpin(void)
 {
     int16_t spd = gFly.speedCatch;
-    Sup_Log(SUP_EV_CATCH_SPIN, (uint16_t)gFly.thetaCatch);
     Est_OnCatch(gFly.thetaCatch, spd);
     /* 电流环：指令为 0；q 轴积分器预置为反电势电压，d 轴为 0（id = iq = 0 时的稳态电压）。
      * 短接时的短路电流由电流环在几毫秒内拉到 0。打开解耦时 SetDecouple 会将该前馈量
@@ -458,7 +409,6 @@ void Sup_SwitchFlyCheckSpin(void)
 void Sup_SwitchFlyCheckOpenLoop(void)
 {
     int16_t spd = gFly.speedCatch;
-    Sup_Log(SUP_EV_CATCH_OPENLOOP, (uint16_t)gFly.thetaCatch);
     Est_OnCatch(gFly.thetaCatch, spd);
     /* 开环电流沿转子 d 轴（iq = 0 -> 开环角 = 转子角，转矩从 0 开始），q 轴积分器预置为反电势 */
     FocCore_SetIdqRef(gFoc.idqRef.s16D, 0);
@@ -480,7 +430,6 @@ void Sup_SwitchAlignOpenLoop(void)
     OpenLoop_PrepareCold(&e);
     {
         IRQ_LOCK();
-        Sup_Log(SUP_EV_ALIGN_DONE, 0);
         Est_OnEnterOpenLoopCold();
         OpenLoop_Commit(&e);           /* I/F：从定位角、零速开始拖动 */
         gSup.runState = RunState_OpenLoop;
@@ -501,7 +450,6 @@ void Sup_SwitchIpdOpenLoop(int16_t theta)
     e.accStep = (e.accStepFull * e.olCur) / e.olCurTarget;
     {
         IRQ_LOCK();
-        Sup_Log(SUP_EV_IPD_DONE, (uint16_t)theta);
         gFoc.theta = theta;
         gFoc.thetaInv = theta;
         FocCore_PresetPI(0, 0);         /* 电流环已旁路一轮（直接输出电压），积分器从 0 开始 */
@@ -518,7 +466,6 @@ void Sup_SwitchIpdOpenLoop(int16_t theta)
 void Sup_SwitchOpenLoopSpin(void)
 {
     IRQ_LOCK();
-    Sup_Log(SUP_EV_HANDOVER, 0);
     Spin_OnEnter();
     gSup.runState = RunState_Spin;
     /* 先切换状态再请求解耦：保证快环在 Spin 的第一拍转移前馈量。若顺序相反，

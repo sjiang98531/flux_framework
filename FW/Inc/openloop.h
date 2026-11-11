@@ -34,24 +34,4 @@ uint8_t OpenLoop_WantsFallback(void);
 /* 回退 I/F 时的开环电流（Q15）：max(OPENLOOP_CURRENT_A, |iq|/sin(OPENLOOP_WARM_DELTA_DEG))，反转时至少 OPENLOOP_REV_CURRENT_A，上限 OPENLOOP_WARM_MAX_A */
 int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal);
 
-/* gOpenLoopDiag.stage 的取值（数值沿用历史台架记录） */
-enum {
-    OPENLOOP_STAGE_ALIGN    = 1,    /* 定位 */
-    OPENLOOP_STAGE_RUN      = 3,    /* 开环加速 / 保持 */
-    OPENLOOP_STAGE_HANDOVER = 5,    /* 已切闭环 */
-    OPENLOOP_STAGE_TIMEOUT  = 6,    /* 超时故障 */
-    OPENLOOP_STAGE_IPD      = 7     /* IPD */
-};
-typedef struct {
-    uint16_t stage;         /* 7 IPD，1 定位，3 开环加速 / 保持，5 已切闭环，6 超时故障（2 保留未用） */
-    int16_t  olSpeed;       /* 开环转速 Q15 */
-    int16_t  pllFilt;       /* PLL 转速（滤波）Q15 */
-    uint16_t agreeCnt;      /* 一致计数（慢环拍） */
-    int16_t  deltaAtHandover;   /* 切换时 theta_ol - theta_est（Q15 角度，65536 = 360°） */
-    int16_t  iqAtHandover;      /* 切换后 iq 指令 Q15 */
-    uint16_t handovers, timeouts;    /* 上电以来切闭环次数、I/F 超时次数 */
-    uint16_t alignTime;         /* 上次定位总用时（ms） */
-} OpenLoopDiag_TypeDef;
-extern volatile OpenLoopDiag_TypeDef gOpenLoopDiag;
-
 #endif

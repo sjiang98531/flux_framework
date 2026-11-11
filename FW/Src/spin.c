@@ -144,13 +144,11 @@ void Spin_TrackSlow(void)
     if (want) {
         /* 转速滤波器按该块 PLL 转速平均值重新预置（稳态累加值 = x*2^sh - x），斜坡 / 积分器由此起步。
          * 使用平均值而非最后一拍：PLL 瞬时转速含噪声，按单拍预置会使速度环闭合瞬间产生电流冲击 */
-        Sup_Log(SUP_EV_TRACK_END, 1);
         Meas_SpeedPreset(w);
         SpeedCtrl_OnEnterSpin(0, 0);
         spinBeginChecks();
         s_track = 0;
     } else if (abs(w) < TRACK_END_Q15) {
-        Sup_Log(SUP_EV_TRACK_END, 0);
         HAL_PwmAllOff();
         Sup_SwitchRunStop();
     }
@@ -195,7 +193,6 @@ static uint8_t spinLostLock(void)
 /* 失锁 / 失速：记录事件、计数重启次数、停机（若指令仍存在，Stop 慢环将立即重新起动，飞车检测重新测速） */
 static void spinLostLockStop(void)
 {
-    Sup_Log(SUP_EV_LOST_LOCK, (uint16_t)gMeas.speed);
     Sup_CountRestart();
     Sup_SwitchRunStop();
 }
@@ -245,7 +242,6 @@ void Spin_Slow(void)
     /* 低速区（含过零反向）由 I/F 开环负责，在观测器仍锁定的转速即交回；同向降到 SPIN_LOST_RPM 以下 = 失锁 */
     if (spinLostLock()) { spinLostLockStop(); return; }
     if (fbReady) {
-        Sup_Log(SUP_EV_FALLBACK, SUP_FB_OPENLOOP);
         Sup_SwitchSpinOpenLoop();
     } else if (!cmdOppositeDir()) {    /* 同向，或估计转速恰为 0（指令此处不为 0）：0 也按"转不动"判失锁 */
         if (++s_spinCheckTicks >= SPIN_CHECK_TICKS) {
@@ -261,7 +257,6 @@ void Spin_Slow(void)
         /* 兜底：指令反向且已低于闭环最低转速仍未回退（正常在 OPENLOOP_FALLBACK_RPM 即开始回退，仅当撤除制动 id 期间
          * 转速已很低时才会进入此分支），立即交给 I/F */
         if (abs(gMeas.speed) < OPENLOOP_SPIN_MIN_Q15) {
-            Sup_Log(SUP_EV_FALLBACK, SUP_FB_REVERSE);
             Sup_SwitchSpinOpenLoop();
         }
     }

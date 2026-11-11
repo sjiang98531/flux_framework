@@ -6,7 +6,7 @@
  *   iq_ff  = 斜坡本拍实际斜率 / MOTOR_ACC_RPM_S_PER_A（加速、减速均施加）
  *   斜坡减速侧的步长由母线电压控制器限制（BUS_VDC_*：允许回馈功率 / (J*w)），给定始终可实现
  *
- * 速度 PI 增益由 cfg_ctrl.h 的 SPEED_WN_HZ / SPEED_ZETA 与电机的 MOTOR_ACC_RPM_S_PER_A 自动计算。
+ * 速度 PI 增益由 cfg_internal.h 的 SPEED_WN_HZ / SPEED_ZETA 与电机的 MOTOR_ACC_RPM_S_PER_A 自动计算。
  * ==========================================================================*/
 #ifndef SPEED_CTRL_H
 #define SPEED_CTRL_H

@@ -21,7 +21,6 @@
 #include "identify.h"
 #include "param.h"
 
-volatile OpenLoopDiag_TypeDef gOpenLoopDiag;
 static volatile int32_t s_olTheta;         /* 开环角 Q16.16（快环推进） */
 static volatile int32_t s_olSpeed;         /* 开环转速 Q31（快环斜坡） */
 static volatile int32_t s_olTarget;        /* 目标转速 Q31，带方向（慢环写） */
@@ -173,7 +172,6 @@ void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e)
     FocCore_SetIdqRef((int16_t)e->olCur, 0);
     s_pllFilt = gEst.pll.s32Speed;
     s_agree = 0; s_hold = 0;
-    gOpenLoopDiag.stage = OPENLOOP_STAGE_RUN;
 }
 
 /* 飞车接管进入 I/F（快环中执行）：接管时闭环电流 iq = 0（Sup_SwitchFlyCheckOpenLoop 先清零），入口参数除起始转速外
@@ -227,10 +225,6 @@ static void openLoopHandover(void)
         IRQ_LOCK();
         FocCore_SetIdqRef(id0, iq0);        /* 本拍电流矢量保持不变 */
         FocCore_RotatePI(a);
-        gOpenLoopDiag.deltaAtHandover = d;
-        gOpenLoopDiag.iqAtHandover = iq0;
-        gOpenLoopDiag.handovers++;
-        gOpenLoopDiag.stage = OPENLOOP_STAGE_HANDOVER;
         /* 速度环：PI 积分器预置为 iqPi（前馈给出 ff0），斜坡延续开环转速与加速度；id0 与 iq0 - iqPi - ff0 由融合叠加并淡出 */
         SpeedCtrl_OnEnterSpin(id0, iqPi);
         SpeedCtrl_BlendStart(id0, (int16_t)(iq0 - iqPi - ff0), ol, (int16_t)s_accScaleQ12, ff0);
@@ -286,8 +280,6 @@ void OpenLoop_Slow(void)
         s_accStep = (s_accStepFull * s_olCur) / s_olCurTarget;     /* 32 位，见 OpenLoop_Prepare */
         FocCore_SetIdqRef((int16_t)s_olCur, 0);
     }
-    gOpenLoopDiag.olSpeed = (int16_t)(ol >> 16);
-    gOpenLoopDiag.pllFilt = (int16_t)(s_pllFilt >> 16);
 
     /* 缺相：与 Spin 相同的判据（protect.h），电周期按开环转速计 */
     if (Protect_PhaseSlow((int16_t)(ol >> 16))) {
@@ -303,12 +295,9 @@ void OpenLoop_Slow(void)
         int64_t tol = ((int64_t)(ol < 0 ? -ol : ol) * OPENLOOP_AGREE_Q15) >> 15;
         if (d < 0) d = -d;
         if (d < tol) s_agree++; else s_agree = 0;
-        gOpenLoopDiag.agreeCnt = s_agree;
         if (s_agree >= OPENLOOP_AGREE_TICKS) {
             openLoopHandover();
         } else if (++s_hold > OPENLOOP_TIMEOUT_TICKS) {
-            gOpenLoopDiag.timeouts++;
-            gOpenLoopDiag.stage = OPENLOOP_STAGE_TIMEOUT;
             Sup_RaiseFault(MC_FAULT_ROTOR_BLOCKED);
             Sup_CountRestart();
         }

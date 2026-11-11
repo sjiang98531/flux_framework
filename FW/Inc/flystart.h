@@ -8,7 +8,7 @@
  *     |i| = |ω|ψf / sqrt(Rs² + ω²L²)              本电机 30 rpm 0.15 A，250 rpm 1.2 A，1500 rpm 2.8 A
  *     θ   = ∠i + sgn(ω) * (90° + atan(|ω|Lq/Rs))    电流方向 + 阻抗角 = 转子角（内嵌式同样成立，使用 Lq）
  *
- * 首先以短脉冲测速，见 cfg_ctrl.h。
+ * 首先以短脉冲测速，见 cfg_internal.h。
  *   脉冲电流取满足初值精度的最小值（按上电测得的采样噪声计算，且至少 FLY_PULSE_MIN_TICKS 拍），接管时电流约为 0；
  *   测不到或结果不一致时，转入下述连续短接测量。
  *
@@ -43,7 +43,6 @@ typedef struct {
     int16_t     s16BemfAmpTh;           /* 判"在转"的电流门限（FLYCURRENT_TH_PU） */
     /* ---- 连续短接测量 ---- */
     uint16_t    stage;          /* 0 未开始，1 等待暂态，2 测量 / 制动，3 接管，4 静止，5 超时，6 短脉冲测速 */
-    int16_t     amp;            /* 短路电流幅值 Q15（I_MAX 基准），1 ms 平均矢量的模 */
     int16_t     speed;          /* 测到的转速 Q15（SPEED_MAX 基准），带方向；电流低于门限时 0 */
     uint16_t    stable;         /* 转速估计连续稳定的次数（ms） */
     uint16_t    still;          /* 电流连续低于门限的时间（ms） */
@@ -51,15 +50,10 @@ typedef struct {
     uint32_t    brakeMs;        /* 本次检测已短接的时间（ms） */
     int16_t     thetaCatch;     /* 接管时的转子角（Q15 角度，本拍采样时刻） */
     int16_t     speedCatch;     /* 接管时的转速 Q15 */
-    uint16_t    catches;        /* 上电以来直接接管的次数 */
-    uint16_t    brakes;         /* 上电以来"在转但未接管、先制动"的次数 */
     /* ---- 短脉冲测速 ---- */
     uint16_t    pulseLen;       /* 脉冲长度（拍），第一个脉冲按电流门限确定，后续相同 */
-    int16_t     pulseAmp;       /* 最后一个脉冲末的电流幅值 |i|（Q15），诊断用；由慢环对 pulseM2 开方得到 */
-    uint32_t    pulseM2;        /* 上述幅值的平方（快环写入，快环不开方） */
-    uint32_t    ampM2;          /* 连续短接：每块平均电流一半的平方（快环写入；gFly.amp 由慢环开方） */
+    uint32_t    ampM2;          /* 连续短接：每块平均电流一半的平方（快环写入并与门限平方比较） */
     uint16_t    pulseResult;    /* 0 未测，1 接管 Spin，2 接管 I/F，3 太慢，4 反向 / 太低，5 测量不一致 */
-    uint16_t    pulseCatches;   /* 上电以来短脉冲直接接管的次数 */
 } FlyStart_TypeDef;
 
 extern FlyStart_TypeDef gFly;

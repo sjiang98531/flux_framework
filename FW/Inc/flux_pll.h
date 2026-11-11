@@ -4,7 +4,7 @@
  *
  * 鉴相：err = psi_beta*cos(th^) - psi_alpha*sin(th^) = |psi|*sin(th - th^)
  *   磁链矢量方向不随转向翻转，因此无需按转速指令翻转符号，也无需 rot90 与 omega。
- *   |psi| 恒定，全速域使用同一组增益（cfg_ctrl.h FLUXPLL_WN_HZ / ZETA）。
+ *   |psi| 恒定，全速域使用同一组增益（cfg_internal.h FLUXPLL_WN_HZ / ZETA）。
  *
  * 状态存储于 gEst.pll（PLL_TypeDef），字段含义：
  *   s32Theta  Q16.16 电角度（>>16 得 0..65535 一圈）
@@ -18,15 +18,6 @@
 #include "cfg_derived.h"
 #include "qtypes.h"
 #include "foc_math.h"
-
-typedef struct {
-    int16_t  errLast;    /* 上一拍鉴相误差 */
-    int16_t  speedLast;    /* 上一拍 PLL 转速（Q15） */
-    uint16_t thetaLast;    /* 上一拍 PLL 角度 */
-    uint32_t satCount;    /* 转速达到 ±SPEED_MAX 限幅的次数 */
-} FluxPLL_Diag_TypeDef;
-
-extern volatile FluxPLL_Diag_TypeDef gPllDiag;
 
 /* 装载增益（由配置自动计算）并清零全部状态 */
 void FluxPLL_Init(PLL_TypeDef *p);

@@ -120,8 +120,6 @@ CFG_CHECK(OPENLOOP_ACC_STEP_FITS, (double)OPENLOOP_ACC_STEP_Q31 * OPENLOOP_REV_I
 /* 慢环频率：整除 PWM 频率（快环每 N 拍挂起一次慢环）；至少为慢环中各环节特征频率的 20 倍：
  * 母线电压环带宽、转速反馈滤波、定位摆（f = 1/T，用 T^2 比较免开方）、S 形斜坡圆角 1/(2*pi*ROUND)；
  * 各一阶滤波窗口至少 2 拍、失速检查至少 1 拍（对应检查项 SLOW_RATE_FITS） */
-/* 诊断统计窗口：至少 8 个慢环帧 */
-CFG_CHECK(DIAG_WINDOW_FITS, DIAG_WINDOW_S * SLOWLOOP_FREQ >= 8.0)
 /* 慢环频率与 PWM 频率及慢环各环节特征频率不匹配（见上方说明） */
 CFG_CHECK(SLOW_RATE_FITS, (PWM_FREQ % SLOWLOOP_FREQ) == 0 && SLOWLOOP_FREQ >= 20.0 * BUS_VDC_BW_HZ &&
          SLOWLOOP_FREQ >= 20.0 * SPEED_FB_FILT_HZ && (double)SLOWLOOP_FREQ * SLOWLOOP_FREQ * ALIGN_T2_S2 >= 400.0 &&
@@ -142,7 +140,7 @@ CFG_CHECK(OPENLOOP_TICKS_FIT, ALIGN_MAX_S * SLOWLOOP_FREQ < 65535.0 &&
          ALIGN_MIN_S > 0 && ALIGN_STILL_S > 0 && ALIGN_MAX_S > ALIGN_MIN_S + ALIGN_STILL_S && FLY_SETTLE_BLOCKS >= 1 &&
          OPENLOOP_TIMEOUT_S * SLOWLOOP_FREQ < 65536 && OPENLOOP_AGREE_S * SLOWLOOP_FREQ < 65536)
 
-/* 定位判停稳的持续时间不小于 0.3 个摆动周期 T（见 cfg_ctrl.h ALIGN_STILL_S：离定位轴 90° 的回摆端点处，
+/* 定位判停稳的持续时间不小于 0.3 个摆动周期 T（见 cfg_internal.h ALIGN_STILL_S：离定位轴 90° 的回摆端点处，
  * q 轴反电势约 0.28 T 内无法反映转子运动）。更换电机（惯量、磁链）或修改定位电流后 T 改变，须重新确定 */
 CFG_CHECK(ALIGN_STILL_COVERS_SWING, ALIGN_STILL_S * ALIGN_STILL_S >= 0.09 * ALIGN_T2_S2)
 

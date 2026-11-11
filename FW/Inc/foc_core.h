@@ -2,7 +2,7 @@
  * @file    foc_core.h
  * @brief   FOC 核心：坐标变换、电流环、母线归一化、SVPWM 调用
  *
- * Clarke / Park 变换见 foc_math.h。电流环增益由 cfg_ctrl.h 的 CURRENT_BW_HZ 自动计算。
+ * Clarke / Park 变换见 foc_math.h。电流环增益由 cfg_internal.h 的 CURRENT_BW_HZ 自动计算。
  * ==========================================================================*/
 #ifndef FOC_CORE_H
 #define FOC_CORE_H

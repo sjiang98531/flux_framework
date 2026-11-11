@@ -87,8 +87,6 @@ uint8_t Protect_PhaseSlow(int16_t speedQ15)
     /* 电流门限：最大相平均 |i| >= PHASELESS_RATIO * 噪声峰值（码 -> Q15 每码 16） */
     floor = (uint32_t)PHASELESS_RATIO * 16u * (uint32_t)gHal.adcNoisePk;
     if (n > 0 && mx >= floor * n) {
-        uint32_t q = mn >> 4, r = (q == 0) ? 0xFFFFu : mx / q;     /* 最大 / 最小 x 16，32 位除法（诊断用） */
-        gProt.ratioLastX16 = (uint16_t)(r > 0xFFFFu ? 0xFFFFu : r);
         if (mx > (uint32_t)PHASELESS_RATIO * mn) lost = 1;
     }
     Protect_PhaseReset();

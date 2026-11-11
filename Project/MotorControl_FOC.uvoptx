@@ -458,8 +458,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\FW\Inc\cfg_ctrl.h</PathWithFileName>
-      <FilenameWithoutPath>cfg_ctrl.h</FilenameWithoutPath>
+      <PathWithFileName>..\FW\Inc\cfg_app.h</PathWithFileName>
+      <FilenameWithoutPath>cfg_app.h</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>

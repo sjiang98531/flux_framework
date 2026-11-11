@@ -38,14 +38,13 @@ void Startup_OnEnterAlign(void)
     s_still = 0;
     s_alignTheta = 0;
     FocCore_SetIdqRef(0, 0);
-    gOpenLoopDiag.stage = OPENLOOP_STAGE_ALIGN;
     s_ipd = 0;
     if (IDENT_TEST && !gIdentCfg.run) { s_alignTheta = Ident_AlignTheta(); Ident_Reset(); }     /* 参数辨识：定位到指定角 */
     else {
         /* 运行辨识（run = 1）正常起动：上一次静止测量停在 phase 4，需清除，否则 Align 会一直交由测量程序处理 */
         if (IDENT_TEST) Ident_Idle();
         /* 起动方式仅在此处读取一次：本轮中途修改 gStartup.mode 不影响正在执行的 IPD / 定位 */
-        if (gStartup.mode == STARTUP_MODE_IPD) { Ipd_Start(); s_ipd = 1; gOpenLoopDiag.stage = OPENLOOP_STAGE_IPD; }    /* 先检测初始位置，检测失败再定位 */
+        if (gStartup.mode == STARTUP_MODE_IPD) { Ipd_Start(); s_ipd = 1; }    /* 先检测初始位置，检测失败再定位 */
     }
 }
 
@@ -118,12 +117,10 @@ void Startup_FlyCheckFast(void)
     }
 }
 
-/* 飞车检测慢环：测量滤波；对快环保存的电流平方值开方用于诊断显示（快环不开方） */
+/* 飞车检测慢环：测量滤波 */
 void Startup_FlyCheckSlow(void)
 {
     Meas_SlowFilter();
-    gFly.pulseAmp = (int16_t)QMath_Isqrt32(gFly.pulseM2);     /* 诊断：快环只保存平方 */
-    gFly.amp = QMath_Sat16(2 * (int32_t)QMath_Isqrt32(gFly.ampM2));
 }
 
 /* ---------------------------------------------------------------------------
@@ -158,7 +155,6 @@ void Startup_AlignSlow(void)
                 /* 对比度不足（饱和不明显 / 转子在动）：本次退回定位。PWM 已为零电压，电流约为 0。
                  * 先清积分器再清 s_ipd（分别为一次 32 / 8 位写）：快环看到 s_ipd = 0 时积分器已为 0 */
                 FocCore_PresetPI(0, 0);
-                gOpenLoopDiag.stage = OPENLOOP_STAGE_ALIGN;
                 s_ipd = 0;
             }
         }
@@ -181,7 +177,6 @@ void Startup_AlignSlow(void)
         if (e < 0) e = -e;
         if (s_alignTicks > ALIGN_MIN_TICKS && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
         if ((s_alignTicks >= ALIGN_MIN_TICKS && s_still >= ALIGN_STILL_TICKS) || s_alignTicks >= ALIGN_MAX_TICKS) {
-            gOpenLoopDiag.alignTime = s_alignTicks;
             if (IDENT_TEST && !gIdentCfg.run) Ident_Begin();  /* 参数辨识：不切入 I/F，从此开始测量 */
             else Sup_SwitchAlignOpenLoop();  /* 观测器初始化为 |psi_f|∠0 */
         }

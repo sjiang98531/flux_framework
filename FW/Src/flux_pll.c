@@ -14,8 +14,6 @@
 #include "compiler.h"
 #include "param.h"
 
-volatile FluxPLL_Diag_TypeDef gPllDiag;
-
 /* 转速限幅：Q31 速度超过 2^31 会回绕，故限制在 0x7FFF8000（3199.9 rpm 仍可达，在回绕前停住）。 */
 #define SPEED_LIMIT 0x7FFF8000L
 
@@ -26,7 +24,7 @@ void FluxPLL_LoadGains(PLL_TypeDef *p)
     p->s16IGain = gGain.pllKi;
 }
 
-/* 装载增益并清除全部状态（角度、转速、积分器、诊断）。上电及飞车接管（Est_OnCatch）时调用 */
+/* 装载增益并清除全部状态（角度、转速、积分器）。上电及飞车接管（Est_OnCatch）时调用 */
 void FluxPLL_Init(PLL_TypeDef *p)
 {
     /* 增益字段为 int16：超出范围时封顶（否则会回绕为负增益，导致 PLL 正反馈发散）。
@@ -36,10 +34,6 @@ void FluxPLL_Init(PLL_TypeDef *p)
     p->s32Theta    = 0;
     p->s32Speed    = 0;
     p->s32I_1      = 0;
-    gPllDiag.errLast   = 0;
-    gPllDiag.speedLast = 0;
-    gPllDiag.thetaLast = 0;
-    gPllDiag.satCount  = 0;
 }
 
 /* 鉴相器：磁链矢量与估计角方向的叉积 = |psi| * sin(真实角 - 估计角)。误差较小时 ≈ |psi| * 角度误差（rad），
@@ -50,11 +44,11 @@ RAMFUNC int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t th
     return (int16_t)(QMath_MulQ15(psiBeta, a.s16Cos) - QMath_MulQ15(psiAlpha, a.s16Sin));
 }
 
-/* 转速限幅在 ±SPEED_MAX（防止 Q31 回绕），触及限幅时计数 */
+/* 转速限幅在 ±SPEED_MAX（防止 Q31 回绕） */
 FORCE_INLINE int32_t speedClamp(int32_t v)
 {
-    if (v >  SPEED_LIMIT) { gPllDiag.satCount++; return  SPEED_LIMIT; }
-    if (v < -SPEED_LIMIT) { gPllDiag.satCount++; return -SPEED_LIMIT; }
+    if (v >  SPEED_LIMIT) return  SPEED_LIMIT;
+    if (v < -SPEED_LIMIT) return -SPEED_LIMIT;
     return v;
 }
 
@@ -72,8 +66,6 @@ FORCE_INLINE int16_t advance(PLL_TypeDef *p, int32_t kpTerm, int32_t kiTerm)
     p->s32Speed = speedClamp(QMath_AddSat32(p->s32I_1, kpTerm));
     /* Q16.16 累加器在最高转速下约每 60 拍回绕一圈，经 uint32 相加保证回绕行为有定义 */
     p->s32Theta = (int32_t)((uint32_t)p->s32Theta + (uint32_t)angleStep(p->s32Speed, p->s16ThGain));
-    gPllDiag.speedLast = (int16_t)(p->s32Speed >> 16);
-    gPllDiag.thetaLast = (uint16_t)(p->s32Theta >> 16);
     return (int16_t)(p->s32Theta >> 16);
 }
 
@@ -90,6 +82,5 @@ RAMFUNC int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p)
 {
     int32_t kpTerm = (int32_t)err * p->s16PGain;
     int32_t kiTerm = (int32_t)err * p->s16IGain;
-    gPllDiag.errLast = err;
     return advance(p, kpTerm, kiTerm);
 }
