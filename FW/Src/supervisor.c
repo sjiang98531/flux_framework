@@ -454,10 +454,30 @@ void Sup_SwitchAlignOpenLoop(void)
 {
     OpenLoopEntry_TypeDef e;
     OpenLoop_PrepareCold(&e);
+    e.olCur = e.olCurTarget;           /* 定位后电流已在开环方向上：从额定开环电流开始 */
+    e.accStep = e.accStepFull;
     {
         IRQ_LOCK();
         Est_OnEnterOpenLoopCold();
         OpenLoop_Commit(&e);           /* I/F：从定位角、零速开始拖动 */
+        gSup.runState = RunState_OpenLoop;
+        SpeedCtrl_UseOpenLoopRamp();
+        IRQ_UNLOCK();
+    }
+}
+
+/* 直接拖动（STARTUP_MODE_DRAG）-> I/F：转子位置未知，从 0° 以牵入转速 f0 开始（openloop.c） */
+void Sup_SwitchDragOpenLoop(void)
+{
+    OpenLoopEntry_TypeDef e;
+    OpenLoop_PrepareDrag(&e);
+    {
+        IRQ_LOCK();
+        gFoc.theta = 0;
+        gFoc.thetaInv = 0;
+        FocCore_PresetPI(0, 0);
+        Est_OnEnterOpenLoopCold();       /* 观测器初始化为 |psi_f|∠0（转子位置未知，转动后收敛） */
+        OpenLoop_Commit(&e);           /* I/F：先以 f0 匀速牵入（电压型驱动），之后加速 */
         gSup.runState = RunState_OpenLoop;
         SpeedCtrl_UseOpenLoopRamp();
         IRQ_UNLOCK();
@@ -469,11 +489,7 @@ void Sup_SwitchAlignOpenLoop(void)
 void Sup_SwitchIpdOpenLoop(int16_t theta)
 {
     OpenLoopEntry_TypeDef e;
-    OpenLoop_PrepareCold(&e);
-    /* 定位后电流本就在 I/F 方向上；IPD 后电流为 0，开环电流从 1/4 起按 CURRENT_SLEW_A_S 上升（与回退相同），
-     * 加速度按电流比例给出，负载角余量不变；d 轴电流阶跃较小 */
-    e.olCur = e.olCurTarget >> 2;
-    e.accStep = (e.accStepFull * e.olCur) / e.olCurTarget;
+    OpenLoop_PrepareCold(&e);           /* 开环电流从 1/4 起按 CURRENT_SLEW_A_S 上升，加速度同比例 */
     {
         IRQ_LOCK();
         gFoc.theta = theta;

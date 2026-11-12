@@ -24,16 +24,17 @@ Startup_TypeDef gStartup;
 
 static volatile int16_t s_alignTheta;      /* 定位角（慢环写，快环读） */
 static uint16_t s_alignTicks;
-/* 定位各段拍数（Startup_Init 按摆动周期 T 计算一次）：最短 / 判停稳持续 / 自动方式最长 / 本次最长 */
-static uint16_t s_alignMinTicks, s_alignStillTicks, s_alignAutoTicks, s_alignMaxTicks;
+/* 定位各段拍数（Startup_Init 按摆动周期 T 计算一次）：最短 / 判停稳持续 / 最长 */
+static uint16_t s_alignMinTicks, s_alignStillTicks, s_alignMaxTicks;
 static int32_t s_dampQ8;                   /* 定位阻尼增益：Q15 电流 / Q15 电压，Q8 */
 static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
 static int32_t s_dtFilt;                   /* 同一滤波器滤波的逆变器电压误差 q 分量（判停稳用） */
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
 static volatile uint8_t s_ipd;             /* 1 = Align 子状态正在执行 IPD（慢环写，快环读） */
+static uint8_t s_drag;                     /* 1 = 起动方式为直接拖动：下一个慢环拍进入 I/F */
 
-/* 进入 Align（飞车检测判为静止）：清除定位状态。起动方式为 IPD（gStartup.mode）时先执行 IPD，结果不可信时再定位；否则直接定位。
- * 辨识模式（IDENT_TEST）下定位到指定角或按辨识流程执行 */
+/* 进入 Align（飞车检测判为静止）：清除定位状态。起动方式（gStartup.mode）为 IPD 时先执行 IPD，结果不可信时再定位；否则直接拖动。
+ * 参数辨识的静止测量：定位到指定角 */
 void Startup_OnEnterAlign(void)
 {
     s_alignTicks = 0;
@@ -43,9 +44,8 @@ void Startup_OnEnterAlign(void)
     s_alignTheta = 0;
     FocCore_SetIdqRef(0, 0);
     s_ipd = 0;
-    s_alignMaxTicks = (ALIGN_TIME_TICKS > 0) ? ALIGN_TIME_TICKS : s_alignAutoTicks;
-    if (IDENT_TEST && Ident_StaticThisStart()) {     /* 参数辨识：定位到指定角，定位按自动时间（不受用户上限影响） */
-        s_alignMaxTicks = s_alignAutoTicks;
+    s_drag = 0;
+    if (IDENT_TEST && Ident_StaticThisStart()) {     /* 参数辨识：定位到指定角 */
         s_alignTheta = Ident_AlignTheta();
         Ident_Reset();
     } else {
@@ -53,6 +53,7 @@ void Startup_OnEnterAlign(void)
         if (IDENT_TEST) Ident_Idle();
         /* 起动方式仅在此处读取一次：本轮中途修改 gStartup.mode 不影响正在执行的 IPD / 定位 */
         if (gStartup.mode == STARTUP_MODE_IPD) { Ipd_Start(); s_ipd = 1; }    /* 先检测初始位置，检测失败再定位 */
+        else s_drag = 1;
     }
 }
 
@@ -61,11 +62,11 @@ void Startup_Init(void)
 {
     gStartup.preChargeCmd = PWM_FREQ / 1000.0 * PRECHARGE_TIME;
     gStartup.mode = STARTUP_MODE;
-    {   /* 定位各段 = 摆动周期 T 的倍数（cfg_internal.h ALIGN_*_T）；用户上限 ALIGN_TIME_S = 0 时按自动 */
+    {   /* 定位各段 = 摆动周期 T 的倍数（cfg_internal.h ALIGN_*_T） */
         uint32_t t = QMath_Isqrt64(ALIGN_T2_TICKS2);
         s_alignMinTicks = (uint16_t)(t * (uint32_t)(ALIGN_MIN_T * 256.0 + 0.5) >> 8);
         s_alignStillTicks = (uint16_t)(t * (uint32_t)(ALIGN_STILL_T * 256.0 + 0.5) >> 8);
-        s_alignAutoTicks = (uint16_t)(t * (uint32_t)(ALIGN_MAX_T * 256.0 + 0.5) >> 8);
+        s_alignMaxTicks = (uint16_t)(t * (uint32_t)(ALIGN_MAX_T * 256.0 + 0.5) >> 8);
     }
 
     /* 仅上电时计算一次（含开方与浮点） */
@@ -153,14 +154,16 @@ void Startup_AlignFast(void)
 }
 
 /* Align 慢环：
+ *   直接拖动：立即进入 I/F（openloop.c 牵入段）；
  *   IPD 中：等待 12 个脉冲完成，判断对比度，可信 -> 从 N 极角直接进入 I/F；不可信 -> 退回定位；
- *   定位：d 轴电流按斜坡升至 ALIGN_A，q 轴按反电势施加阻尼（转子摆动时施加反向转矩抑制），
+ *   定位（IPD 检测失败时、参数辨识的静止测量时）：d 轴电流按斜坡升至 ALIGN_A，q 轴按反电势施加阻尼（转子摆动时施加反向转矩抑制），
  *         达到最短时间且反电势持续低于门限（已停稳），或超过最长时间 -> 进入 I/F */
 void Startup_AlignSlow(void)
 {
     int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15;
     int32_t emf, iq;
     if (IDENT_TEST && Ident_Active()) { Ident_Slow(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
+    if (s_drag) { Sup_SwitchDragOpenLoop(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
     if (s_ipd) {
         if (gIpd.state == IPD_STATE_DONE) {
             if (Ipd_Evaluate()) {
@@ -187,7 +190,7 @@ void Startup_AlignSlow(void)
      * 反电势只估出真值的一半左右，转子仍在摆动即判为停稳，带着摆动进入 I/F。
      * 阻尼回路中不扣除：模型扣多相当于 Rs 估大，iq = -k*e 变为正反馈；扣少只使阻尼变弱。
      * 判停稳不在回路中，扣多只会多等待（最长 ALIGN_MAX_T），扣少即退化为不扣除。 */
-    s_dtFilt += FluxObs_DtErrQ(gMeas.iab, gFoc.ang) - (s_dtFilt >> ALIGN_EMF_FILT_SH);
+    s_dtFilt += FluxObs_DtErr(gMeas.iab, gFoc.ang).s16Q - (s_dtFilt >> ALIGN_EMF_FILT_SH);
     iq = -((s_emfFilt >> ALIGN_EMF_FILT_SH) * s_dampQ8 >> 8);
     iq = QMath_Clamp(iq, ALIGN_ID_Q15);
     FocCore_SetIdqRef((int16_t)id, (int16_t)iq);
@@ -198,7 +201,7 @@ void Startup_AlignSlow(void)
         if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
         if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
             if (IDENT_TEST && Ident_StaticThisStart()) Ident_Begin();  /* 参数辨识：不切入 I/F，从此开始测量 */
-            else Sup_SwitchAlignOpenLoop();  /* 观测器初始化为 |psi_f|∠0 */
+            else Sup_SwitchAlignOpenLoop();  /* IPD 检测失败时的定位：观测器初始化为 |psi_f|∠0 */
         }
     }
     Meas_SlowFilter();

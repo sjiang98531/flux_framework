@@ -19,6 +19,10 @@
 FocCore_TypeDef gFoc;
 
 RAMFUNC static void dqPI(void);
+/* 电压型驱动（直接拖动的牵入段）：s_drive 非空时电流环 Kp = 0、积分很慢，电压主要由 s_drive 给出的前馈决定；
+ * 反电势产生的电流不被电流环抵消，经定子电阻消耗，为转子提供阻尼。s_driveD/Q = 上一拍前馈，退出时并入积分器 */
+static FocCore_FfFn volatile s_drive;
+static int32_t s_driveD, s_driveQ;
 
 /* 上电初始化：装载电流环增益，清零积分器（输出限幅每拍按电压圆重设） */
 void FocCore_Init(void)
@@ -45,9 +49,27 @@ void FocCore_LoadGains(void)
     gFoc.piQ.qKp = gGain.curKpQ; gFoc.piQ.qKi = gGain.curKiQ;
 }
 
-/* 停机 / 重新起动前：清零积分器、电压、电流指令、角度，复位解耦开关 */
+/* 进入 / 退出电压型驱动（临界区内调用，只赋值）。fn 非空：Kp = 0，Ki = 正常值 * DRAG_CUR_BW_HZ / CURRENT_BW_HZ（至少 1）；
+ * fn = 0：上一拍的前馈并入积分器（PI 输出不跳变），恢复正常增益 */
+void FocCore_SetVoltageDrive(FocCore_FfFn fn)
+{
+    if (fn) {
+        int32_t kd = (gGain.curKiD * DRAG_KI_RATIO_Q16) >> 16, kq = (gGain.curKiQ * DRAG_KI_RATIO_Q16) >> 16;
+        gFoc.piD.qKp = 0; gFoc.piQ.qKp = 0;
+        gFoc.piD.qKi = kd > 0 ? kd : 1; gFoc.piQ.qKi = kq > 0 ? kq : 1;
+        s_driveD = 0; s_driveQ = 0;
+    } else if (s_drive) {
+        gFoc.piD.qdSum = QMath_AddSat32(gFoc.piD.qdSum, s_driveD << 15);
+        gFoc.piQ.qdSum = QMath_AddSat32(gFoc.piQ.qdSum, s_driveQ << 15);
+        FocCore_LoadGains();
+    }
+    s_drive = fn;
+}
+
+/* 停机 / 重新起动前：清零积分器、电压、电流指令、角度，复位解耦开关，退出电压型驱动 */
 void FocCore_ResetRun(void)
 {
+    if (s_drive) { s_drive = 0; FocCore_LoadGains(); }
     gFoc.piD.qdSum = 0;
     gFoc.piQ.qdSum = 0;
     gFoc.vdq.s16Q = 0;
@@ -172,7 +194,8 @@ RAMFUNC static void dqPI(void)
 {
     int32_t t, ffd = 0, ffq = 0, vd, lim;
     applyDecoupleRequest();
-    if (s_decOn) decoupleFF(&ffd, &ffq);
+    if (s_drive) { s_drive(&ffd, &ffq); s_driveD = ffd; s_driveQ = ffq; }
+    else if (s_decOn) decoupleFF(&ffd, &ffq);
     /* PI 输出范围 = 电压限幅 - 前馈 */
     gFoc.piD.qOutMax = gFoc.vmax - ffd;
     gFoc.piD.qOutMin = -gFoc.vmax - ffd;

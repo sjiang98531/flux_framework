@@ -19,8 +19,10 @@ typedef struct {
     int32_t  olSpeed;           /* 开环起始转速 Q31 */
     int32_t  olCur, olCurTarget;    /* 开环电流起始值 / 目标值（Q15），起始值 < 目标值时按 CURRENT_SLEW_A_S 上升 */
     int32_t  accScaleQ12, accStepFull, accStep;    /* 加速度缩放（开环电流 / 额定开环电流，Q12）、电流到目标后的加速度步长、起始加速度步长（Q31 / 快环拍） */
+    uint8_t  drag;              /* 1 = 直接拖动：先按 f0 匀速牵入（电压型驱动），之后从平衡负载角开始加速 */
 } OpenLoopEntry_TypeDef;
-void OpenLoop_PrepareCold(OpenLoopEntry_TypeDef *e);    /* 准备（临界区外，只计算）：冷起动 */
+void OpenLoop_PrepareCold(OpenLoopEntry_TypeDef *e);    /* 准备（临界区外，只计算）：冷起动（定位 / IPD 之后） */
+void OpenLoop_PrepareDrag(OpenLoopEntry_TypeDef *e);    /* 准备：直接拖动（转子位置未知） */
 void OpenLoop_PrepareWarm(int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e);    /* 准备：从运行状态接管 */
 void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e);    /* 提交（临界区内，只赋值） */
 uint8_t OpenLoop_Reversal(int32_t speedSign);    /* 开环目标方向与 speedSign 相反（I/F 需过零）时返回 1 */

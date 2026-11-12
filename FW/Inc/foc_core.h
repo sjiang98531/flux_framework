@@ -36,6 +36,9 @@ extern FocCore_TypeDef gFoc;
 /* 电流环参数初始化 */
 void FocCore_Init(void);
 void FocCore_LoadGains(void);       /* 从 gGain 重新装载电流环 Kp / Ki（param.c 更新参数时调用） */
+/* 电压型驱动：fn 每拍给出 dq 电压前馈（Q15），电流环 Kp = 0、积分很慢；fn = 0 退出（前馈并入积分器，恢复增益） */
+typedef void (*FocCore_FfFn)(int32_t *ffd, int32_t *ffq);
+void FocCore_SetVoltageDrive(FocCore_FfFn fn);
 
 /* i_abc -> i_alpha_beta（快环热路径，内联） */
 FORCE_INLINE void FocCore_Clarke(void)

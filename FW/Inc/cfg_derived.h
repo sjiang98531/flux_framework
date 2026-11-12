@@ -18,7 +18,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E0065UL
+#define BUILD_TAG            0xF20E0066UL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -228,7 +228,14 @@
 #define ALIGN_T2_S2          (4.0 * MATH_PI * MATH_PI * ALIGN_J / ALIGN_K_NM)
 /* 定位摆周期的平方换算为慢环拍数的平方（Startup_Init 开方得到 T 的拍数，各段为 T 的倍数） */
 #define ALIGN_T2_TICKS2      ((uint64_t)(ALIGN_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
-#define ALIGN_TIME_TICKS     ((uint16_t)(ALIGN_TIME_S * SLOWLOOP_FREQ + 0.5))     /* 用户给出的定位时间上限，0 = 自动 */
+/* 直接拖动：开环电流下的摆动周期平方 T_n^2 = 定位摆周期^2 * ALIGN_A / OPENLOOP_CURRENT_A（刚度与电流成正比），s^2 / 慢环拍^2；
+ * OpenLoop_Init 开方一次得到 T_n 的拍数：牵入转速 f0 = DRAG_F0_RATIO / T_n，牵入段 DRAG_HOLD_T * T_n */
+#define DRAG_T2_S2           (ALIGN_T2_S2 * ALIGN_A / OPENLOOP_CURRENT_A)
+#define DRAG_T2_TICKS2       ((uint64_t)(DRAG_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
+/* 1 Hz（电频率）对应的转速 Q31：f0 = 本值 * DRAG_F0_RATIO * SLOWLOOP_FREQ / T_n 拍数（上电计算一次） */
+#define DRAG_HZ_Q31          ((int64_t)(60.0 / MOTOR_POLE_PAIRS / SPEED_MAX * 2147483648.0 + 0.5))
+/* 电压型驱动的电流积分增益 = 正常 Ki * DRAG_CUR_BW_HZ / CURRENT_BW_HZ（Q16，最小取 1） */
+#define DRAG_KI_RATIO_Q16    ((int32_t)(DRAG_CUR_BW_HZ / CURRENT_BW_HZ * 65536.0 + 0.5))
 /* 冷起动开环角超前转子的平衡负载角 δ_eq = asin(OPENLOOP_ACC_FRAC)（泰勒级数到 7 次，x <= 0.5 时误差 < 3e-4 rad），Q31 角度（2^32 = 一圈） */
 #define OPENLOOP_LEAD_RAD    (OPENLOOP_ACC_FRAC + OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC / 6.0 \
                               + 3.0 / 40.0 * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC \
