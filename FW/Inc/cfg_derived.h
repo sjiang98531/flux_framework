@@ -18,7 +18,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E0060UL
+#define BUILD_TAG            0xF20E0062UL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -226,10 +226,9 @@
                                  * UDC_MAX / I_MAX * 256.0)
 /* 定位摆周期的平方 T^2 = 4*pi^2*J/K（s^2），用于配置检查（慢环频率须远高于摆动频率） */
 #define ALIGN_T2_S2          (4.0 * MATH_PI * MATH_PI * ALIGN_J / ALIGN_K_NM)
-/* 定位各段时长（慢环拍） */
-#define ALIGN_MIN_TICKS      ((uint16_t)(ALIGN_MIN_S * SLOWLOOP_FREQ + 0.5))
-#define ALIGN_MAX_TICKS      ((uint16_t)(ALIGN_MAX_S * SLOWLOOP_FREQ + 0.5))
-#define ALIGN_STILL_TICKS    ((uint16_t)(ALIGN_STILL_S * SLOWLOOP_FREQ + 0.5))
+/* 定位摆周期的平方换算为慢环拍数的平方（Startup_Init 开方得到 T 的拍数，各段为 T 的倍数） */
+#define ALIGN_T2_TICKS2      ((uint64_t)(ALIGN_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
+#define ALIGN_TIME_TICKS     ((uint16_t)(ALIGN_TIME_S * SLOWLOOP_FREQ + 0.5))     /* 用户给出的定位时间上限，0 = 自动 */
 /* "静止"门限：反电势 p*psi_f*w_m（Q15 电压） */
 #define ALIGN_STILL_EMF_Q15_OF(psi) ((int32_t)(ALIGN_STILL_RPM * 2 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS * (psi) / UDC_MAX * 32768.0 + 0.5))
 #define ALIGN_STILL_EMF_Q15  ALIGN_STILL_EMF_Q15_OF(MOTOR_PSI_F_WB)

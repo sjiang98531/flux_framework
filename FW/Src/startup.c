@@ -24,6 +24,8 @@ Startup_TypeDef gStartup;
 
 static volatile int16_t s_alignTheta;      /* 定位角（慢环写，快环读） */
 static uint16_t s_alignTicks;
+/* 定位各段拍数（Startup_Init 按摆动周期 T 计算一次）：最短 / 判停稳持续 / 自动方式最长 / 本次最长 */
+static uint16_t s_alignMinTicks, s_alignStillTicks, s_alignAutoTicks, s_alignMaxTicks;
 static int32_t s_dampQ8;                   /* 定位阻尼增益：Q15 电流 / Q15 电压，Q8 */
 static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
@@ -39,8 +41,12 @@ void Startup_OnEnterAlign(void)
     s_alignTheta = 0;
     FocCore_SetIdqRef(0, 0);
     s_ipd = 0;
-    if (IDENT_TEST && !gIdentCfg.run) { s_alignTheta = Ident_AlignTheta(); Ident_Reset(); }     /* 参数辨识：定位到指定角 */
-    else {
+    s_alignMaxTicks = (ALIGN_TIME_TICKS > 0) ? ALIGN_TIME_TICKS : s_alignAutoTicks;
+    if (IDENT_TEST && !gIdentCfg.run) {     /* 参数辨识：定位到指定角，定位按自动时间（不受用户上限影响） */
+        s_alignMaxTicks = s_alignAutoTicks;
+        s_alignTheta = Ident_AlignTheta();
+        Ident_Reset();
+    } else {
         /* 运行辨识（run = 1）正常起动：上一次静止测量停在 phase 4，需清除，否则 Align 会一直交由测量程序处理 */
         if (IDENT_TEST) Ident_Idle();
         /* 起动方式仅在此处读取一次：本轮中途修改 gStartup.mode 不影响正在执行的 IPD / 定位 */
@@ -53,6 +59,12 @@ void Startup_Init(void)
 {
     gStartup.preChargeCmd = PWM_FREQ / 1000.0 * PRECHARGE_TIME;
     gStartup.mode = STARTUP_MODE;
+    {   /* 定位各段 = 摆动周期 T 的倍数（cfg_internal.h ALIGN_*_T）；用户上限 ALIGN_TIME_S = 0 时按自动 */
+        uint32_t t = QMath_Isqrt64(ALIGN_T2_TICKS2);
+        s_alignMinTicks = (uint16_t)(t * (uint32_t)(ALIGN_MIN_T * 256.0 + 0.5) >> 8);
+        s_alignStillTicks = (uint16_t)(t * (uint32_t)(ALIGN_STILL_T * 256.0 + 0.5) >> 8);
+        s_alignAutoTicks = (uint16_t)(t * (uint32_t)(ALIGN_MAX_T * 256.0 + 0.5) >> 8);
+    }
 
     /* 仅上电时计算一次（含开方与浮点） */
     s_dampQ8 = (int32_t)(ALIGN_C1 * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM * ALIGN_J * 1099511627776.0)) / 1048576.0);
@@ -175,8 +187,8 @@ void Startup_AlignSlow(void)
     {   /* 0° 定位，满足最短时间后等待停稳 */
         int32_t e = s_emfFilt >> ALIGN_EMF_FILT_SH;
         if (e < 0) e = -e;
-        if (s_alignTicks > ALIGN_MIN_TICKS && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
-        if ((s_alignTicks >= ALIGN_MIN_TICKS && s_still >= ALIGN_STILL_TICKS) || s_alignTicks >= ALIGN_MAX_TICKS) {
+        if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
+        if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
             if (IDENT_TEST && !gIdentCfg.run) Ident_Begin();  /* 参数辨识：不切入 I/F，从此开始测量 */
             else Sup_SwitchAlignOpenLoop();  /* 观测器初始化为 |psi_f|∠0 */
         }

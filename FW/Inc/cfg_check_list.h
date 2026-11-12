@@ -138,13 +138,13 @@ CFG_CHECK(RAMP_FIXEDPOINT_FITS, SPEED_JERK_Q31 >= 1 && 4294967296.0 / (2.0 * SPE
            / 65536.0 * (4294967296.0 / (2.0 * SPEED_JERK_Q31)) < 9.2e18 &&
          (double)BUS_VDC_REF_SQ * BUS_VDC_K_Q8 / 65536.0 * (1073741824.0 / BUS_VDC_SMIN_Q15) < 1.8e19 && BUS_VDC_SMIN_Q15 > 0)
 /* I/F 各段时间换成慢环拍数超过 65535（uint16 回绕） */
-CFG_CHECK(OPENLOOP_TICKS_FIT, ALIGN_MAX_S * SLOWLOOP_FREQ < 65535.0 &&
-         ALIGN_MIN_S > 0 && ALIGN_STILL_S > 0 && ALIGN_MAX_S > ALIGN_MIN_S + ALIGN_STILL_S && FLY_SETTLE_BLOCKS >= 1 &&
+CFG_CHECK(OPENLOOP_TICKS_FIT, ALIGN_MAX_T * ALIGN_MAX_T * ALIGN_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ < 65535.0 * 65535.0 &&
+         ALIGN_TIME_S >= 0 && ALIGN_TIME_S * SLOWLOOP_FREQ < 65535.0 &&
+         ALIGN_MIN_T > 0 && ALIGN_STILL_T >= 0.3 && ALIGN_MAX_T > ALIGN_MIN_T + ALIGN_STILL_T && FLY_SETTLE_BLOCKS >= 1 &&
          OPENLOOP_TIMEOUT_S * SLOWLOOP_FREQ < 65536 && OPENLOOP_AGREE_S * SLOWLOOP_FREQ < 65536)
 
-/* 定位判停稳的持续时间不小于 0.3 个摆动周期 T（见 cfg_internal.h ALIGN_STILL_S：离定位轴 90° 的回摆端点处，
- * q 轴反电势约 0.28 T 内无法反映转子运动）。更换电机（惯量、磁链）或修改定位电流后 T 改变，须重新确定 */
-CFG_CHECK(ALIGN_STILL_COVERS_SWING, ALIGN_STILL_S * ALIGN_STILL_S >= 0.09 * ALIGN_T2_S2)
+/* 定位时间上限 ALIGN_TIME_S（非自动时）不得短于定位电流上升时间：否则电流尚未达到 ALIGN_A 即开始拖动 */
+CFG_CHECK(ALIGN_TIME_FITS, ALIGN_TIME_S == 0 || ALIGN_TIME_S >= ALIGN_A / ALIGN_RAMP_A_S)
 
 /* ---- 飞车检测 ------------------------------------------------------------ */
 /* 短脉冲测速：脉冲周期至少 4 拍（SPEED_MAX 时 120° 电角度换成的拍数太少：PWM 太低或 SPEED_MAX 太高） */
