@@ -4,7 +4,7 @@
  *
  * 配置分三层：
  *   cfg_motor.h     电机（更换电机必须修改）：铭牌值、Rs / L / 磁链 / 加速度系数（可先填估计值，辨识后回填）
- *   cfg_app.h       应用（按需修改）：转向、起动方式、起停门限、加减速斜坡、电流上限；
+ *   cfg_app.h       应用（按需修改）：转向、起动方式、停机方式、起停门限、加减速斜坡、电流上限；
  *                   以及转速门限、定位时间等可按现场现象直接调整的调试项（默认值一般可直接运行）
  *   cfg_internal.h  内部（无需修改）：带宽、阻尼、滤波、观测器、飞车检测、母线电压环等，全部由前两层与 cfg_board.h 自动换算
  * cfg_board.h 为驱动板硬件参数（采样、母线、死区），更换驱动板时修改。
@@ -26,6 +26,17 @@
 #define STARTUP_MODE_IPD        0
 #define STARTUP_MODE_ALIGN      1
 #define STARTUP_MODE            STARTUP_MODE_ALIGN
+
+/* 停机方式（上电默认值；运行中可修改 gSup.stopMode，立即生效）。停机 = |指令| < RUN_TO_STOP_SPEED：
+ *   STOP_MODE_RAMP   受控减速：闭环运行中收到停机指令时，速度环按 SPEED_RAMP_DOWN 减速到 TRACK_END_RPM，
+ *                    再将电流降到 0、关闭 PWM。减速度由斜坡决定，与负载大小、转向无关；
+ *                    回馈受母线电压控制器限制（无制动电阻时，轻载下的减速度仍受损耗能吸收的功率限制）
+ *   STOP_MODE_COAST  滑行：电流降到 0 后零电流跟踪，转子靠负载自行减速（减速度随负载、转向而变），
+ *                    低于 TRACK_END_RPM 时关闭 PWM。全程不回馈
+ * 两种方式下，减速 / 滑行途中重新给指令都直接续接闭环。 */
+#define STOP_MODE_RAMP          0
+#define STOP_MODE_COAST         1
+#define STOP_MODE               STOP_MODE_RAMP
 
 /* 起停门限（对转速指令判断）：|指令| > STOP_TO_RUN_SPEED 起动，< RUN_TO_STOP_SPEED 停机，二者之间为回差 */
 #define STOP_TO_RUN_SPEED       15.0        /* rpm，起动门限 */
@@ -60,7 +71,7 @@
 #define OPENLOOP_SPIN_MIN_RPM   59.0        /* rpm，闭环运行的最低指令转速，更低的指令以 I/F 开环运行（k 约 1.4%） */
 #define OPENLOOP_FALLBACK_RPM   252.0       /* rpm，减速 / 反转时闭环交还 I/F 的转速（k 约 6%）。减速至低速失步时调高 */
 #define SPIN_LOST_RPM           40.0        /* rpm，闭环失锁判据：指令同向而估计转速低于该值时停机并重新起动 */
-#define TRACK_END_RPM           130.0       /* rpm，停机滑行时零电流跟踪至该转速后关闭 PWM（不低于 OPENLOOP_HANDOVER_RPM）。
+#define TRACK_END_RPM           130.0       /* rpm，停机时受控减速 / 零电流跟踪至该转速后关闭 PWM（不低于 OPENLOOP_HANDOVER_RPM）。
                                              * 滑行至低速后再给指令出现冲击声时调高 */
 
 /* ---- 顺逆风（飞车）起动 ---- */

@@ -58,6 +58,7 @@ typedef struct {
     MainState_TypeDef mainState;       /* 主状态 */
     RunState_TypeDef  runState;        /* Run 子状态 */
     volatile int16_t   speedCmd;        /* 转速指令 Q15 = rpm * 32768 / SPEED_MAX，由调试器或通信接口写入 */
+    volatile uint8_t   stopMode;        /* 停机方式 STOP_MODE_RAMP / STOP_MODE_COAST（上电默认 STOP_MODE，调试器或上位机可改；其他值按滑行处理） */
     FaultBits_t      fault;           /* 本次 Fault 的故障位（进入 Fault 时锁存，回到 Stop 时清零） */
     FaultBits_t      faultActive;     /* 当前存在的电平型故障（每快环拍重算） */
     FaultBits_t      faultRecord;     /* 上电以来出现过的故障位 */

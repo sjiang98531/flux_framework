@@ -18,6 +18,7 @@
  *   Ctrl_FastTick / Ctrl_SlowTick        快环 / 慢环入口（在 hal_sc32r602.c 的中断中调用）
  *   M1_<主状态>_Fast / _Slow             各主状态每拍的处理
  *   softStopSlow                         软停机：电流矢量按限定速率降到 0
+ *   stopRampSlow                         受控减速停机：闭环中收到停机指令时先由速度环减速到 TRACK_END_RPM
  *   Sup_Switch*                          状态切换
  *   faultDetect                    每拍汇总故障位（硬件过流、配置检查失败、母线过欠压）
  * ==========================================================================*/
@@ -88,6 +89,7 @@ static void initProtection(void)
 void Ctrl_Init(void)
 {
     HAL_InitParams();
+    gSup.stopMode = STOP_MODE;
     Param_Init();           /* 运行时电机参数（配置标称值），以下各模块 Init 读取 gGain */
 
     Meas_Init();
@@ -325,10 +327,27 @@ static uint8_t runStopSlow(uint8_t stopReq)
     return 1;
 }
 
+/* 受控减速停机（STOP_MODE_RAMP）：闭环运行中收到停机指令时，不立即软停，而是把速度环的目标改为
+ * "同向的 TRACK_END_RPM"，按 SPEED_RAMP_DOWN 减速（与平时同向调速完全相同的路径：S 形斜坡、轨迹前馈、
+ * 母线电压控制器限制回馈）。斜坡到达 TRACK_END_RPM 后返回 0，由调用方按原流程软停、关闭 PWM。
+ * 目标取同向的 TRACK_END_RPM 而不是 0：闭环（观测器）只在该转速以上可靠，更低的转速不做闭环制动。
+ * 返回 1 = 本拍继续闭环减速（gSpd.cmd 已改写为减速目标）。
+ * 不适用的情况（返回 0，按原流程软停）：停机方式为滑行、参数辨识模式（辨识依赖零电流滑行）、
+ * 非闭环子状态（定位、I/F 电流沿开环角，直接软停）、软停已开始、斜坡已不高于 TRACK_END_RPM。 */
+static uint8_t stopRampSlow(void)
+{
+    if (IDENT_TEST || gSup.stopMode != STOP_MODE_RAMP) return 0;
+    if (gSup.runState != RunState_Spin || s_softStop) return 0;
+    if (abs(gSpd.ramp) <= TRACK_END_Q15) return 0;
+    gSpd.cmd = (gSpd.ramp > 0) ? TRACK_END_Q15 : -TRACK_END_Q15;
+    return 1;
+}
+
 /* Run 慢环，按优先级：
  *   1. 参数辨识模式（IDENT_TEST）的慢环钩子；
  *   2. 零电流跟踪中（闭环中停机后转子仍在转动）：只执行 Spin_TrackSlow；
- *   3. 停机指令（|指令| < RUN_TO_STOP_SPEED）或软停机进行中：有电流的子状态先软停（电流降到 0），
+ *   3. 停机指令（|指令| < RUN_TO_STOP_SPEED）或软停机进行中：闭环且停机方式为受控减速时先减速到 TRACK_END_RPM（stopRampSlow）；
+ *      有电流的子状态软停（电流降到 0），
  *      完成后若处于闭环且转速足够 -> 零电流跟踪，否则关闭 PWM 回到 Stop。闭环软停期间指令恢复 -> 取消软停继续闭环；
  *   4. 正常情况：按子状态分发慢环函数（预充计时、飞车判定、定位、I/F、速度环）。 */
 static void runSlow(void)
@@ -338,6 +357,7 @@ static void runSlow(void)
     stopReq = (uint8_t)(abs(gSpd.cmd) < Q15(RUN_TO_STOP_SPEED / SPEED_MAX));
     if (IDENT_TEST) Ident_RunSlow((uint8_t)(gSup.runState == RunState_Spin && !s_softStop), Spin_Tracking(), gSpd.cmd, gSpd.ramp);
     if (Spin_Tracking()) { Spin_TrackSlow(); return; }
+    if (stopReq && stopRampSlow()) stopReq = 0;     /* 受控减速停机：本拍照常执行速度环，目标 = 同向 TRACK_END_RPM */
     if (runStopSlow(stopReq)) return;
     if (stopReq) {                      /* 无电流的子状态（预充、飞车检测）直接停机 */
         HAL_PwmAllOff();

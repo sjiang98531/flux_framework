@@ -59,10 +59,11 @@ IPD 对比度的测量，结果在 `gIdent`，并自动在本次上电期间生�
 ## 运行
 
 调试器中写 `gSup.speedCmd`（Q15，`rpm * 32768 / SPEED_MAX`）即可起停与调速：|指令| 超过 `STOP_TO_RUN_SPEED`（15 rpm）起动，
-低于 `RUN_TO_STOP_SPEED`（12 rpm）软停机。
+低于 `RUN_TO_STOP_SPEED`（12 rpm）停机。停机方式由 `cfg_app.h` 的 `STOP_MODE` 决定（运行中可改 `gSup.stopMode`）：
+默认受控减速（按 `SPEED_RAMP_DOWN` 减速到 `TRACK_END_RPM` 后关闭 PWM），或滑行（电流降到 0 后靠负载自行减速）。
 
 ## 版本
 
-固件版本见 `gFluxDiag.buildTag`（`FW/Inc/cfg_derived.h` 的 `BUILD_TAG`），当前为 `0xF20E005F`。
+固件版本见 `gFluxDiag.buildTag`（`FW/Inc/cfg_derived.h` 的 `BUILD_TAG`），当前为 `0xF20E0060`。
 本仓库为发布版，与开发仓库 flux_framework 的同号版本控制逻辑一致（发布版不含任何调试 / 测量内容；可读取的状态仅有版本号、配置检查结果 `gFluxDiag` 与运行状态、故障码 `gSup`）。
 各次修改见 git 提交记录。
