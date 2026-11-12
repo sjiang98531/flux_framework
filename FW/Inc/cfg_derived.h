@@ -18,7 +18,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E005DUL
+#define BUILD_TAG            0xF20E005EUL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -51,7 +51,7 @@
 #define BUS_DV_DELAY_V          (BUS_REGEN_P_MAX_W * BUS_DELAY_S / (BOARD_CBUS_UF * 1e-6 * BOARD_DCBUS_OVP_V))    /* 测量延迟 Td 内最大回馈功率把母线推高的电压 dV_d = P*Td / (C*V)：门限之间至少隔这么多 */
 #define BUS_REGEN_FULL_V        (BOARD_DCBUS_OVP_V - BUS_DV_DELAY_V)    /* 回馈兜底"全力制动"门限 = 过压保护往下一档 */
 #define BUS_REGEN_START_V       (BUS_REGEN_FULL_V - BUS_DV_DELAY_V)    /* 回馈兜底开始介入的门限 = 再往下一档 */
-#define BUS_VDC_REF_V           (BUS_REGEN_START_V - BUS_DV_DELAY_V)    /* 回馈减速时母线电压控制器的调节点 = 再往下一档（本板约 358 V） */
+#define BUS_VDC_REF_V           (BUS_REGEN_START_V - BUS_DV_DELAY_V)    /* 回馈减速时母线电压控制器的调节点 = 再往下一档（本板约 387 V） */
 #define BUS_IDLE_MAX_V          (BOARD_VBUS_IN_MAX_V * (1.0 + BOARD_VBUS_TOL))    /* 空载母线可能的最高读数（输入上限 + 采样误差），调节点必须高于它 */
 /* 保护（protect.h）：缺相窗口 = PHASELESS_PERIODS 个电周期，慢环每拍累加 |转速 Q15|，满一个电周期的累加值
  * = 32768 * 60 * SLOWLOOP_FREQ / (SPEED_MAX * p)；窗口最长 2 s（低于约 24 rpm 转不满就丢弃，也防 u32 累加溢出） */
