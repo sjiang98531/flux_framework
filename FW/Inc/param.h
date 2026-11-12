@@ -44,8 +44,8 @@ typedef struct {
     /* ---- 电流环 PI（foc_core.c）：Kp = 2*pi*带宽*L，Ki = 2*pi*带宽*R / PWM 频率（零极点对消），已封顶 65535 */
     int32_t curKpD, curKiD, curKpQ, curKiQ;
     /* ---- 速度环 PI（speed_ctrl.c）：按 SPEED_WN_HZ / SPEED_ZETA 和加速度系数算；
-     *      spdFfKQ16 = 轨迹加速度 -> 前馈 iq 的系数（Q16） */
-    int32_t spdKp, spdKi, spdFfKQ16;
+     *      spdFfKQ16 = 轨迹加速度 -> 前馈 iq 的系数（Q16）；spdAccPerIqQ8 = 其倒数：iq -> 每拍斜坡增量（Q8） */
+    int32_t spdKp, spdKi, spdFfKQ16, spdAccPerIqQ8;
     /* ---- dq 解耦前馈（foc_core.c）：反电势 w*psi（Q15）、交叉耦合 w*Lq*iq、w*Ld*id（Q12，系数可能 > 1） */
     int32_t decKEmfQ15, decKLqQ12, decKLdQ12;
     /* ---- 磁链观测器（flux_obs.c） */

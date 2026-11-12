@@ -95,6 +95,7 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->spdKp = SPEED_KP_OF(p->accRpmSPerA);
     g->spdKi = SPEED_KI_OF(p->accRpmSPerA);
     g->spdFfKQ16 = SPEED_FF_K_Q16_OF(p->accRpmSPerA);
+    g->spdAccPerIqQ8 = SPEED_ACC_PER_IQ_Q8_OF(p->accRpmSPerA);
     /* dq 解耦前馈：vq 中加 w*psi（反电势，16297），vd / vq 中加交叉耦合 w*Lq*iq、w*Ld*id（4982）。
      * 满量程转速下反电势超过电压满量程时置告警 bit3（解耦项会被限幅，高速时前馈不完整） */
     g->decKEmfQ15 = DECOUPLE_K_EMF_Q15_OF(p->psiWb);

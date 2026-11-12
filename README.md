@@ -63,6 +63,6 @@ IPD 对比度的测量，结果在 `gIdent`，并自动在本次上电期间生�
 
 ## 版本
 
-固件版本见 `gFluxDiag.buildTag`（`FW/Inc/cfg_derived.h` 的 `BUILD_TAG`），当前为 `0xF20E005E`。
+固件版本见 `gFluxDiag.buildTag`（`FW/Inc/cfg_derived.h` 的 `BUILD_TAG`），当前为 `0xF20E005F`。
 本仓库为发布版，与开发仓库 flux_framework 的同号版本控制逻辑一致（发布版不含任何调试 / 测量内容；可读取的状态仅有版本号、配置检查结果 `gFluxDiag` 与运行状态、故障码 `gSup`）。
 各次修改见 git 提交记录。

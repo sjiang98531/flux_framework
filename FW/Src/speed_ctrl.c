@@ -74,8 +74,10 @@ static int16_t regenIqAllowed(void)
 }
 
 /* 母线电压控制器（原理见 cfg_internal.h"回馈减速"）。在斜坡运行之前调用：
- * 斜坡朝 0 方向运行（减速、回馈方向）时，将该侧步长限制为"允许回馈功率所能支持的减速度"：
- *   step = min(额定, K * (Vref^2 - V^2) / |n|)
+ * 斜坡朝 0 方向运行（减速、回馈方向）时，将该侧步长限制为"负载自然减速度 + 允许回馈功率所能支持的减速度"：
+ *   step = min(额定, a_负载 + K * max(Vref^2 - V^2, 0) / |n|)
+ * a_负载 = 速度 PI 输出中与转动同向的部分（负载转矩；加减速转矩在轨迹前馈中）* 加速度系数：按该减速度减速时
+ * iq 指令恰为 0，电机不向母线回馈。母线高于调节点时（储能裕量为 0）仍可按负载自然减速度减速，减速指令不会被搁置。
  * 同时计算受限程度 lam = 1 - step / 额定，供损耗制动 id 使用。只读写 gSpd，慢环调用。 */
 static void busVdcLimit(void)
 {
@@ -84,9 +86,11 @@ static void busVdcLimit(void)
     if ((st > 0 && tgt < st) || (st < 0 && tgt > st)) {
         int32_t *pr = (st > 0) ? &gSpd.speedRampSt.s32RampDown : &gSpd.speedRampSt.s32RampUp;
         int32_t nom = (int32_t)*pr, v = gMeas.vbusAvg, e2 = BUS_VDC_REF_SQ - v * v, s = abs(gMeas.speed), step;
+        int32_t iqLoad = (st > 0) ? gSpd.pi.qOut : -gSpd.pi.qOut;      /* 负载转矩对应的 iq（Q15，与转动同向为正） */
+        int32_t stepLoad = (iqLoad > 0) ? (int32_t)(((int64_t)iqLoad * gGain.spdAccPerIqQ8) >> 8) : 0;
         if (s < BUS_VDC_SMIN_Q15) s = BUS_VDC_SMIN_Q15;
         if (e2 <= 0) {
-            step = 0;                       /* 母线已达调节点：斜坡暂停，等待损耗消耗能量 */
+            step = 0;                       /* 母线已达调节点：不允许回馈，只按负载自然减速度减速 */
         } else {
             /* 不使用 64 位除法。N = e2*K（< 2^44），先用乘法判断是否受限（N >= nom*s*256 即不受限，
              * 多数情况走此分支），受限时 1/s 用一次 32 位除法（s >= SMIN，r = 2^30/s < 2^22），
@@ -99,6 +103,7 @@ static void busVdcLimit(void)
                 step = (int32_t)(((uint64_t)(uint32_t)(n >> 16) * r) >> 22);     /* n >> 16 < 2^28 */
             }
         }
+        step = (stepLoad >= nom - step) ? nom : step + stepLoad;       /* step、stepLoad 均 >= 0，step <= nom，不溢出 */
         if (step < nom) {
             /* lam = 1 - step / nom（Q15）：step、nom < 2^19，step << 12 < 2^31，nom >> 3 仍有 14 位以上精度 */
             uint32_t d = (uint32_t)nom >> 3;

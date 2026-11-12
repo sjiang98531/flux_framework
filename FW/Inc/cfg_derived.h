@@ -18,7 +18,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E005EUL
+#define BUILD_TAG            0xF20E005FUL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -113,6 +113,9 @@
 /* 斜率前馈：iq_ff(Q15) = 每拍斜坡增量(Q31) * SPEED_FF_K_Q16 >> 16 */
 #define SPEED_FF_K_Q16_OF(acc)  ((int32_t)(SPEED_MAX * SLOWLOOP_FREQ / ((acc) * I_MAX) * 32768.0 / 2147483648.0 * 65536.0 + 0.5))
 #define SPEED_FF_K_Q16          SPEED_FF_K_Q16_OF(MOTOR_ACC_RPM_S_PER_A)
+/* 上式的倒数：每拍斜坡增量(Q31) = iq(Q15) * SPEED_ACC_PER_IQ_Q8 >> 8（母线电压控制器把负载转矩换算为自然减速度） */
+#define SPEED_ACC_PER_IQ_Q8_OF(acc)  ((int32_t)((acc) * I_MAX / (SPEED_MAX * SLOWLOOP_FREQ) * 2147483648.0 / 32768.0 * 256.0 + 0.5))
+#define SPEED_ACC_PER_IQ_Q8     SPEED_ACC_PER_IQ_Q8_OF(MOTOR_ACC_RPM_S_PER_A)
 
 #define IBUS_LIMIT_VALUE        Q15(IBUS_LIMIT_A / I_MAX)
 
