@@ -54,8 +54,19 @@ extern IdentResult_TypeDef gIdent;
 /* ============================================================================
  * 参数辨识模式（IDENT_TEST，cfg_board.h；默认 0 = 整段在编译期去除）
  *
- * 置 1 后起动流程变为：Charge -> FlyCheck -> Align（定位到 gIdentCfg.alignDeg）-> 测量 -> 保持零电压，
- * 不进入 I/F。给出速度指令 0 即停机。测量步骤（phase 为 gIdentTest.phase 的取值）：
+ * 置 1 后给出一个转速指令即自动完成辨识（gIdentCfg.mode = IDENT_MODE_AUTO，默认）：
+ *   1. 静止测量：Charge -> FlyCheck -> Align（定位到 gIdentCfg.alignDeg）-> R/L -> 死区阶梯 -> IPD -> 交流阻抗 / 饱和，
+ *      转子不转，约 15 s；结果交给 param.c 后自动停机（Run -> Stop），参数装入（gParamStat.pending = 0）后自动重新起动；
+ *   2. 运行测量：正常起动（IPD / 定位 -> I/F），I/F 到达目标转速后先测磁链并生效，再切闭环；闭环稳速 2 s 后零电流滑行 0.4 s，
+ *      测得 psi_f 与加速度系数并立即生效，随后按指令转速继续运行；gIdent.state = IDENT_DONE。
+ *   运行测量要求转速不低于 RUN_MIN_RPM（315 rpm，保证滑行 0.4 s 后仍高于 TRACK_END_RPM）：指令更低时，
+ *   测量期间按其 1.1 倍（347 rpm）运行，测量完成后回到指令转速。
+ *   中途停机或故障：下次起动从未完成的步骤继续（静止测量未完成则重做）。重新辨识：停机后将 gIdent.state 写 0。
+ *   结果仅保存在 RAM（gParam），掉电丢失；长期使用需按 gIdent 填回 cfg_motor.h / cfg_board.h。
+ * 只执行其中一步：gIdentCfg.mode = IDENT_MODE_STATIC（仅静止测量，完成后保持零电压，给指令 0 停机，回到 Stop 时生效）/
+ * IDENT_MODE_RUN（正常起动，每个新的转速指令稳速后执行一次运行测量）。下一次起动生效。
+ *
+ * 静止测量各步（phase 为 gIdentTest.phase 的取值）：
  *
  * 1. R/L（phase 9）：进入 Align 时首先执行，200 Hz 电压注入、不使用电流环，得到粗略 R、L 并立即更新电流环增益；
  *    死区阶梯测完后 Rs / 死区也立即生效。因此静止测量不依赖配置中的 R、L 初值（R/L -> Rs 顺序）。
@@ -73,15 +84,19 @@ extern IdentResult_TypeDef gIdent;
  * 5. q 轴饱和（phase 6 后段 + 7）：q 轴 25 Hz 再测 1.0 / 1.5 / 2.0 / 2.5 A，最后 12.5 Hz 0.4 / 1.0 A 两段测转子摆动系数；
  *    五档基波电感按观测器 L(i) 模型拟合（正弦电流下的基波 = 模型在一个周期上的加权平均，见 identify.c dfStep），
  *    给出 MOTOR_LQ_H / LS_SAT_KNEE_A / PER_A。
- * 6. 运行辨识（gIdentCfg.run = 1）：正常起动；I/F 开环拖到目标转速时先测磁链（Ident_OpenLoopFluxSlow），
+ * 6. 运行辨识：正常起动；I/F 开环拖到目标转速时先测磁链（Ident_OpenLoopFluxSlow），
  *    生效后再切闭环；闭环稳速后零电流滑行 420 ms，给出 psi_f 与 MOTOR_ACC_RPM_S_PER_A。
  * 结果见 gIdent（调试器查看）；IPD 原始数据见 gIpd.pk / perp。
  * ==========================================================================*/
 #define IDENT_DT_N      11
 
+#define IDENT_MODE_AUTO     0       /* 静止测量 -> 自动重新起动 -> 运行测量 -> 按指令继续运行 */
+#define IDENT_MODE_STATIC   1       /* 仅静止测量 */
+#define IDENT_MODE_RUN      2       /* 仅运行测量（每个新指令一次） */
+
 typedef struct {
     int16_t  alignDeg;      /* 定位角（电角度，度），下一次起动生效。IPD 脉冲参数用 gIpdCfg（ipd.h） */
-    uint8_t  run;           /* 0 = 起动做静止测量；1 = 正常起动，闭环稳速 2 s 后做一次零电流滑行（运行辨识，下一次起动生效） */
+    uint8_t  mode;          /* IDENT_MODE_AUTO（默认）/ STATIC / RUN，见上；下一次起动生效 */
     uint8_t  biasX;         /* 大幅值 q 段 N 极直流偏置的倍数（0 = 1 倍）：改 2 / 3 倍再测，看偏置（交叉饱和）对 Lq 的影响 */
 } IdentCfg_TypeDef;
 
@@ -97,13 +112,17 @@ extern volatile IdentCfg_TypeDef gIdentCfg;
 extern IdentTest_TypeDef gIdentTest;
 
 int16_t Ident_AlignTheta(void);     /* 定位角（Q15 角度，65536 = 一圈） */
+uint8_t Ident_StaticThisStart(void);    /* 本次起动执行静止测量（进入 Align 时、定位结束时查询） */
+uint8_t Ident_RunActive(void);          /* 运行测量进行中（I/F 测磁链、闭环滑行；受控减速停机让位） */
+uint8_t Ident_TakeRestart(void);        /* 自动方式：静止测量刚完成，需停机后重新起动（读取后清除） */
+int16_t Ident_SpeedCmd(int16_t cmd);    /* 自动方式运行测量期间的转速指令（不低于 1.1 倍 RUN_MIN_RPM） */
 void    Ident_Reset(void);          /* 进 Align 时（静止测量） */
 void    Ident_Idle(void);           /* 进 Align 时（运行辨识：不做静止测量，正常起动） */
 void    Ident_Begin(void);          /* 定位完成时（代替切 I/F） */
 uint8_t Ident_Active(void);         /* 测量已开始（慢环由 Ident_Slow 接管） */
 void    Ident_Slow(void);
 uint8_t Ident_Fast(void);           /* 1 = 本拍调制已由测量输出（快环跳过电流环） */
-/* 运行辨识（gIdentCfg.run = 1）：supervisor 的 Run 慢环开头调用；滑行期间 Ident_HoldTrack() = 1，零电流跟踪不接回速度环 */
+/* 运行辨识：supervisor 的 Run 慢环开头调用；滑行期间 Ident_HoldTrack() = 1，零电流跟踪不接回速度环 */
 void    Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp);
 uint8_t Ident_HoldTrack(void);
 /* 运行辨识：I/F 慢环在"切闭环"判断前调用；返回 1 = 正在开环里测磁链，先不切 */

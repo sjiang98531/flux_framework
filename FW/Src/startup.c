@@ -42,12 +42,12 @@ void Startup_OnEnterAlign(void)
     FocCore_SetIdqRef(0, 0);
     s_ipd = 0;
     s_alignMaxTicks = (ALIGN_TIME_TICKS > 0) ? ALIGN_TIME_TICKS : s_alignAutoTicks;
-    if (IDENT_TEST && !gIdentCfg.run) {     /* 参数辨识：定位到指定角，定位按自动时间（不受用户上限影响） */
+    if (IDENT_TEST && Ident_StaticThisStart()) {     /* 参数辨识：定位到指定角，定位按自动时间（不受用户上限影响） */
         s_alignMaxTicks = s_alignAutoTicks;
         s_alignTheta = Ident_AlignTheta();
         Ident_Reset();
     } else {
-        /* 运行辨识（run = 1）正常起动：上一次静止测量停在 phase 4，需清除，否则 Align 会一直交由测量程序处理 */
+        /* 不执行静止测量（运行测量 / 已完成）时正常起动：上一次静止测量停在 phase 4，需清除，否则 Align 会一直交由测量程序处理 */
         if (IDENT_TEST) Ident_Idle();
         /* 起动方式仅在此处读取一次：本轮中途修改 gStartup.mode 不影响正在执行的 IPD / 定位 */
         if (gStartup.mode == STARTUP_MODE_IPD) { Ipd_Start(); s_ipd = 1; }    /* 先检测初始位置，检测失败再定位 */
@@ -189,7 +189,7 @@ void Startup_AlignSlow(void)
         if (e < 0) e = -e;
         if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
         if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
-            if (IDENT_TEST && !gIdentCfg.run) Ident_Begin();  /* 参数辨识：不切入 I/F，从此开始测量 */
+            if (IDENT_TEST && Ident_StaticThisStart()) Ident_Begin();  /* 参数辨识：不切入 I/F，从此开始测量 */
             else Sup_SwitchAlignOpenLoop();  /* 观测器初始化为 |psi_f|∠0 */
         }
     }

@@ -29,8 +29,9 @@ n = k · UDC_RATE · 60 / (2π · 极对数 · psi_f)。
 `FW/Inc/cfg_derived.h` 由以上四个文件自动推导全部定点增益，无需修改；`FW/Inc/cfg_check_list.h` 在编译期 / 上电时检查配置，
 任一项不满足时 `gFluxDiag.cfgFailLine` 给出行号，电机不起动。
 
-电机参数可用辨识模式测量：`cfg_board.h` 中 `IDENT_TEST = 1` 编译，给出指令后电机不旋转，约 8 s 完成 Rs、死区、Ld/Lq、L(i)、
-IPD 对比度的测量，结果在 `gIdent`，并自动在本次上电期间生效（见 `param.h`）。量产固件须设回 `IDENT_TEST = 0`。
+电机参数可自动辨识：`cfg_board.h` 中 `IDENT_TEST = 1` 编译，给出一个转速指令即可。先进行静止测量（电机不旋转，约 15 s：
+R/L、Rs、死区、Ld/Lq、L(i)、IPD 对比度），完成后自动停机并重新起动进行运行测量（磁链、加速度系数），随后按指令转速继续运行。
+`gIdent.state = 2` 表示完成，结果在 `gIdent`，并在本次上电期间生效（见 `param.h`、`identify.h`）。量产固件须设回 `IDENT_TEST = 0`。
 
 ## 控制结构
 
@@ -64,6 +65,6 @@ IPD 对比度的测量，结果在 `gIdent`，并自动在本次上电期间生�
 
 ## 版本
 
-固件版本见 `gFluxDiag.buildTag`（`FW/Inc/cfg_derived.h` 的 `BUILD_TAG`），当前为 `0xF20E0062`。
+固件版本见 `gFluxDiag.buildTag`（`FW/Inc/cfg_derived.h` 的 `BUILD_TAG`），当前为 `0xF20E0063`。
 本仓库为发布版，与开发仓库 flux_framework 的同号版本控制逻辑一致（发布版不含任何调试 / 测量内容；可读取的状态仅有版本号、配置检查结果 `gFluxDiag` 与运行状态、故障码 `gSup`）。
 各次修改见 git 提交记录。

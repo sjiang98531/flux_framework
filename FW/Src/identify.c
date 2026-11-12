@@ -2,14 +2,15 @@
  * @file    identify.c
  * @brief   参数辨识（IDENT_TEST = 1 时编译；正常运行时这些函数不被调用）。方法说明见 identify.h
  *
- * 静止测量（gIdentCfg.run = 0，给指令后电机不旋转）：Ident_Reset 从 phase 9 开始，Align 子状态的快环 / 慢环交由本模块处理：
+ * 自动方式（默认）：静止测量 -> 停机后重新起动 -> 运行测量，见 identify.h。
+ * 静止测量（给指令后电机不旋转）：Ident_Reset 从 phase 9 开始，Align 子状态的快环 / 慢环交由本模块处理：
  *   phase 9  R/L 粗测：alpha 轴注入 200 Hz 电压，不使用电流环（rlStart / rlFast / rlSlow），测得后立即更新电流环增益
  *   定位（正常进行）-> phase 1/2 死区阶梯：d 轴电流 11 档，拟合 vd = Rs*id + 死区电压（dtFit）
  *   phase 3  IPD 对比度（ipdFit）
  *   phase 6  交流阻抗：d / q 轴多频率、多幅值注入（acSegStart / acFast / acSegFinish / acFit）
  *   phase 7  电感饱和 L(i) 拟合（dfStart / dfStep，分摊到多个慢环周期）
  *   phase 4  完成：结果提交给 param.c（offerStill），回到 Stop 后生效
- * 运行测量（run = 1，正常起动）：I/F 中测量开环磁链（Ident_OpenLoopFluxSlow），闭环稳速后零电流滑行测量
+ * 运行测量（正常起动）：I/F 中测量开环磁链（Ident_OpenLoopFluxSlow），闭环稳速后零电流滑行测量
  *   psi_f 与加速度系数（Ident_RunSlow）。
  * 辨识模式的慢环允许使用浮点（仅在辨识时运行）。
  * ==========================================================================*/
@@ -54,10 +55,35 @@ int16_t Ident_AlignTheta(void)
 }
 
 static void rlStart(void);
+static uint8_t s_autoStage;         /* 自动方式：0 = 静止测量未完成，1 = 静止测量已完成、执行运行测量 */
+static uint8_t s_restartReq;        /* 自动方式：静止测量完成，请求停机后重新起动（Ident_TakeRestart） */
+
+/* 本次起动执行静止测量：仅静止方式；或自动方式且静止测量未完成（gIdent.state 被写 0 = 重新辨识） */
+uint8_t Ident_StaticThisStart(void)
+{
+    if (gIdentCfg.mode == IDENT_MODE_STATIC) return 1;
+    if (gIdentCfg.mode != IDENT_MODE_AUTO) return 0;
+    if (gIdent.state == IDENT_IDLE) s_autoStage = 0;
+    return (uint8_t)(gIdent.state != IDENT_DONE && s_autoStage == 0);
+}
+
+/* 运行测量进行中：仅运行方式（每个新指令一次）；或自动方式、静止测量已完成、运行测量尚未完成 */
+uint8_t Ident_RunActive(void)
+{
+    if (gIdentCfg.mode == IDENT_MODE_RUN) return 1;
+    return (uint8_t)(gIdentCfg.mode == IDENT_MODE_AUTO && s_autoStage == 1 && gIdent.state == IDENT_RUNNING);
+}
+
+uint8_t Ident_TakeRestart(void)
+{
+    uint8_t r = s_restartReq;
+    s_restartReq = 0;
+    return r;
+}
 static uint8_t s_olFluxSt;          /* 运行辨识的开环磁链测量：0 等待稳速，1 平均中，2 本次起动已测（见 Ident_OpenLoopFluxSlow） */
 static uint16_t s_olFluxN;
 
-/* 开始一次静止测量（进入 Align 时，run = 0）：从 R/L 粗测开始 */
+/* 开始一次静止测量（进入 Align 时）：从 R/L 粗测开始 */
 void Ident_Reset(void)
 {
     gIdentTest.idx = 0; gIdentTest.cnt = 0;
@@ -66,7 +92,7 @@ void Ident_Reset(void)
     gIdentTest.phase = 9;       /* 先测 R/L（电压模式，不使用电流环），测完再定位 */
 }
 
-/* 置为非测量状态（run = 1 正常起动时清除上一次静止测量遗留的状态） */
+/* 置为非测量状态（不执行静止测量的起动时清除上一次静止测量遗留的状态） */
 void Ident_Idle(void)
 {
     gIdentTest.phase = 0;
@@ -496,7 +522,12 @@ void Ident_Slow(void)
     case 7:     /* 饱和拟合（分摊到多个慢环周期），快环保持零电流 */
         if (dfStep()) {
             offerStill();
-            gIdent.state = IDENT_DONE;
+            if (gIdentCfg.mode == IDENT_MODE_AUTO) {
+                s_autoStage = 1;            /* 停机（参数在 Stop 中装入）后重新起动，执行运行测量；state 保持 RUNNING */
+                s_restartReq = 1;
+            } else {
+                gIdent.state = IDENT_DONE;
+            }
             t->cnt = 0; t->phase = 4;
         }
         break;
@@ -508,7 +539,7 @@ void Ident_Slow(void)
 }
 
 /* ===========================================================================
- * 运行辨识（gIdentCfg.run = 1）：正常起动，闭环稳速后进行一次零电流滑行
+ * 运行辨识：正常起动，闭环稳速后进行一次零电流滑行
  *   滑行前 RUN_PRE_MS：平均 iq（= 负载转矩 / Kt）与转速；
  *   滑行（复用零电流跟踪 Spin_TrackBegin，观测器 / PLL 照常跟踪转子，结束后按跟踪转速接回速度环）：
  *     psi_f = |v| / ω_e：零电流时电压即反电势，|v| 与坐标系角度无关（不受观测器角度误差影响），
@@ -532,18 +563,30 @@ static int32_t  s_rnIq, s_rnId, s_rnW;
 static float    s_rnVd, s_rnVq, s_rnS[7];  /* 二次拟合：n, Σx, Σx², Σx³, Σx⁴, Σy, Σxy；Σx²y 单独 */
 static float    s_rnX2y, s_rnWs;
 
+/* 自动方式运行测量期间的转速指令：存在起动指令但低于 RUN_MIN_RPM 的 1.1 倍时，按 1.1 倍（同方向）运行，测量完成后回到原指令。
+ * 留 10% 余量：稳速判断使用 PLL 转速（含噪声），指令恰为 RUN_MIN_RPM 时会在门限附近反复跳变而无法开始测量。
+ * 停机指令（|cmd| 不高于起动门限）原样返回 */
+int16_t Ident_SpeedCmd(int16_t cmd)
+{
+    const int16_t lo = Q15(1.1 * RUN_MIN_RPM / SPEED_MAX);
+    if (gIdentCfg.mode != IDENT_MODE_AUTO || !Ident_RunActive()) return cmd;
+    if (cmd > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && cmd < lo) return lo;
+    if (cmd < -Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && cmd > -lo) return (int16_t)-lo;
+    return cmd;
+}
+
 /* 运行测量滑行阶段：要求零电流跟踪不提前结束（由 spin.c 查询） */
 uint8_t Ident_HoldTrack(void)
 {
     return (uint8_t)(s_rnSt == 2);
 }
 
-/* 运行测量（Run 慢环每拍，run = 1 时）：闭环稳速 RUN_STABLE_MS -> 平均滑行前 iq、转速 RUN_PRE_MS
+/* 运行测量（Run 慢环每拍，Ident_RunActive 时）：闭环稳速 RUN_STABLE_MS -> 平均滑行前 iq、转速 RUN_PRE_MS
  * -> 进入零电流滑行，记录电压与转速曲线 RUN_COAST_MS -> 计算 psi_f = |v| / w_e、加速度系数 = -(dn/dt) / iq，提交给 param.c */
 void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
 {
     int16_t w = (int16_t)(gEst.pll.s32Speed >> 16);
-    if (!gIdentCfg.run || !spin) { s_rnSt = 0; s_rnT = 0; return; }
+    if (!Ident_RunActive() || !spin) { s_rnSt = 0; s_rnT = 0; return; }
     if (cmd != s_rnCmd) { s_rnCmd = cmd; s_rnSt = 0; s_rnT = 0; }
     switch (s_rnSt) {
     case 0:
@@ -585,13 +628,15 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
             gIdent.runRpm = (float)s_rnW / RUN_PRE_MS * ks;
             gIdent.runIqA = iq;
             gIdent.runIdA = (float)s_rnId / RUN_PRE_MS * (float)(I_MAX / 32768.0);
-            {   /* 提交给 param.c：停机回到 Stop 后生效 */
+            {   /* 立即生效，电机按新参数继续运行。整套参数不合理时改用 Param_Offer：逐项检查，仅替换合理的项（停机后生效），
+                 * 被拒绝的项记录在 gParamStat.rejectMask */
                 MotorParam_TypeDef p = gParam;
                 uint16_t m = 0;
                 if (gIdent.psiWb > 0) { p.psiWb = gIdent.psiWb; m |= 8u; }
                 if (gIdent.accRpmSPerA > 0) { p.accRpmSPerA = gIdent.accRpmSPerA; m |= 16u; }
-                Param_Offer(&p, m);
+                if (!Param_ApplyNow(&p)) Param_Offer(&p, m);
             }
+            gIdent.state = IDENT_DONE;
             s_rnSt = 3;                     /* 释放跟踪：Spin_TrackSlow 在下一块结束时接回速度环 */
         }
         break;
@@ -616,7 +661,7 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
  * 扣除 Rs*i、w*L*i 和死区电压得到反电势，psi = |e| / w。返回 1 = 测量中（I/F 暂不切闭环），0 = 已完成 / 不测量 */
 uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
 {
-    if (!gIdentCfg.run || s_olFluxSt == 2) return 0;
+    if (!Ident_RunActive() || s_olFluxSt == 2) return 0;
     if (ol != tgt) { s_olFluxSt = 0; s_olFluxN = 0; return 1; }         /* 仍在加速：暂不切闭环 */
     if (s_olFluxSt == 0) {
         if (++s_olFluxN < OLFLUX_SETTLE_MS) return 1;

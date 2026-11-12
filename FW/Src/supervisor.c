@@ -272,7 +272,8 @@ static void initSlow(void)
 static void stopSlow(void)
 {
     gSpd.cmd = gSup.speedCmd;
-    if (abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && (gSup.faultRestarts < SUP_RESTART_LIMIT)) switchStopRun();
+    /* 存在待装入的辨识参数（gParamStat.pending）时暂不起动：主循环 Param_Background 仅在 Stop 中装入，装入后再起动 */
+    if (abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && (gSup.faultRestarts < SUP_RESTART_LIMIT) && !gParamStat.pending) switchStopRun();
     else if (abs(gSpd.cmd) < Q15(STOP_TO_RUN_SPEED / SPEED_MAX)) Sup_ClearRestarts();
     Meas_SlowFilter();
 }
@@ -332,11 +333,11 @@ static uint8_t runStopSlow(uint8_t stopReq)
  * 母线电压控制器限制回馈）。斜坡到达 TRACK_END_RPM 后返回 0，由调用方按原流程软停、关闭 PWM。
  * 目标取同向的 TRACK_END_RPM 而不是 0：闭环（观测器）只在该转速以上可靠，更低的转速不做闭环制动。
  * 返回 1 = 本拍继续闭环减速（gSpd.cmd 已改写为减速目标）。
- * 不适用的情况（返回 0，按原流程软停）：停机方式为滑行、参数辨识模式（辨识依赖零电流滑行）、
+ * 不适用的情况（返回 0，按原流程软停）：停机方式为滑行、运行辨识进行中（依赖零电流滑行）、
  * 非闭环子状态（定位、I/F 电流沿开环角，直接软停）、软停已开始、斜坡已不高于 TRACK_END_RPM。 */
 static uint8_t stopRampSlow(void)
 {
-    if (IDENT_TEST || gSup.stopMode != STOP_MODE_RAMP) return 0;
+    if ((IDENT_TEST && Ident_RunActive()) || gSup.stopMode != STOP_MODE_RAMP) return 0;
     if (gSup.runState != RunState_Spin || s_softStop) return 0;
     if (abs(gSpd.ramp) <= TRACK_END_Q15) return 0;
     gSpd.cmd = (gSpd.ramp > 0) ? TRACK_END_Q15 : -TRACK_END_Q15;
@@ -353,8 +354,13 @@ static uint8_t stopRampSlow(void)
 static void runSlow(void)
 {
     uint8_t stopReq;
-    gSpd.cmd = gSup.speedCmd;
+    gSpd.cmd = IDENT_TEST ? Ident_SpeedCmd(gSup.speedCmd) : gSup.speedCmd;
     stopReq = (uint8_t)(abs(gSpd.cmd) < Q15(RUN_TO_STOP_SPEED / SPEED_MAX));
+    if (IDENT_TEST && Ident_TakeRestart()) {    /* 自动辨识：静止测量完成，停机（参数在 Stop 中装入）后自动重新起动执行运行测量 */
+        HAL_PwmAllOff();
+        Sup_SwitchRunStop();
+        return;
+    }
     if (IDENT_TEST) Ident_RunSlow((uint8_t)(gSup.runState == RunState_Spin && !s_softStop), Spin_Tracking(), gSpd.cmd, gSpd.ramp);
     if (Spin_Tracking()) { Spin_TrackSlow(); return; }
     if (stopReq && stopRampSlow()) stopReq = 0;     /* 受控减速停机：本拍照常执行速度环，目标 = 同向 TRACK_END_RPM */

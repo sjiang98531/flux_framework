@@ -71,8 +71,9 @@
  * 0 = 全部在 Flash 中运行：快环约慢 27.5%，节省约 4.7 KB RAM，链接脚本中的 ramfunc 段为空。两者控制行为相同。 */
 #define FASTPATH_IN_RAM         0
 
-/* ---- 参数辨识模式（identify.h）：1 = 起动时只执行 定位 -> 死区阶梯 -> 电感 / IPD 测量，然后保持零电压，电机不旋转。
- * 正常运行必须为 0（编译期去除）。定位角可在调试器中通过 gIdentCfg 修改，脉冲参数见 gIpdCfg（cfg_internal.h IPD_*） ---- */
+/* ---- 参数辨识模式（identify.h）：1 = 给出一个转速指令即自动辨识：静止测量（不旋转，约 15 s）-> 自动停机后重新起动
+ * -> 运行测量（磁链、加速度系数）-> 按指令转速继续运行；gIdent.state = 2 表示完成，结果在 gIdent / gParam。
+ * 仅执行其中一步时修改 gIdentCfg.mode。正常运行必须为 0（编译期去除）。脉冲参数见 gIpdCfg（cfg_internal.h IPD_*） ---- */
 #define IDENT_TEST              0
 
 #endif
