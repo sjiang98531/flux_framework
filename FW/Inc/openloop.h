@@ -23,6 +23,7 @@ typedef struct {
 } OpenLoopEntry_TypeDef;
 void OpenLoop_PrepareCold(OpenLoopEntry_TypeDef *e);    /* 准备（临界区外，只计算）：冷起动（定位 / IPD 之后） */
 void OpenLoop_PrepareDrag(OpenLoopEntry_TypeDef *e);    /* 准备：直接拖动（转子位置未知） */
+void OpenLoop_PrepareSwing(int16_t speedQ15, OpenLoopEntry_TypeDef *e);    /* 准备：摆动中起动（转子正以 speedQ15 经过 gFoc.theta） */
 void OpenLoop_PrepareWarm(int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e);    /* 准备：从运行状态接管 */
 void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e);    /* 提交（临界区内，只赋值） */
 uint8_t OpenLoop_Reversal(int32_t speedSign);    /* 开环目标方向与 speedSign 相反（I/F 需过零）时返回 1 */

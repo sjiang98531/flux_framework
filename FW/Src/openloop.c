@@ -163,6 +163,18 @@ void OpenLoop_PrepareDrag(OpenLoopEntry_TypeDef *e)
     e->drag = 1;
 }
 
+/* 摆动中起动：转子正以 speedQ15（与目标同向）经过当前控制角。同冷起动（开环角 = 转子角 + 平衡负载角），但开环转速从转子转速开始，
+ * 电流从定位电流按 CURRENT_SLEW_A_S 升至目标（加速度同比例） */
+void OpenLoop_PrepareSwing(int16_t speedQ15, OpenLoopEntry_TypeDef *e)
+{
+    prepareOpenLoop(0, 0, 0, 0, 0, e);
+    e->olCur = ALIGN_ID_Q15;
+    e->olSpeed = (int32_t)speedQ15 << 16;
+    if (e->olSpeed > OPENLOOP_WARM_MAX_Q31) e->olSpeed = OPENLOOP_WARM_MAX_Q31;      /* 仅防止异常值 */
+    if (e->olSpeed < -OPENLOOP_WARM_MAX_Q31) e->olSpeed = -OPENLOOP_WARM_MAX_Q31;
+    e->accStep = (e->accStepFull * e->olCur) / e->olCurTarget;
+}
+
 /* 直接拖动牵入段的电压前馈（快环中由电流环调用）：慢环给出的 Rs*id + w0*(psi_f + Ld*id)，加上本拍实测电流对应的逆变器电压误差 */
 static void dragFF(int32_t *ffd, int32_t *ffq)
 {

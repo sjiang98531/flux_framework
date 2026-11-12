@@ -18,7 +18,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E0068UL
+#define BUILD_TAG            0xF20E0069UL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -246,6 +246,18 @@
                               + 5.0 / 112.0 * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC \
                                 * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC)
 #define OPENLOOP_LEAD_Q31    ((int32_t)(OPENLOOP_LEAD_RAD / (2.0 * MATH_PI) * 4294967296.0 + 0.5))
+/* 摆动中起动：扫掠角（Q15 角度，65536 = 一圈）及其与定位电流的比值（Q16：定位角 = (ALIGN_ID_Q15 - id) * 本值 >> 16） */
+#define ALIGN_SWING_SWEEP_Q15    ((int32_t)(ALIGN_SWING_SWEEP_DEG / 360.0 * 65536.0 + 0.5))
+#define ALIGN_SWING_SWEEP_K_Q16  ((int32_t)((double)ALIGN_SWING_SWEEP_Q15 / ALIGN_ID_Q15 * 65536.0 + 0.5))
+/* 摆动中起动：扫掠结束后反电势滤波的建立时间（慢环拍），之后开始检测 */
+#define ALIGN_SWING_SETTLE_TICKS ((uint16_t)(4.0 * ALIGN_EMF_FILT_TAU_S * SLOWLOOP_FREQ + 0.5))
+/* 摆动中起动：反电势测量的延迟 = 滤波时间常数 + 电流 PI 积分项跟随扰动的时间常数（L/R + 1/电流环带宽）；
+ * 转速 Q15 在该延迟内转过的电角度（Q15 角度），Q12 */
+#define ALIGN_SWING_LAG_S        (ALIGN_EMF_FILT_TAU_S + MOTOR_LQ_H / MOTOR_RS_OHM + 1.0 / (2.0 * MATH_PI * CURRENT_BW_HZ))
+#define ALIGN_SWING_LAG_ANG_Q12  ((int32_t)(SPEED_MAX / 60.0 * MOTOR_POLE_PAIRS * ALIGN_SWING_LAG_S * 2.0 * 4096.0 + 0.5))
+/* 可接入的最小峰值转速 = ALIGN_SWING_MIN_DELTA * 平衡负载角 * 摆动角频率（电角速度）；此处为 Q15 转速 * 摆动周期（慢环拍），
+ * Startup_Init 中除以摆动周期的拍数 */
+#define ALIGN_SWING_MIN_SPD_T    (ALIGN_SWING_MIN_DELTA * OPENLOOP_LEAD_RAD * SLOWLOOP_FREQ * 60.0 / MOTOR_POLE_PAIRS / SPEED_MAX * 32768.0)
 /* "静止"门限：反电势 p*psi_f*w_m（Q15 电压） */
 #define ALIGN_STILL_EMF_Q15_OF(psi) ((int32_t)(ALIGN_STILL_RPM * 2 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS * (psi) / UDC_MAX * 32768.0 + 0.5))
 #define ALIGN_STILL_EMF_Q15  ALIGN_STILL_EMF_Q15_OF(MOTOR_PSI_F_WB)

@@ -81,6 +81,7 @@ void Sup_SwitchFlyCheckSpin(void);     /* 飞车直接接管进入 Spin */
 void Sup_SwitchFlyCheckOpenLoop(void);       /* 飞车低速，直接进入 I/F */
 void Sup_SwitchAlignOpenLoop(void);    /* 定位完成（IPD 检测失败时）-> I/F（从定位角、零速开始拖动） */
 void Sup_SwitchDragOpenLoop(void);     /* 直接拖动：不定位，从 0° 以牵入转速 f0 开始拖动 */
+void Sup_SwitchSwingOpenLoop(int16_t theta, int16_t speedQ15);    /* 摆动中起动：转子正以 speedQ15 经过 theta，I/F 从该角度和转速接入 */
 /* IPD 完成：从 theta（N 极角）冷起动 I/F，开环电流从 1/4 起上升 */
 void Sup_SwitchIpdOpenLoop(int16_t theta);
 void Sup_SwitchOpenLoopSpin(void);    /* I/F 与观测器转速一致 -> 闭环（转矩不变切换） */

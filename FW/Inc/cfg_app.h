@@ -25,10 +25,13 @@
  *   STARTUP_MODE_DRAG   直接拖动（静音起动）：不定位，给出指令即开始转动；开始约 0.5 s 转子被牵入同步，可能先反转一小段
  *                       （最多约半个极距），之后持续加速，无停顿
  *   STARTUP_MODE_ALIGN  定位后立即加速（静音起动）：定位约 0.9 s（时间固定，不等转子停稳），之后直接从平衡负载角加速；
- *                       转子先被拉到 0°（可能先反转一小段） */
+ *                       转子先被拉到 0°（可能先反转一小段）
+ *   STARTUP_MODE_SWING  摆动中起动（静音起动）：定位电流将转子拉向 0°，不加阻尼、不等转子停稳，转子顺转向摆过 0° 的瞬间
+ *                       即从当时的角度和转速接入 I/F 连续加速，约 0.3 ~ 0.8 s 开始加速；转子可能先反转一段（最多约一个极距） */
 #define STARTUP_MODE_IPD        0
 #define STARTUP_MODE_DRAG       1
 #define STARTUP_MODE_ALIGN      2
+#define STARTUP_MODE_SWING      3
 #define STARTUP_MODE            STARTUP_MODE_IPD
 
 /* 停机方式（上电默认值；运行中可修改 gSup.stopMode，立即生效）。停机 = |指令| < RUN_TO_STOP_SPEED：

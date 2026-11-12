@@ -484,6 +484,24 @@ void Sup_SwitchDragOpenLoop(void)
     }
 }
 
+/* 摆动中起动（STARTUP_MODE_SWING）-> I/F：转子正以 speedQ15 经过 theta（Q15 角度），开环角、开环转速从转子的角度和转速开始。
+ * 电流环积分器保持（电流矢量连续），观测器初始化为 |psi_f|∠theta */
+void Sup_SwitchSwingOpenLoop(int16_t theta, int16_t speedQ15)
+{
+    OpenLoopEntry_TypeDef e;
+    OpenLoop_PrepareSwing(speedQ15, &e);
+    {
+        IRQ_LOCK();
+        gFoc.theta = theta;
+        gFoc.thetaInv = theta;
+        Est_OnEnterOpenLoopCold();
+        OpenLoop_Commit(&e);
+        gSup.runState = RunState_OpenLoop;
+        SpeedCtrl_UseOpenLoopRamp();
+        IRQ_UNLOCK();
+    }
+}
+
 /* Align（IPD 成功）-> OpenLoop：在慢环中调用，先在临界区外准备 I/F 入口参数，临界区内只赋值。
  * theta = IPD 测得的 N 极方向（Q15 角度），作为开环起始角 */
 void Sup_SwitchIpdOpenLoop(int16_t theta)
