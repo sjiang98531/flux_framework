@@ -23,10 +23,13 @@
 /* 起动方式（上电默认值；运行中可修改 gStartup.mode，下一次起动生效）：
  *   STARTUP_MODE_IPD    脉冲检测初始位置：约 0.13 s，转子不动，有脉冲噪声；检测失败时本次自动退回定位
  *   STARTUP_MODE_DRAG   直接拖动（静音起动）：不定位，给出指令即开始转动；开始约 0.5 s 转子被牵入同步，可能先反转一小段
- *                       （最多约半个极距），之后持续加速，无停顿 */
+ *                       （最多约半个极距），之后持续加速，无停顿
+ *   STARTUP_MODE_ALIGN  定位后立即加速（静音起动）：定位约 0.9 s（时间固定，不等转子停稳），之后直接从平衡负载角加速；
+ *                       转子先被拉到 0°（可能先反转一小段） */
 #define STARTUP_MODE_IPD        0
 #define STARTUP_MODE_DRAG       1
-#define STARTUP_MODE            STARTUP_MODE_DRAG
+#define STARTUP_MODE_ALIGN      2
+#define STARTUP_MODE            STARTUP_MODE_ALIGN
 
 /* 停机方式（上电默认值；运行中可修改 gSup.stopMode，立即生效）。停机 = |指令| < RUN_TO_STOP_SPEED：
  *   STOP_MODE_RAMP   受控减速：闭环运行中收到停机指令时，速度环按 SPEED_RAMP_DOWN 减速到 TRACK_END_RPM，
@@ -60,7 +63,7 @@
  *     n [rpm] = k * UDC_RATE * 60 / (2*pi * 极对数 * psi_f)       本电机每 1% 约 42 rpm
  * 各门限之间的大小关系由配置检查保证（cfg_check_list.h）。 */
 
-/* ---- 定位（IPD 检测失败时、参数辨识的静止测量时使用；直接拖动起动不定位）----
+/* ---- 定位（STARTUP_MODE_ALIGN、IPD 检测失败时、参数辨识的静止测量时使用）----
  * 定位电流下转子相当于单摆，周期 T 由电机参数与定位电流自动计算（本电机 0.5 s）：最短 1.6 T、停稳判据持续 0.4 T、最长 4 T。 */
 #define ALIGN_STILL_RPM         10         /* rpm，转子停稳判据（k 约 0.2%）。每次都等满上限时调高 */
 
