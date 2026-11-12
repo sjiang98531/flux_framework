@@ -76,10 +76,10 @@ CFG_CHECK(ALIGN_GO_FITS, ALIGN_GO_T >= 1.0 && ALIGN_A / ALIGN_RAMP_A_S * SLOWLOO
          ALIGN_GO_T * ALIGN_GO_T * ALIGN_T2_TICKS2 < 32767.0 * 32767.0)
 /* 停机方式默认值只能取两种之一 */
 CFG_CHECK(STOP_MODE_VALID, STOP_MODE == STOP_MODE_RAMP || STOP_MODE == STOP_MODE_COAST)
-/* IPD 脉冲电压超出线性调制区（MAX_DUTY 电压圆，额定母线）：目标电流太大或脉冲太短（加长 IPD_PULSE_S）；
- * 脉冲 < 8 拍（波形太粗）或等待 < 4 拍 */
-CFG_CHECK(IPD_PULSE_FITS, IPD_PULSE_V > 0 && IPD_PULSE_V < MAX_DUTY * UDC_RATE * 2.0 / 3.0 &&
-         IPD_PULSE_TICKS >= 8 && IPD_GAP_TICKS >= 4 && IPD_PULSE_V / UDC_MAX < 1.0 && IPD_MIN_RATIO > 1.0 && IPD_MIN_RATIO < 200.0)
+/* IPD 注入电压加偏置电流环的输出不超出线性调制区（额定母线，偏置所需电压按 Rs 计）；拍数、斜坡步长有效；门限合理 */
+CFG_CHECK(IPD_FITS, IPD_HF_V > 0 && IPD_HF_V + IPD_BIAS_A * MOTOR_RS_OHM * 2.0 < MAX_DUTY * UDC_RATE * 2.0 / 3.0 &&
+         IPD_HF_TICKS >= 64 && IPD_HF_TICKS < 4096 && IPD_MEAS_MS >= 4 && IPD_BIAS_STEP_Q15 >= 1 && IPD_BIAS_A < I_MAX &&
+         IPD_MIN_SAL > 0 && IPD_MIN_SAL < 1.0 && IPD_MIN_RATIO > 1.0 && IPD_MIN_RATIO < 10.0)
 /* FLUX_WN_HZ 相对 PWM 频率太高 */
 CFG_CHECK(FLUX_KTS_FITS, FWC_POS_Q15(2.0 * MATH_PI * FLUX_WN_HZ / PWM_FREQ))
 /* FLUX_BUS_MIN_V 不低于额定母线 UDC_RATE：观测器会一直处于复位 */

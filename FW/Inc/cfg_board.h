@@ -73,7 +73,7 @@
 
 /* ---- 参数辨识模式（identify.h）：1 = 给出一个转速指令即自动辨识：静止测量（不旋转，约 15 s）-> 自动停机后重新起动
  * -> 运行测量（磁链、加速度系数）-> 按指令转速继续运行；gIdent.state = 2 表示完成，结果在 gIdent / gParam。
- * 仅执行其中一步时修改 gIdentCfg.mode。正常运行必须为 0（编译期去除）。脉冲参数见 gIpdCfg（cfg_internal.h IPD_*） ---- */
+ * 仅执行其中一步时修改 gIdentCfg.mode。正常运行必须为 0（编译期去除）。IPD 参数见 cfg_internal.h IPD_* ---- */
 #define IDENT_TEST              0
 
 #endif

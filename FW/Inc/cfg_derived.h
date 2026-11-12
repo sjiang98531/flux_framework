@@ -18,7 +18,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E0067UL
+#define BUILD_TAG            0xF20E0068UL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -158,14 +158,18 @@
 /* 电流环电压单位（UDC_MAX 基准）下的 Rs：Q15 电流 -> Q15 电压（定位阻尼从 q 轴电压里扣电阻压降用） */
 #define FOC_KRS_Q15_OF(R)       Q15((R) * I_MAX / UDC_MAX)
 #define FLUX_KL_Q15_OF(L)       Q15((L) * I_MAX / FLUX_PSI_N)
-/* IPD（cfg_internal.h）：对比度门限 Q8 */
+/* IPD（cfg_internal.h）：门限 Q8；注入电压 V = 2 * I * L * PWM_FREQ（每拍电流变化 2I，三角波幅值 I），按 Lq 计算（param.c）；
+ * 时长换算为快环拍 / 慢环拍；偏置电流 Q15 及每慢环拍的斜坡步长 */
 #define IPD_MIN_RATIO_Q8        ((uint16_t)(IPD_MIN_RATIO * 256.0 + 0.5))
-/* IPD 脉冲：时间换成 PWM 拍，电压由目标电流和 d 轴电感算（cfg_internal.h 的说明） */
-#define IPD_PULSE_TICKS         ((uint16_t)(IPD_PULSE_S * PWM_FREQ + 0.5))
-#define IPD_GAP_TICKS           ((uint16_t)(IPD_GAP_S * PWM_FREQ + 0.5))
-#define IPD_PULSE_V_OF(L)       (IPD_PULSE_SHAPE ? IPD_PEAK_A * MATH_PI * (L) / IPD_PULSE_S \
-                                                 : IPD_PEAK_A * (L) / (IPD_PULSE_S / 2.0))
-#define IPD_PULSE_V             IPD_PULSE_V_OF(MOTOR_LD_H)
+#define IPD_MIN_SAL_Q8          ((int32_t)(IPD_MIN_SAL * 256.0 + 0.5))
+#define IPD_HF_V_OF(L)          (2.0 * IPD_HF_A * (L) * PWM_FREQ)
+#define IPD_HF_V                IPD_HF_V_OF(MOTOR_LQ_H)
+#define IPD_HF_TICKS            ((uint16_t)(IPD_HF_S * PWM_FREQ + 0.5))
+#define IPD_SETTLE_TICKS        4           /* 每个注入方向开头不计的拍数 */
+#define IPD_MEAS_MS             ((uint16_t)(IPD_HF_S * SLOWLOOP_FREQ + 0.5))
+#define IPD_SETTLE_MS           ((uint16_t)(0.004 * SLOWLOOP_FREQ + 0.5))     /* 偏置到位后等电流环稳定（约 L/R） */
+#define IPD_BIAS_Q15            ((int32_t)(IPD_BIAS_A / I_MAX * 32768.0 + 0.5))
+#define IPD_BIAS_STEP_Q15       ((int32_t)(IPD_BIAS_A / I_MAX * 32768.0 / (IPD_RAMP_S * SLOWLOOP_FREQ) + 0.5))
 /* 逆变器电压误差（cfg_board.h）：每相误差 = bus * KT * clamp(i * K_I / 256, ±32767) / 32768 / 32768
  *   KT  = INVERTER_DT_EFF_S * PWM_FREQ（Q15，母线的比例），K_I = 32768 / I0_Q15（Q8） */
 #define FLUX_DT_KT_Q15_OF(td)   (INVERTER_DT_COMP ? Q15((td) * PWM_FREQ) : 0)

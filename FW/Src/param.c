@@ -19,7 +19,6 @@
 #include "speed_ctrl.h"
 #include "flux_obs.h"
 #include "est.h"
-#include "ipd.h"
 #include "flux_pll.h"
 #include "diag.h"
 #include "supervisor.h"
@@ -127,8 +126,8 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->pllKi = (int16_t)k;
     /* 转速 -> 每拍角度增量系数超出 Q15 时同样置告警 bit2（与电机参数无关，只与 SPEED_MAX、极对数、PWM 频率有关） */
     if (SPEED_TO_THETA >= 32767) g->cfgWarn |= 4u;
-    /* IPD 脉冲电压：在 IPD_PULSE_S 内使电流达到 IPD_PEAK_A，V = I*L/t（方波）或 pi*I*L/t（正弦），按 Ld 计算 */
-    g->ipdPulseVQ15 = Q15(IPD_PULSE_V_OF(p->ldH) / UDC_MAX);
+    /* IPD 注入电压：电流三角波幅值 IPD_HF_A，按 Lq 计算 */
+    g->ipdHfVQ15 = Q15(IPD_HF_V_OF(p->lqH) / UDC_MAX);
     /* 飞车：阻抗角系数 w*Lq/Rs、短接暂态等待时间（L/R 的倍数） */
     g->flyWlrQ12 = FLY_WLR_Q12_OF(p->lqH, p->rsOhm);
     g->flySettleBlocks = FLY_SETTLE_BLOCKS_OF(p->ldH, p->rsOhm);
@@ -148,7 +147,6 @@ static void install(const MotorParam_TypeDef *p, const CtrlGain_TypeDef *g)
     SpeedCtrl_LoadGains();                  /* 速度环 PI 增益（前馈系数直接读 gGain） */
     FluxObs_LoadModel();                    /* 观测器 Rs、L、NLFO 归一化（L(i)、死区系数直接读 gGain） */
     FluxPLL_LoadGains(&gEst.pll);           /* PLL 增益 */
-    gIpdCfg.pulseV = gGain.ipdPulseVQ15;    /* IPD 脉冲电压（可在线修改，故单独保存一份） */
     gFluxDiag.cfgWarn = (uint16_t)((gFluxDiag.cfgWarn & ~14u) | gGain.cfgWarn);    /* 只更新 bit1~3，其他位为其他模块的告警 */
     gParamStat.applyCount++;
 }
@@ -160,7 +158,6 @@ void Param_Init(void)
     Param_Defaults(&p);
     computeGain(&p, &gGain);
     gParam = p;
-    gIpdCfg.pulseV = gGain.ipdPulseVQ15;
     gParamStat.source = 0;
 }
 

@@ -9,7 +9,7 @@
  *
  *   I/F（开环拖动）：
  *     Align 子状态按起动方式 gStartup.mode（上电默认 STARTUP_MODE，cfg_app.h）三选一：
- *     IPD（STARTUP_MODE_IPD，ipd.h）：以 12 个方向的电压脉冲确定 N 极角，直接从该角进入 OpenLoop，
+ *     IPD（STARTUP_MODE_IPD，ipd.h）：高频注入测凸极轴向、直流偏置判极性，确定 N 极角后直接从该角进入 OpenLoop，
  *       电流从 1/4 起按 CURRENT_SLEW_A_S 升至 OPENLOOP_CURRENT_A（加速度同比例）；对比度不足时本次退回定位。
  *     直接拖动（STARTUP_MODE_DRAG，静音起动）：不定位、不检测位置，旋转磁场以低频 f0 匀速转动将转子牵入，
  *       牵入段电流环按电压型驱动（定子电阻提供阻尼），之后从平衡负载角开始加速（openloop.c）。
@@ -50,8 +50,8 @@ void Startup_ChargeFast(void);    /* 预充：三相下桥轮流导通为自举�
 void Startup_ChargeSlow(void);    /* 预充：仅滤波 */
 void Startup_FlyCheckFast(void);    /* 飞车检测：执行检测，按结论切换状态 */
 void Startup_FlyCheckSlow(void);    /* 飞车检测：测量滤波 */
-void Startup_AlignFast(void);    /* IPD 输出脉冲 / 定位运行电流环 */
-void Startup_AlignSlow(void);    /* IPD 判定 / 定位电流斜坡 + 阻尼 + 判停稳 */
+void Startup_AlignFast(void);    /* IPD 输出电压 / 定位运行电流环 */
+void Startup_AlignSlow(void);    /* IPD 推进与判定 / 定位电流斜坡 + 阻尼 */
 
 /* 子状态切换时由 supervisor 调用 */
 void Startup_OnEnterAlign(void);

@@ -9,7 +9,6 @@
 #include "hal.h"
 #include "supervisor.h"
 #include "param.h"
-#include "ipd.h"
 
 /* 转速换算辅助：设置 Target_Speed（rpm）后，Run_Speed_Target_rpm 给出对应的 Q15 指令值，
  * 可写入 gSup.speedCmd。 */
@@ -36,7 +35,6 @@ int main(void)
 
     while (1) {
         Param_Background();     /* Stop 状态下应用辨识结果（param.h） */
-        Ipd_Background();       /* IPD 脉冲宽度修改后重新计算（ipd.h） */
         /* 仅在 Target_Speed 变化时换算（软浮点）。慢环在中断中运行，不受影响 */
         if (Target_Speed != s_lastTarget) {
             s_lastTarget = Target_Speed;

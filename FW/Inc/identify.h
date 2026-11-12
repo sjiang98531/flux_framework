@@ -7,7 +7,7 @@
  *   R/L    ：200 Hz 电压注入（不使用电流环），得到粗略 R、L，用于先整定电流环
  *   Rs     ：定位位置施加多档直流电流，由电压-电流斜率得到 Rs，截距为死区等效电压
  *   Ld/Lq  ：d 轴 / q 轴方向低频（25 Hz）交流阻抗，L = Im(Z)/ω；q 轴多档幅值拟合饱和模型 L(i)
- *   IPD    ：饱和法初始位置检测，给出 N 极位置与对比度
+ *   IPD    ：初始位置检测（高频注入 + 直流偏置），给出 N 极位置与极性对比度
  *   psi_f  ：I/F 开环中 |v - Ri - Vdt - jωLi| / ω，或零电流滑行时 |v|/ω
  *   J（b） ：零电流滑行减速度 / 滑行前 iq（= MOTOR_ACC_RPM_S_PER_A）
  * 结果写入 gIdent，并交给 param.c（见 param.h），停机回到 Stop 时生效（仅本次上电期间有效，存于 RAM）；
@@ -45,7 +45,7 @@ typedef struct {
     float runRpm, runIqA, runIdA;   /* 运行辨识工况：滑行前的转速、iq、id */
     float deadVoltV;    /* 死区等效电压（每相，测量时的母线电压下） */
     float deadTimeS;    /* 等效死区时间 = deadVoltV / (PWM_FREQ * Vbus) -> cfg_board.h INVERTER_DT_EFF_S */
-    float ipdRatio;     /* IPD 峰值最大 / 最小（> IPD_MIN_RATIO 才能使用 IPD 起动） */
+    float ipdRatio;     /* IPD 极性对比度：两侧 d 轴响应之比（> IPD_MIN_RATIO 才能使用 IPD 起动） */
     IdentState_TypeDef state;
 } IdentResult_TypeDef;
 
@@ -74,9 +74,7 @@ extern IdentResult_TypeDef gIdent;
  *    记录稳态 vd / id。静止时 vd = Rs*id + 电压误差（死区 + 管压降），高电流段拟合直线：
  *    斜率 = 实际 Rs，截距 = 死区等效电压；低电流段反映误差过零特性。
  *    观测器使用的正是该指令电压，因此测得的即为观测器所见的电压误差。
- * 3. IPD 脉冲（phase 3）：旁路电流环，依次向 12 个方向（绝对电角度）施加电压脉冲，
- *    各方向电流投影峰值 / 同一拍的垂直分量记录在 gIpd.pk / perp。
- *    饱和使 N 极方向电感最小、电流最大：最大值应落在 alignDeg 上，相反方向（S 极）最小。
+ * 3. IPD（phase 3）：高频注入测凸极轴向、直流偏置判极性（ipd.h），测得的 N 极应落在 alignDeg 上。
  * 4. 交流阻抗（phase 6）：电流环正常闭环，角度固定在 N（d 轴）/ N+90°（q 轴），电流指令为 0.4 A 正弦，
  *    25 / 50 / 100 Hz，各 4 个周期稳定 + 8 个周期同步积分电压与电流基波，Z = V/I，L = Im(Z)/ω。
  *    在运行频率附近测量，不受涡流影响；死区误差与电流同相，只进入实部、不影响 L。
@@ -86,7 +84,7 @@ extern IdentResult_TypeDef gIdent;
  *    给出 MOTOR_LQ_H / LS_SAT_KNEE_A / PER_A。
  * 6. 运行辨识：正常起动；I/F 开环拖到目标转速时先测磁链（Ident_OpenLoopFluxSlow），
  *    生效后再切闭环；闭环稳速后零电流滑行 420 ms，给出 psi_f 与 MOTOR_ACC_RPM_S_PER_A。
- * 结果见 gIdent（调试器查看）；IPD 原始数据见 gIpd.pk / perp。
+ * 结果见 gIdent（调试器查看）；IPD 结果见 gIpd。
  * ==========================================================================*/
 #define IDENT_DT_N      11
 
@@ -95,14 +93,14 @@ extern IdentResult_TypeDef gIdent;
 #define IDENT_MODE_RUN      2       /* 仅运行测量（每个新指令一次） */
 
 typedef struct {
-    int16_t  alignDeg;      /* 定位角（电角度，度），下一次起动生效。IPD 脉冲参数用 gIpdCfg（ipd.h） */
+    int16_t  alignDeg;      /* 定位角（电角度，度），下一次起动生效。IPD 参数见 cfg_internal.h IPD_* */
     uint8_t  mode;          /* IDENT_MODE_AUTO（默认）/ STATIC / RUN，见上；下一次起动生效 */
     uint8_t  biasX;         /* 大幅值 q 段 N 极直流偏置的倍数（0 = 1 倍）：改 2 / 3 倍再测，看偏置（交叉饱和）对 Lq 的影响 */
 } IdentCfg_TypeDef;
 
 typedef struct {
     volatile uint16_t phase;    /* 0 未开始，1 死区阶梯，2 回零，3 IPD（快环），6 交流阻抗（快环），7 饱和拟合，9 R/L（定位前），4 完成 */
-    uint16_t idx;               /* 死区档 / IPD 方向 */
+    uint16_t idx;               /* 死区档 */
     uint16_t cnt;               /* 慢环计数 */
     int32_t  sum[2];            /* 死区平均：id, vd */
     int16_t  dtId[IDENT_DT_N], dtVd[IDENT_DT_N];

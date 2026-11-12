@@ -21,7 +21,7 @@
 #define RUN_DIR                 RUN_CW
 
 /* 起动方式（上电默认值；运行中可修改 gStartup.mode，下一次起动生效）：
- *   STARTUP_MODE_IPD    脉冲检测初始位置：约 0.13 s，转子不动，有脉冲噪声；检测失败时本次自动退回定位
+ *   STARTUP_MODE_IPD    检测初始位置：约 0.17 s，转子不动，无电流脉冲（高频注入 + 直流偏置）；检测失败时本次自动退回定位
  *   STARTUP_MODE_DRAG   直接拖动（静音起动）：不定位，给出指令即开始转动；开始约 0.5 s 转子被牵入同步，可能先反转一小段
  *                       （最多约半个极距），之后持续加速，无停顿
  *   STARTUP_MODE_ALIGN  定位后立即加速（静音起动）：定位约 0.9 s（时间固定，不等转子停稳），之后直接从平衡负载角加速；
@@ -29,7 +29,7 @@
 #define STARTUP_MODE_IPD        0
 #define STARTUP_MODE_DRAG       1
 #define STARTUP_MODE_ALIGN      2
-#define STARTUP_MODE            STARTUP_MODE_ALIGN
+#define STARTUP_MODE            STARTUP_MODE_IPD
 
 /* 停机方式（上电默认值；运行中可修改 gSup.stopMode，立即生效）。停机 = |指令| < RUN_TO_STOP_SPEED：
  *   STOP_MODE_RAMP   受控减速：闭环运行中收到停机指令时，速度环按 SPEED_RAMP_DOWN 减速到 TRACK_END_RPM，

@@ -135,14 +135,10 @@ static void dtFit(void)
     gIdent.deadTimeS = (vbus > 1.0f) ? gIdent.deadVoltV / ((float)PWM_FREQ * vbus) : 0;
 }
 
-/* IPD 结束：对比度（峰值最大 / 最小） */
+/* IPD 结束：极性对比度（两侧 d 轴响应之比） */
 static void ipdFit(void)
 {
-    int16_t mx = 0, mn = 32767;
-    uint16_t k;
-    for (k = 0; k < IPD_N; k++) { if (gIpd.pk[k] > mx) mx = gIpd.pk[k]; if (gIpd.pk[k] < mn) mn = gIpd.pk[k]; }
-    if (mn <= 0) return;
-    gIdent.ipdRatio = (float)mx / (float)mn;
+    gIdent.ipdRatio = (float)gIpd.ratioQ8 / 256.0f;
 }
 
 /* ---- 交流阻抗（phase 6）-----------------------------------------------------------------
@@ -392,7 +388,7 @@ static uint8_t rlSlow(void)
         x = -v * cc * n / (2.0f * d) * (float)(UDC_MAX / I_MAX);
         gIdent.rlR = r;
         gIdent.rlL = x / (float)(2.0 * MATH_PI * RL_HZ);
-        if (r > 0 && gIdent.rlL > 0) {   /* 电流环、IPD 脉冲电压立即按此计算 */
+        if (r > 0 && gIdent.rlL > 0) {   /* 电流环、IPD 注入电压立即按此计算 */
             MotorParam_TypeDef p = gParam;
             p.rsOhm = r; p.lqH = gIdent.rlL; p.ldH = gIdent.rlL;
             (void)Param_ApplyNow(&p);
@@ -498,11 +494,12 @@ void Ident_Slow(void)
         FocCore_SetIdqRef(0, 0);
         if (++t->cnt >= ZERO_WAIT_MS) { t->cnt = 0; Ipd_Start(); t->phase = 3; }
         break;
-    case 3:     /* 快环施加脉冲中（ipd.c），完成后复制结果 */
+    case 3:     /* IPD 检测中（ipd.c），完成后复制结果 */
+        Ipd_Slow();
         if (gIpd.state == IPD_STATE_DONE) {
             (void)Ipd_Evaluate();       /* 给出 gIpd.theta（交流阻抗的 d / q 方向）/ ratioQ8 */
             ipdFit();
-            FocCore_PresetPI(0, 0);     /* 电流环已旁路一轮（IPD 直接输出电压），积分器从 0 开始 */
+            FocCore_PresetPI(0, 0);     /* IPD 结束，积分器从 0 开始 */
             acSegStart(0);
             t->cnt = 0; t->phase = 6;
         }

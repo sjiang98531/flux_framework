@@ -151,7 +151,7 @@ void Startup_AlignFast(void)
 {
     FocCore_Clarke();
     if (IDENT_TEST && Ident_Fast()) return;     /* 参数辨识的脉冲段：调制由辨识程序输出 */
-    if (s_ipd) { Ipd_Fast(); return; }      /* IPD：旁路电流环，直接输出脉冲电压 */
+    if (s_ipd) { Ipd_Fast(); return; }      /* IPD：由检测模块输出电压（注入 / 偏置电流环） */
     gFoc.theta = s_alignTheta;
     gFoc.thetaInv = gFoc.theta;
     FocCore_CurrentLoop();
@@ -160,7 +160,7 @@ void Startup_AlignFast(void)
 
 /* Align 慢环：
  *   直接拖动：立即进入 I/F（openloop.c 牵入段）；
- *   IPD 中：等待 12 个脉冲完成，判断对比度，可信 -> 从 N 极角直接进入 I/F；不可信 -> 退回定位；
+ *   IPD 中：推进检测（Ipd_Slow），完成后判定，可信 -> 从 N 极角直接进入 I/F；不可信 -> 退回定位；
  *   定位：d 轴电流按斜坡升至 ALIGN_A，q 轴按反电势施加阻尼（转子摆动时施加反向转矩抑制）；
  *         起动（STARTUP_MODE_ALIGN、IPD 检测失败）：到达固定时间（电流上升 + ALIGN_GO_T 个 T）即进入 I/F；
  *         参数辨识：达到最短时间且反电势持续低于门限（已停稳），或超过最长时间 -> 开始测量 */
@@ -171,11 +171,12 @@ void Startup_AlignSlow(void)
     if (IDENT_TEST && Ident_Active()) { Ident_Slow(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
     if (s_drag) { Sup_SwitchDragOpenLoop(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
     if (s_ipd) {
+        Ipd_Slow();
         if (gIpd.state == IPD_STATE_DONE) {
             if (Ipd_Evaluate()) {
                 Sup_SwitchIpdOpenLoop(gIpd.theta);  /* 从测得的 N 极角开始拖动，无需定位 */
             } else {
-                /* 对比度不足（饱和不明显 / 转子在动）：本次退回定位。PWM 已为零电压，电流约为 0。
+                /* 凸极或极性对比度不足（转子在动等）：本次退回定位。偏置电流已回到 0，PWM 输出零电压。
                  * 先清积分器再清 s_ipd（分别为一次 32 / 8 位写）：快环看到 s_ipd = 0 时积分器已为 0 */
                 FocCore_PresetPI(0, 0);
                 s_ipd = 0;

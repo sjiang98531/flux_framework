@@ -64,7 +64,7 @@ typedef struct {
      *      int16 放不下时封顶 32767 并置 cfgWarn bit2 */
     int16_t pllKp, pllKi;
     /* ---- 其他模块 */
-    int16_t ipdPulseVQ15;       /* IPD 脉冲电压（Q15）：按目标峰值电流和 Ld 反算，ipd.c */
+    int16_t ipdHfVQ15;          /* IPD 注入电压（Q15）：按注入电流幅值和 Lq 计算，ipd.c */
     int32_t flyWlrQ12;          /* 飞车：w*Lq/Rs 在满量程转速下的值（Q12），算短路电流的阻抗角 atan(w*L/R)，flystart.c */
     uint16_t flySettleBlocks;   /* 飞车：短接后等电流暂态衰减的时间（ms）= FLY_SETTLE_TAUS 个 L/R 时间常数 */
     int16_t openLoopAccFfIq;    /* I/F 开环：按 OPENLOOP_ACC_RPM_S 加速需要的 iq（Q15），startup.c 的切换前馈 */
