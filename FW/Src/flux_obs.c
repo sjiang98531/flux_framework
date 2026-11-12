@@ -81,6 +81,14 @@ FORCE_INLINE void dtComp(int16_t ia, int16_t ib, int16_t *va, int16_t *vb)
     *vb = (int16_t)(*vb - ((((xb - xc) * 18919) >> 15) * vdt >> 15));
 }
 
+/* 同一误差模型投影到角 a 的 q 轴（Q15 电压），慢环调用：定位时 q 轴反电势 = 电压 - 误差 - Rs*iq */
+int16_t FluxObs_DtErrQ(AlphaBeta_TypeDef iab, SinCos_TypeDef a)
+{
+    int16_t ea = 0, eb = 0;
+    dtComp(iab.s16Alpha, iab.s16Beta, &ea, &eb);        /* 从 0 中减去误差：ea、eb = -e_alpha、-e_beta */
+    return (int16_t)(((int32_t)ea * a.s16Sin - (int32_t)eb * a.s16Cos) >> 15);
+}
+
 /* 清除全部观测器状态（磁链、去直流滤波器、输出），非 Run 状态时每拍调用 */
 void FluxObs_Reset(void)
 {

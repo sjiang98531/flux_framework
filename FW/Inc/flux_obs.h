@@ -46,6 +46,8 @@ void FluxObs_SeedCatch(int16_t theta);
 void FluxObs_Run(void);
 /* 慢环每拍：按转速更新去直流相位补偿，按母线平均值更新死区电压误差幅值 */
 void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg);
+/* 逆变器电压误差（死区 + 管压降）在角 a 的 q 轴上的分量，Q15 电压（慢环调用） */
+int16_t FluxObs_DtErrQ(AlphaBeta_TypeDef iab, SinCos_TypeDef a);
 #if MOTOR_IPM
 /* 内嵌式：按 d 轴电流指令更新有效磁链幅值目标（慢环调用，含除法） */
 void FluxObs_SetIdRef(int16_t idQ15);

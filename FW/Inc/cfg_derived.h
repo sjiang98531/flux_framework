@@ -18,7 +18,7 @@
 /* ---------------------------------------------------------------------------
  * 固件版本标识：可通过调试器读取 gFluxDiag.buildTag 确认板上运行的固件版本。
  * -------------------------------------------------------------------------*/
-#define BUILD_TAG            0xF20E0063UL
+#define BUILD_TAG            0xF20E0064UL
 
 #define MATH_PI                   3.14159265358979    /* 圆周率（编译期计算用，double） */
 /* 编译期 sin（度，0～90°，泰勒到 7 次，误差 < 2e-4） */
@@ -229,6 +229,10 @@
 /* 定位摆周期的平方换算为慢环拍数的平方（Startup_Init 开方得到 T 的拍数，各段为 T 的倍数） */
 #define ALIGN_T2_TICKS2      ((uint64_t)(ALIGN_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
 #define ALIGN_TIME_TICKS     ((uint16_t)(ALIGN_TIME_S * SLOWLOOP_FREQ + 0.5))     /* 用户给出的定位时间上限，0 = 自动 */
+/* 冷起动软起时间（慢环拍数的平方）：I/F 负载角摆动周期由定位摆周期按电流换算，刚度再乘 cos(平衡负载角)（sin = 0.33，
+ * OPENLOOP_ACC_RPM_S 取最大加速度的 1/3），乘以 OPENLOOP_SOFT_T 个周期 */
+#define OPENLOOP_T2_TICKS2   ((uint64_t)(ALIGN_T2_S2 * ALIGN_A / OPENLOOP_CURRENT_A / 0.94394 * OPENLOOP_SOFT_T * OPENLOOP_SOFT_T \
+                                         * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
 /* "静止"门限：反电势 p*psi_f*w_m（Q15 电压） */
 #define ALIGN_STILL_EMF_Q15_OF(psi) ((int32_t)(ALIGN_STILL_RPM * 2 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS * (psi) / UDC_MAX * 32768.0 + 0.5))
 #define ALIGN_STILL_EMF_Q15  ALIGN_STILL_EMF_Q15_OF(MOTOR_PSI_F_WB)

@@ -32,6 +32,8 @@ static int32_t s_accScaleQ12 = 4096;
 static int32_t s_olCur, s_olCurTarget;      /* 开环电流当前值 / 目标值（Q15）；回退时由小升至目标（CURRENT_SLEW_A_S） */
 static volatile int32_t s_accStep = OPENLOOP_ACC_STEP_Q31;   /* 快环读 */
 static int32_t s_accStepFull;                         /* 开环电流达到目标后的加速度步长 */
+static uint16_t s_softN, s_softK;                     /* 冷起动软起：加速度在 s_softN 拍内线性升至满值（s_softK 为已走拍数），0 = 不软起 */
+static uint16_t s_softTicks;                          /* 冷起动软起拍数 = OPENLOOP_SOFT_T 个 I/F 摆动周期（上电计算一次） */
 
 /* 当前开环转速（Q15），供观测器相位补偿等使用 */
 int16_t OpenLoop_SpeedQ15(void) { return (int16_t)(s_olSpeed >> 16); }
@@ -140,6 +142,8 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
      * 加速度按同一比例给出，负载角余量（OPENLOOP_ACC_RPM_S 取最大加速度的 1/3）全程保持不变。
      * accStepFull * 电流 < 2^31 由配置检查 OPENLOOP_ACC_STEP_FITS 保证（32 位乘除） */
     e->accStep = (e->accStepFull * cur) / e->olCurTarget;
+    e->soft = (uint8_t)!warm;       /* 冷起动：加速度从 0 软起（cfg_internal.h OPENLOOP_SOFT_T） */
+    if (e->soft) e->accStep = 0;
 }
 
 /* 冷起动（定位 / IPD 之后）：开环角 = 定位角、零速、额定开环电流 */
@@ -169,6 +173,8 @@ void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e)
     s_accScaleQ12 = e->accScaleQ12;
     s_accStepFull = e->accStepFull;
     s_accStep = e->accStep;
+    s_softK = 0;
+    s_softN = e->soft ? s_softTicks : 0;
     FocCore_SetIdqRef((int16_t)e->olCur, 0);
     s_pllFilt = gEst.pll.s32Speed;
     s_agree = 0; s_hold = 0;
@@ -233,9 +239,11 @@ static void openLoopHandover(void)
     }
 }
 
-/* 上电：飞车接管进入 I/F 的两份入口参数（iq = 0，同向 / 过零），快环接管时直接取用（常数时间） */
+/* 上电：冷起动软起拍数；飞车接管进入 I/F 的两份入口参数（iq = 0，同向 / 过零），快环接管时直接取用（常数时间） */
 void OpenLoop_Init(void)
 {
+    s_softTicks = (uint16_t)QMath_Isqrt64(OPENLOOP_T2_TICKS2);
+    if (s_softTicks == 0) s_softTicks = 1;
     OpenLoop_PrepareWarm(0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
     OpenLoop_PrepareWarm(0, 1, 1, 0, &s_catchIf[1]);
 }
@@ -279,6 +287,10 @@ void OpenLoop_Slow(void)
         if (s_olCur > s_olCurTarget) s_olCur = s_olCurTarget;
         s_accStep = (s_accStepFull * s_olCur) / s_olCurTarget;     /* 32 位，见 OpenLoop_Prepare */
         FocCore_SetIdqRef((int16_t)s_olCur, 0);
+    }
+    if (s_softK < s_softN) {            /* 冷起动软起：加速度线性升至满值（一个 I/F 摆动周期，负载角不再来回摆动） */
+        s_softK++;
+        s_accStep = (s_accStepFull * s_softK) / s_softN;           /* 32 位，配置检查 OPENLOOP_SOFT_FITS */
     }
 
     /* 缺相：与 Spin 相同的判据（protect.h），电周期按开环转速计 */

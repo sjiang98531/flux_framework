@@ -18,6 +18,7 @@ typedef struct {
     uint32_t thetaOffset;       /* 开环角 - 估计角（Q31 角度），提交时叠加到当时的 PLL 角上 */
     int32_t  olSpeed;           /* 开环起始转速 Q31 */
     int32_t  olCur, olCurTarget;    /* 开环电流起始值 / 目标值（Q15），起始值 < 目标值时按 CURRENT_SLEW_A_S 上升 */
+    uint8_t  soft;          /* 1 = 冷起动，加速度从 0 软起 */
     int32_t  accScaleQ12, accStepFull, accStep;    /* 加速度缩放（开环电流 / 额定开环电流，Q12）、电流到目标后的加速度步长、起始加速度步长（Q31 / 快环拍） */
 } OpenLoopEntry_TypeDef;
 void OpenLoop_PrepareCold(OpenLoopEntry_TypeDef *e);    /* 准备（临界区外，只计算）：冷起动 */

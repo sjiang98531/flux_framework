@@ -28,6 +28,7 @@ static uint16_t s_alignTicks;
 static uint16_t s_alignMinTicks, s_alignStillTicks, s_alignAutoTicks, s_alignMaxTicks;
 static int32_t s_dampQ8;                   /* 定位阻尼增益：Q15 电流 / Q15 电压，Q8 */
 static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
+static int32_t s_dtFilt;                   /* 同一滤波器滤波的逆变器电压误差 q 分量（判停稳用） */
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
 static volatile uint8_t s_ipd;             /* 1 = Align 子状态正在执行 IPD（慢环写，快环读） */
 
@@ -37,6 +38,7 @@ void Startup_OnEnterAlign(void)
 {
     s_alignTicks = 0;
     s_emfFilt = 0;
+    s_dtFilt = 0;
     s_still = 0;
     s_alignTheta = 0;
     FocCore_SetIdqRef(0, 0);
@@ -176,16 +178,22 @@ void Startup_AlignSlow(void)
     }
     if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
     /* 阻尼：q 轴反电势 e_q = w*psi_f，经 ALIGN_EMF_FILT_TAU_S 低通，iq = -k*e_q。
-     * e_q 取 q 轴电流 PI 的积分项（= Rs*iq + e_q，稳态电压）减去 Rs*iq_实测，而不用 PI 总输出：
+     * e_q 取 q 轴电流 PI 的积分项（= Rs*iq + 逆变器电压误差 + e_q，稳态电压）减去 Rs*iq_实测，而不用 PI 总输出：
      * 总输出中含 Kp*误差 的瞬态分量，阻尼指令变化时会跳变，环路增益 > 1 时会振荡。 */
     emf = (gFoc.piQ.qdSum >> 15) - QMath_MulQ15(gGain.focKrsQ15, gFoc.idq.s16Q);
     s_emfFilt += emf - (s_emfFilt >> ALIGN_EMF_FILT_SH);
+    /* 判停稳时另外扣除逆变器电压误差。定位时 d 轴电流在另两相上各为 -ALIGN_A/2，摆动产生的 iq 会把其中一相推入
+     * 死区误差的线性段（INVERTER_DT_I0_A 以内，等效电阻约为 Rs 的 2 倍以上），该电压随 iq 同步变化：不扣除时
+     * 反电势只估出真值的一半左右，转子仍在摆动即判为停稳，带着摆动进入 I/F。
+     * 阻尼回路中不扣除：模型扣多相当于 Rs 估大，iq = -k*e 变为正反馈；扣少只使阻尼变弱。
+     * 判停稳不在回路中，扣多只会多等待（最长 ALIGN_MAX_T），扣少即退化为不扣除。 */
+    s_dtFilt += FluxObs_DtErrQ(gMeas.iab, gFoc.ang) - (s_dtFilt >> ALIGN_EMF_FILT_SH);
     iq = -((s_emfFilt >> ALIGN_EMF_FILT_SH) * s_dampQ8 >> 8);
     iq = QMath_Clamp(iq, ALIGN_ID_Q15);
     FocCore_SetIdqRef((int16_t)id, (int16_t)iq);
     ++s_alignTicks;
     {   /* 0° 定位，满足最短时间后等待停稳 */
-        int32_t e = s_emfFilt >> ALIGN_EMF_FILT_SH;
+        int32_t e = (s_emfFilt - s_dtFilt) >> ALIGN_EMF_FILT_SH;
         if (e < 0) e = -e;
         if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
         if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
