@@ -278,6 +278,7 @@
 #define FLY_SETTLE_BLOCKS_OF(L, R) ((uint16_t)(FLY_SETTLE_TAUS * (L) / (R) * 1000.0 + 0.5))
 #define FLY_SETTLE_BLOCKS       FLY_SETTLE_BLOCKS_OF(MOTOR_LD_H, MOTOR_RS_OHM)
 #define FLY_STILL_BLOCKS        ((uint16_t)(FLYBRAKE_TIME * 1000.0 + 0.5))
+#define FLY_COLD_STILL_BLOCKS   ((uint16_t)(FLY_COLD_STILL_TIME * 1000.0 + 0.5))   /* 冷起动：本次检测从未发现转动 */
 /* 短接制动的转速衰减时间常数 τ = J / B（见 cfg_internal.h FLY_STILL_END_RPM）：
  *   Kt = 1.5 p ψf（N·m/A），J = Kt / (MOTOR_ACC_RPM_S_PER_A · 2π/60)，B = 1.5 p² ψf² / Rs（N·m·s/rad，低速 ωL << Rs） */
 #define FLY_KT_NM_A             (1.5 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB)    /* 转矩常数 N·m/A */

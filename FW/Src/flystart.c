@@ -231,7 +231,7 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     }
     HAL_PwmShortLowSides(gHal.caliDuty);               /* 三相下桥短接（同时起制动作用） */
     FocMath_ClarkeSat(&gMeas.iabc, &gMeas.iab);
-    /* 静止在上一块末尾判出，下一拍才切换（进入 FlyCheck 后第 FLYBRAKE_TIME*PWM_FREQ + 1 拍切到定位） */
+    /* 静止在上一块末尾判出，下一拍才切换（冷起动约 FLY_COLD_STILL_TIME 后切到定位） */
     if (s_stillDone) { gFly.stage = FLY_STAGE_STILL; return FLY_STILL; }
     /* 接管：判定之后第 1 拍计算阻抗角，第 2 拍用当拍电流计算转子角并切换 */
     if (s_catchStep == 1) { s_catchOff = impedanceOffset(gFly.speedCatch); s_catchStep = 2; return FLY_BUSY; }
@@ -260,7 +260,7 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
          * 静止计时从进入 FlyCheck 即开始（静止时无暂态需等待） */
         s_havePrev = 0; s_haveCD = 0; s_prevSpd = 0;
         gFly.speed = 0; gFly.stable = 0;
-        if (++gFly.still >= (s_sawSpin ? gFly.stillSpinMs : FLY_STILL_BLOCKS)) {   /* 检测到过转动：等待停稳（FLY_STILL_END_RPM） */
+        if (++gFly.still >= (s_sawSpin ? gFly.stillSpinMs : FLY_COLD_STILL_BLOCKS)) {  /* 冷起动无制动暂态，短确认即可；检测到过转动则等待停稳 */
             s_stillDone = 1;
             s_mayMove = 0;
         }

@@ -32,7 +32,7 @@
 #define STARTUP_MODE_DRAG       1
 #define STARTUP_MODE_ALIGN      2
 #define STARTUP_MODE_SWING      3
-#define STARTUP_MODE            STARTUP_MODE_IPD
+#define STARTUP_MODE            STARTUP_MODE_SWING
 
 /* 停机方式（上电默认值；运行中可修改 gSup.stopMode，立即生效）。停机 = |指令| < RUN_TO_STOP_SPEED：
  *   STOP_MODE_RAMP   受控减速：闭环运行中收到停机指令时，速度环按 SPEED_RAMP_DOWN 减速到 TRACK_END_RPM，

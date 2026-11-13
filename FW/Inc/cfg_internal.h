@@ -140,7 +140,7 @@
  * （本电机 0.6 A 时 0.50 s）。定位各段时间以 T 的倍数给出，T 在 Startup_Init 中由电机参数计算一次（开方），
  * 更换电机或修改定位电流后自动随之改变。 */
 #define ALIGN_A              (0.8 * MOTOR_I_RATED_A)     /* A，本电机 0.6 A */
-#define ALIGN_RAMP_A_S       3.0         /* A/s，定位电流上升斜率 */
+#define ALIGN_RAMP_A_S       3.8         /* A/s，定位电流上升斜率（< CURRENT_SLEW_A_S；Q15 量化后实际 3.889 A/s） */
 /* 最短定位时间：死点附近（转矩约为 0）需先等转子离开死点再摆回，约 1.5 个周期，取约 1.6 T。 */
 #define ALIGN_MIN_T             1.6         /* T，最短定位时间 */
 /* 定位结束条件：满足最短时间后，转子转速（由反电势估计）低于 ALIGN_STILL_RPM 并持续 ALIGN_STILL_T，
@@ -171,20 +171,23 @@
  *     q 轴反电势 e_q = 转速 * 磁链 * cos(偏角)，d 轴反电势 e_d = -转速 * 磁链 * sin(偏角)（偏角 = 转子相对定位轴的电角度）；
  *     电流恒定时，q 轴电流 PI 的积分项即 e_q（三相电流对称，逆变器电压误差的 q 分量为 0，电阻压降为 0），
  *     d 轴电流 PI 的积分项 = 常数（电阻压降 + 逆变器电压误差）+ e_d，其变化量即 e_d 的变化量。
- *   转子顺转向摆过定位轴时转速最大、e_q 出现峰值，且 e_q 在峰值两侧对称、e_d 反对称：取 e_q 上升和回落经过同一电平的两个时刻，
+ *   转子摆过定位轴时转速最大、e_q 出现峰值（顺向为正、逆向为负），且 |e_q| 在峰值两侧对称、e_d 反对称：
+ *   取 |e_q| 上升和回落经过同一电平的两个时刻，
  *   d 轴积分项之差的一半即回落时刻的 e_d，于是 偏角 = atan(-e_d / e_q)、转速 = |e| / 磁链。
  *   角度的测量与转动惯量、电阻、电感、逆变器电压误差无关，磁链只影响转速的比例。
  *   转子位于定位轴背面（|偏角| > 90°）时 e_q 的符号与转向相反，会出现假峰值：此时 e_d 的变化方向相反，据此排除。
  * 过程：
  *   1. 电流按 ALIGN_RAMP_A_S 升至 ALIGN_A，同时电流矢量由定位轴之后 ALIGN_SWING_SWEEP_DEG 顺转向扫到定位轴：
  *      任何初始位置都不会始终处于转矩为零的死点上。
- *   2. 电流矢量停在定位轴上，检测 e_q 的顺向峰值；峰值转速不低于 ALIGN_SWING_MIN_DELTA 对应的转速时，回落到上一个电平即接入 I/F：
+ *   2. 电流矢量停在定位轴上，检测 |e_q| 的峰值；峰值转速不低于 ALIGN_SWING_MIN_DELTA 对应的转速时，回落到上一个电平即接入 I/F：
  *      开环角 = 转子角 + 平衡负载角，开环转速 = 转子转速，电流由 ALIGN_A 按 CURRENT_SLEW_A_S 升至 OPENLOOP_CURRENT_A。
- *      转子先逆转向摆动时（初始位置在定位轴之前），等它摆回、顺向过轴时接入。
+ *      顺向 / 逆向过轴的测量完全对称：转子先逆转向摆动时（初始位置在定位轴之前）不必等它摆回，
+ *      在逆向峰值处即以负的转子角、负的开环转速接入，由 I/F 的加速度把转速拉过零。
+ *      任意初始角都只需等第一个过轴峰值，省去最多一个摆动周期。
  *   3. 电流升满后 ALIGN_SWING_QUIET_T 内 e_q 始终低于门限：转子没有可测的摆动（带入 I/F 后负载角摆幅小于
  *      ALIGN_SWING_MIN_DELTA * 平衡负载角，转矩始终为正），按静止在定位轴上起动。
  *      有摆动但 ALIGN_SWING_MAX_T 内未出现可用的峰值：同样按静止起动。 */
-#define ALIGN_SWING_SWEEP_DEG   60.0        /* 电角度，电流上升过程中电流矢量扫过的角度（60° 的整数倍，起止均在相轴上） */
+#define ALIGN_SWING_SWEEP_DEG   180.0       /* 电角度，电流上升过程中电流矢量扫过的角度（60° 的整数倍，起止均在相轴上，<= 180°） */
 #define ALIGN_SWING_MIN_DELTA   0.5         /* 可接入的最小摆动：带入 I/F 后的负载角摆幅 / 平衡负载角 */
 #define ALIGN_SWING_QUIET_T     0.5         /* T，判定"没有可测的摆动"的时间（任何摆动在半个周期内必出现一次速度峰值） */
 #define ALIGN_SWING_MAX_T       3.0         /* T，等待顺向过轴的最长时间（大摆幅的周期为小摆幅的数倍） */
@@ -253,10 +256,11 @@
 /* 首先以短脉冲测速（见下）；测不到或结果不一致时退回连续短接测量（flystart.c）：
  * 每 1 ms 取一次短路电流矢量的平均，相邻两次的夹角即为 1 ms 内转过的电角度 -> 转速与转向；
  * 电流矢量方向加阻抗角即为转子角。转速足够高 -> 接入 Spin（同向 >= FLY_CATCH，反向 >= FLY_REV_SPIN_MIN_RPM）；
- * 较低但 >= FLY_LOW_MIN_RPM -> 直接进入 I/F；更低则继续短接制动，短路电流低于 FLYCURRENT_TH_PU 持续 FLYBRAKE_TIME
- * （检测到过转动时还需额外等待停稳）后按静止处理 -> 定位 -> I/F。 */
+ * 较低但 >= FLY_LOW_MIN_RPM -> 直接进入 I/F；更低则继续短接制动，短路电流低于 FLYCURRENT_TH_PU 持续
+ * （冷起动 FLY_COLD_STILL_TIME / 检测到过转动时 FLYBRAKE_TIME + 额外等待停稳）后按静止处理 -> 定位 -> I/F。 */
 
-#define FLYBRAKE_TIME           0.1         /* s，短路电流低于门限持续该时间即判为静止 */
+#define FLYBRAKE_TIME           0.1         /* s，制动后判静止的基准时间（检测到过转动时参与 gFly.stillSpinMs 计算） */
+#define FLY_COLD_STILL_TIME     0.03        /* s，本次检测从未发现转动（冷起动）时的低电流确认时间 */
 /* 静止判定转速：短路电流 = 反电势 / |Rs + jwL|，低速时约为 反电势 / Rs。以该转速下的短路电流作为
  * "在转"的电流门限 FLYCURRENT_TH_PU（本电机约 0.316 A），仅与电机参数有关，与采样电路无关。 */
 /* FLY_STILL_RPM：见 cfg_app.h */
@@ -264,7 +268,7 @@
  * 转子可能仍在转动。短接时低速制动转矩 ≈ B·ω，B = 1.5 p² ψf² / Rs，转速按 τ = J / B 指数衰减
  * （J 由 MOTOR_ACC_RPM_S_PER_A 反推，本电机 τ ≈ 0.4 s）。若检测到过转动，电流低于门限后再短接
  * FLYBRAKE_TIME + τ·ln(门限转速 / FLY_STILL_END_RPM) 才开始定位（本电机约 1.2 s）；
- * 始终静止（冷起动）时仍为 FLYBRAKE_TIME，起动时间不受影响。 */
+ * 始终静止（冷起动）时没有制动暂态，只需 FLY_COLD_STILL_TIME 确认低电流即可，省约 70 ms。 */
 /* FLY_STILL_END_RPM：见 cfg_app.h */
 #define FLYCURRENT_TH_PU        (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB \
                                  / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX）：FLY_STILL_RPM 下的短路电流 */

@@ -41,6 +41,7 @@ static int8_t s_swingDir;
 static uint16_t s_swingQuietTicks, s_swingMaxTicks;
 static int16_t s_swingMinSpd;
 static int32_t s_swingL1, s_swingL2, s_swingVd1, s_swingVd2;
+static int32_t s_swingNegL1, s_swingNegL2, s_swingNegVd1, s_swingNegVd2;   /* 逆向峰值用同一套电平记录 */
 static uint8_t s_swingMoved;
 
 /* 进入 Align（飞车检测判为静止）：清除定位状态。起动方式（gStartup.mode）为 IPD 时先执行 IPD，结果不可信时再定位；否则直接拖动。
@@ -71,6 +72,8 @@ void Startup_OnEnterAlign(void)
             s_swingDir = OpenLoop_Reversal(1) ? -1 : 1;
             s_swingL1 = 0;
             s_swingL2 = 0;
+            s_swingNegL1 = 0;
+            s_swingNegL2 = 0;
             s_swingMoved = 0;
             s_alignTheta = (int16_t)(-s_swingDir * ALIGN_SWING_SWEEP_Q15);
         }
@@ -181,11 +184,27 @@ void Startup_AlignFast(void)
 /* 摆动中起动的 Align 慢环（原理见 cfg_internal.h）：
  *   电流上升段：d 轴电流按斜坡升至 ALIGN_A，定位角随电流由 -ALIGN_SWING_SWEEP_DEG 扫到 0（按转向取号）；
  *   检测段：e = 顺转向的 q 轴反电势（q 轴电流 PI 积分项，滤波），vd = d 轴电流 PI 积分项（同一滤波）。
- *     e 上升途中每升高一档（门限的 1/4 + 当前电平的 1/16）记录一个电平和当时的 vd；最高电平不低于门限、e 回落到上一个电平时：
- *     两次经过该电平的 vd 之差的一半 = 此刻的 d 轴反电势 ed（顺向过轴之后为正）；
+ *     |e| 上升途中每升高一档（门限的 1/4 + 当前电平的 1/16）记录一个电平和当时的 vd；最高电平不低于门限、|e| 回落到上一个电平时：
+ *     两次经过该电平的 vd 之差的一半 = 此刻的 d 轴反电势 ed（过轴之后为正）；
  *       ed 明显为负：转子在定位轴背面，是假峰值，本次摆动不再判断；
- *       否则 转子越过定位轴的角度 = atan(ed / e)，转速 = |反电势| / 磁链，再按测量延迟内转过的角度修正，由此接入 I/F。
+ *       否则 转子越过定位轴的角度 = atan(ed / |e|)，转速 = |反电势| / 磁链，再按测量延迟内转过的角度修正，由此接入 I/F。
+ *     顺向 / 逆向峰值各用一套电平记录，两者对称：逆向过轴时以负的转子角、负的开环转速接入，由 I/F 加速过零，
+ *     不再等转子摆回来，省去最多一个摆动周期。
  *   无摆动（s_swingQuietTicks 内 |e| 始终低于门限）或等待超过 s_swingMaxTicks：按静止在定位轴上接入。 */
+/* 峰值确认后的接入计算（慢环，每次起动最多执行一次：三次 32 位除法）。
+ * e = 该方向上的 |e_q|，ed = 过轴之后的 d 轴反电势，sign = 该方向的角度 / 转速符号。 */
+static void swingCatch(int32_t e, int32_t ed, int8_t sign)
+{
+    int32_t t, th, w;
+    if (ed < 0) ed = 0;
+    t = (ed << 12) / e;                         /* tan(偏角)，Q12 */
+    if (t > 4096) t = 4096;
+    /* atan(t) = t*pi/4 + 0.273*t*(1 - t)（0 <= t <= 1，误差 < 0.3°），换成 Q15 角度 */
+    th = (((t * 3217) >> 12) + ((((t * 1118) >> 12) * (4096 - t)) >> 12)) * 10430 >> 12;
+    w = ((e + (ed * ed) / (2 * e)) << 15) / gGain.decKEmfQ15;   /* sqrt(e^2 + ed^2) 的一阶近似 / 磁链，Q15 转速 */
+    th += (w * ALIGN_SWING_LAG_ANG_Q12) >> 12;
+    Sup_SwitchSwingOpenLoop((int16_t)(sign * th), (int16_t)(sign * w));
+}
 static void alignSwingSlow(void)
 {
     int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15, e, vd, thr;
@@ -198,31 +217,44 @@ static void alignSwingSlow(void)
     if (++s_alignTicks <= ALIGN_SWING_SETTLE_TICKS) return;
     {   /* 转向取当前指令方向；检测途中指令反向时重新开始记录 */
         int8_t dir = OpenLoop_Reversal(1) ? -1 : 1;
-        if (dir != s_swingDir) { s_swingDir = dir; s_swingL1 = 0; s_swingL2 = 0x3FFF0000; }
+        if (dir != s_swingDir) { s_swingDir = dir; s_swingL1 = 0; s_swingL2 = 0x3FFF0000;
+                                s_swingNegL1 = 0; s_swingNegL2 = 0x3FFF0000; }
     }
     e = s_swingDir * (s_emfFilt >> ALIGN_EMF_FILT_SH);
     vd = s_dtFilt >> ALIGN_EMF_FILT_SH;
     thr = ((int32_t)s_swingMinSpd * gGain.decKEmfQ15) >> 15;
     if (e >= thr || e <= -thr) s_swingMoved = 1;
-    if (e <= 0) { s_swingL1 = 0; s_swingL2 = 0; s_swingVd2 = vd; }     /* 逆转向 / 过零：重新开始记录 */
-    else if (e >= s_swingL2 + (thr >> 2) + (s_swingL2 >> 4)) {         /* 升高一档 */
-        s_swingL1 = s_swingL2; s_swingVd1 = s_swingVd2;
-        s_swingL2 = e; s_swingVd2 = vd;
-    } else if (s_swingL1 > 0 && s_swingL2 >= thr && e <= s_swingL1) {  /* 峰值已过，回落到上一个电平 */
-        int32_t ed = (s_swingVd1 - vd) >> 1;
-        if (ed < -(thr >> 2)) {
-            s_swingL1 = 0; s_swingL2 = 0x3FFF0000;      /* 假峰值：e 回到 0 之前不再记录 */
-        } else {
-            int32_t t, th, w;       /* 每次起动执行一次：三次 32 位除法 */
-            if (ed < 0) ed = 0;
-            t = (ed << 12) / e;                         /* tan(偏角)，Q12 */
-            if (t > 4096) t = 4096;
-            /* atan(t) = t*pi/4 + 0.273*t*(1 - t)（0 <= t <= 1，误差 < 0.3°），换成 Q15 角度 */
-            th = (((t * 3217) >> 12) + ((((t * 1118) >> 12) * (4096 - t)) >> 12)) * 10430 >> 12;
-            w = ((e + (ed * ed) / (2 * e)) << 15) / gGain.decKEmfQ15;      /* sqrt(e^2 + ed^2) 的一阶近似 / 磁链，Q15 转速 */
-            th += (w * ALIGN_SWING_LAG_ANG_Q12) >> 12;
-            Sup_SwitchSwingOpenLoop((int16_t)(s_swingDir * th), (int16_t)(s_swingDir * w));
-            return;
+    if (e == 0) {                                   /* 过零：两套记录都复位 */
+        s_swingL1 = 0; s_swingL2 = 0; s_swingVd2 = vd;
+        s_swingNegL1 = 0; s_swingNegL2 = 0; s_swingNegVd2 = vd;
+    } else if (e < 0) {                             /* 逆向峰值：对称测量，接入后 I/F 从负转速加速过零 */
+        s_swingL1 = 0; s_swingL2 = 0; s_swingVd2 = vd;
+        e = -e;
+        if (e >= s_swingNegL2 + (thr >> 2) + (s_swingNegL2 >> 4)) {
+            s_swingNegL1 = s_swingNegL2; s_swingNegVd1 = s_swingNegVd2;
+            s_swingNegL2 = e; s_swingNegVd2 = vd;
+        } else if (s_swingNegL1 > 0 && s_swingNegL2 >= thr && e <= s_swingNegL1) {
+            int32_t ed = (s_swingNegVd1 - vd) >> 1;
+            if (ed < -(thr >> 2)) {
+                s_swingNegL1 = 0; s_swingNegL2 = 0x3FFF0000;   /* 假峰值 */
+            } else {
+                swingCatch(e, ed, (int8_t)(-s_swingDir));
+                return;
+            }
+        }
+    } else {
+        s_swingNegL1 = 0; s_swingNegL2 = 0; s_swingNegVd2 = vd;
+        if (e >= s_swingL2 + (thr >> 2) + (s_swingL2 >> 4)) {         /* 升高一档 */
+            s_swingL1 = s_swingL2; s_swingVd1 = s_swingVd2;
+            s_swingL2 = e; s_swingVd2 = vd;
+        } else if (s_swingL1 > 0 && s_swingL2 >= thr && e <= s_swingL1) {  /* 峰值已过，回落到上一个电平 */
+            int32_t ed = (s_swingVd1 - vd) >> 1;
+            if (ed < -(thr >> 2)) {
+                s_swingL1 = 0; s_swingL2 = 0x3FFF0000;      /* 假峰值：e 回到 0 之前不再记录 */
+            } else {
+                swingCatch(e, ed, s_swingDir);
+                return;
+            }
         }
     }
     if (s_alignTicks >= (s_swingMoved ? s_swingMaxTicks : s_swingQuietTicks)) Sup_SwitchSwingOpenLoop(0, 0);
