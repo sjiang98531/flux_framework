@@ -268,7 +268,9 @@
  * 转子可能仍在转动。短接时低速制动转矩 ≈ B·ω，B = 1.5 p² ψf² / Rs，转速按 τ = J / B 指数衰减
  * （J 由 MOTOR_ACC_RPM_S_PER_A 反推，本电机 τ ≈ 0.4 s）。若检测到过转动，电流低于门限后再短接
  * FLYBRAKE_TIME + τ·ln(门限转速 / FLY_STILL_END_RPM) 才开始定位（本电机约 1.2 s）；
- * 始终静止（冷起动）时没有制动暂态，只需 FLY_COLD_STILL_TIME 确认低电流即可，省约 70 ms。 */
+ * 始终静止（冷起动）时没有制动暂态，只需 FLY_COLD_STILL_TIME 确认低电流即可，省约 70 ms。
+ * 上次运行停止后再起动（未掉电）时转子可能仍在滑行，但若短路电流已低于残余转速 FLY_STILL_END_RPM 对应的电流
+ * （本电机约 0.02 A）并持续 FLY_COLD_STILL_TIME，转子已慢于允许的残余转速，同样直接判静止；否则按上述最坏情况制动等待。 */
 /* FLY_STILL_END_RPM：见 cfg_app.h */
 #define FLYCURRENT_TH_PU        (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB \
                                  / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX）：FLY_STILL_RPM 下的短路电流 */

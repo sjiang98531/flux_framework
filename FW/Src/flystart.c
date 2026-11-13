@@ -32,9 +32,14 @@ static int16_t s_prevSpd;
 static uint16_t s_blocks;
 static uint8_t s_tick, s_havePrev, s_haveCD, s_sawSpin, s_stillDone;
 /* 上次 Run 从 OpenLoop / Spin 退出且之后尚未判定过静止：转子可能仍以低于测速门限（约 30 rpm）的转速滑行，
- * 短路电流无法反映。若仅等待 FLYBRAKE_TIME 即判静止，IPD / I/F 将作用于仍在转动的转子而导致起动失败。
- * 因此该情况按"检测到过转动"处理：短接制动至停稳（gFly.stillSpinMs，FLY_STILL_END_RPM）后再定位。上电冷起动不受影响 */
+ * 若仅按冷起动确认即判静止，IPD / I/F 将作用于仍在转动的转子而导致起动失败。该情况按"可能在转"处理，判静止有两条路：
+ *   短路电流 <= 残余转速 FLY_STILL_END_RPM 对应的电流（gFly.s16EndAmpTh），持续 FLY_COLD_STILL_TIME：
+ *     短路电流 = 反电势 / |Rs + jwL|，电流这么小说明转子此刻已低于允许的残余转速，不需要再制动（多数情况：停机后隔了一段时间才起动）；
+ *   否则短接制动至停稳（gFly.stillSpinMs，按"门限转速衰减到残余转速"的最坏情况）。
+ * 本次检测确实测到过转动（s_spinSeen）时只走第二条。上电冷起动不受影响 */
 static uint8_t s_mayMove;
+static uint8_t s_spinSeen;              /* 本次检测测到过转动（电流超过"在转"门限） */
+static uint16_t s_quiet;                /* 连续低于残余转速电流的块数（ms） */
 
 void FlyStart_NoteRunEnd(void) { s_mayMove = 1; }
 static uint8_t s_catchStep;             /* 接管分三拍完成，避免单拍计算量超过 PWM 周期 */
@@ -180,6 +185,7 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
 void FlyStart_Init(void)
 {
     gFly.s16BemfAmpTh = Q15(FLYCURRENT_TH_PU);
+    gFly.s16EndAmpTh = Q15(FLYCURRENT_TH_PU * FLY_STILL_END_RPM / FLY_STILL_RPM);
     {
         double x = FLY_STILL_RPM / FLY_STILL_END_RPM, y = (x - 1.0) / (x + 1.0), y2 = y * y, t = y, ln = 0.0, ms;
         int k;
@@ -195,6 +201,7 @@ void FlyStart_Begin(void)
     pulseBegin();
     s_sumA = 0; s_sumB = 0; s_tick = 0; s_blocks = 0;
     s_havePrev = 0; s_haveCD = 0; s_sawSpin = s_mayMove; s_prevSpd = 0; s_stillDone = 0; s_catchStep = 0;
+    s_spinSeen = 0; s_quiet = 0;
     gFly.stage = FLY_STAGE_SETTLE; gFly.ampM2 = 0; gFly.speed = 0; gFly.stable = 0; gFly.still = 0; gFly.brakeMs = 0;
 }
 
@@ -260,7 +267,11 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
          * 静止计时从进入 FlyCheck 即开始（静止时无暂态需等待） */
         s_havePrev = 0; s_haveCD = 0; s_prevSpd = 0;
         gFly.speed = 0; gFly.stable = 0;
-        if (++gFly.still >= (s_sawSpin ? gFly.stillSpinMs : FLY_COLD_STILL_BLOCKS)) {  /* 冷起动无制动暂态，短确认即可；检测到过转动则等待停稳 */
+        if (gFly.ampM2 < (uint32_t)(((gFly.s16EndAmpTh >> 1) + 1) * ((gFly.s16EndAmpTh >> 1) + 1))) s_quiet++;
+        else s_quiet = 0;
+        /* 冷起动无制动暂态，短确认即可；上次运行后可能在滑行：电流已低于残余转速对应值则同样短确认；测到过转动则等待停稳 */
+        if (++gFly.still >= (s_sawSpin ? gFly.stillSpinMs : FLY_COLD_STILL_BLOCKS) ||
+            (!s_spinSeen && s_quiet >= FLY_COLD_STILL_BLOCKS)) {
             s_stillDone = 1;
             s_mayMove = 0;
         }
@@ -268,10 +279,10 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     } else if (s_blocks < gGain.flySettleBlocks) {
         s_blocks++;                                     /* 正在转动：等待短接暂态衰减后再测转速 */
         gFly.still = 0;
-        s_sawSpin = 1;
+        s_sawSpin = 1; s_spinSeen = 1; s_quiet = 0;
     } else {
         gFly.stage = FLY_STAGE_MEASURE;
-        s_sawSpin = 1;
+        s_sawSpin = 1; s_spinSeen = 1; s_quiet = 0;
         gFly.still = 0;
         if (s_havePrev) {
             /* 相邻两块的夹角 = 1 ms 内转过的电角度。|c|,|d| <= 5.4e8，低通采用先移位再相减以防溢出 */

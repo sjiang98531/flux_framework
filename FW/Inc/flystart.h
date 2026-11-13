@@ -41,6 +41,7 @@ enum {
 /* 飞车检测状态 */
 typedef struct {
     int16_t     s16BemfAmpTh;           /* 判"在转"的电流门限（FLYCURRENT_TH_PU） */
+    int16_t     s16EndAmpTh;            /* 残余转速 FLY_STILL_END_RPM 对应的短路电流：上次运行后起动时，低于它即可判静止 */
     /* ---- 连续短接测量 ---- */
     uint16_t    stage;          /* 0 未开始，1 等待暂态，2 测量 / 制动，3 接管，4 静止，5 超时，6 短脉冲测速 */
     int16_t     speed;          /* 测到的转速 Q15（SPEED_MAX 基准），带方向；电流低于门限时 0 */
