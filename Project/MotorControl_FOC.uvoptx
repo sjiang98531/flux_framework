@@ -120,7 +120,7 @@
         <SetRegEntry>
           <Number>0</Number>
           <Key>DLGUARM</Key>
-          <Name></Name>
+          <Name>?</Name>
         </SetRegEntry>
         <SetRegEntry>
           <Number>0</Number>
@@ -273,27 +273,27 @@
         <Ww>
           <count>23</count>
           <WinNumber>1</WinNumber>
-          <ItemText>gIpdCfg.pulseV,0x0A</ItemText>
+          <ItemText>gIpd.ratioQ8,0x0A</ItemText>
         </Ww>
         <Ww>
           <count>24</count>
           <WinNumber>1</WinNumber>
-          <ItemText>gIpd.ratioQ8,0x0A</ItemText>
+          <ItemText>gIpd.runs,0x0A</ItemText>
         </Ww>
         <Ww>
           <count>25</count>
           <WinNumber>1</WinNumber>
-          <ItemText>gIpd.runs,0x0A</ItemText>
+          <ItemText>gIpd.fails,0x0A</ItemText>
         </Ww>
         <Ww>
           <count>26</count>
           <WinNumber>1</WinNumber>
-          <ItemText>gIpd.fails,0x0A</ItemText>
+          <ItemText>gFluxDiag</ItemText>
         </Ww>
         <Ww>
           <count>27</count>
           <WinNumber>1</WinNumber>
-          <ItemText>gFluxDiag</ItemText>
+          <ItemText>gMeas,0x0A</ItemText>
         </Ww>
       </WatchWindow1>
       <WatchWindow2>

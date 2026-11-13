@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<JScopeProject>
+  <FileVersion major="1" minor="1" />
+  <Project>
+    <Configuration>
+      <JLink>
+        <Options Connection="1" IsRTTSession="0" IsRTTWithTimeStamp="0" IsRTTPlus="0" SamplingPeriod="1" SerialNo="0" JTAG_IRPre="0" JTAG_DRPre="0" IP="" TargetDevice="Cortex-M0" Nickname="" InterfaceSpeed="4000" TargetInterface="SWD" />
+      </JLink>
+      <ElfFile Name="C:\Users\SOC\Desktop\电机ppt\flux_framework_release\Output\SOC_FOC_SDK_V1_0.axf" />
+      <DataFile Name="" />
+      <Scope>
+        <Options TimeResolutionUs="1000" />
+      </Scope>
+      <Trigger>
+        <Options Level="0" Symbol="stage" On="0" Auto="0" Rise="0" Fall="0" />
+      </Trigger>
+    </Configuration>
+    <Windows>
+      <Graph Show="1" />
+      <Watch Show="1" />
+    </Windows>
+    <SelectedSymbols>
+      <Symbol>
+        <Options Name="stage" NameWithParents="gFly.stage" Address="0x200002CC" Type="unsigned short" TypeID="7" Size="2" YResolution="1" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="255" GraphColorGreen="140" GraphColorBlue="0" Offset="4" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="runState" NameWithParents="gSup.runState" Address="0x20000014" Type="unsigned short" TypeID="7" Size="2" YResolution="1" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="80" GraphColorGreen="80" GraphColorBlue="80" Offset="6" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="speedCmd" NameWithParents="gSup.speedCmd" Address="0x20000018" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="255" GraphColorGreen="0" GraphColorBlue="0" Offset="8" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="still" NameWithParents="gFly.still" Address="0x200002D2" Type="unsigned short" TypeID="7" Size="2" YResolution="100" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="220" GraphColorGreen="60" GraphColorBlue="60" Offset="10" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="brakeMs" NameWithParents="gFly.brakeMs" Address="0x200002D8" Type="unsigned short" TypeID="7" Size="2" YResolution="100" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="0" GraphColorGreen="160" GraphColorBlue="0" Offset="12" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="s_quiet" NameWithParents="s_quiet" Address="0x200000E0" Type="unsigned short" TypeID="7" Size="2" YResolution="100" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="0" GraphColorGreen="120" GraphColorBlue="255" Offset="14" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="ampM2" NameWithParents="gFly.ampM2" Address="0x200002E4" Type="unsigned short" TypeID="7" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="65535" File="" GraphColorRed="255" GraphColorGreen="160" GraphColorBlue="0" Offset="16" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="s16EndAmpTh" NameWithParents="gFly.s16EndAmpTh" Address="0x200002CA" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="160" GraphColorGreen="0" GraphColorBlue="255" Offset="18" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="speed" NameWithParents="gMeas.speed" Address="0x2000046E" Type="short" TypeID="11" Size="2" YResolution="800" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="120" GraphColorGreen="0" GraphColorBlue="200" Offset="20" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+      <Symbol>
+        <Options Name="speedRaw" NameWithParents="gMeas.speedRaw" Address="0x2000046C" Type="short" TypeID="11" Size="2" YResolution="400" YOffset="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" MaxValue="32767" File="" GraphColorRed="0" GraphColorGreen="0" GraphColorBlue="255" Offset="22" ShowInGraph="1" DrawStyle="0" IsAutoConfig="0" />
+      </Symbol>
+    </SelectedSymbols>
+  </Project>
+</JScopeProject>
