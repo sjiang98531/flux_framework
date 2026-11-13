@@ -10,6 +10,7 @@
 #include "qmath.h"
 #include "cfg_derived.h"
 #include "param.h"
+#include "supervisor.h"
 
 FlyStart_TypeDef gFly;
 
@@ -38,10 +39,11 @@ static uint8_t s_tick, s_havePrev, s_haveCD, s_sawSpin, s_stillDone;
  *   否则短接制动至停稳（gFly.stillSpinMs，按"门限转速衰减到残余转速"的最坏情况）。
  * 本次检测确实测到过转动（s_spinSeen）时只走第二条。上电冷起动不受影响 */
 static uint8_t s_mayMove;
+static uint32_t s_runEndMs;             /* 上次 Run 结束时的 gSup.ms，用于判断停机已多久 */
 static uint8_t s_spinSeen;              /* 本次检测测到过转动（电流超过"在转"门限） */
 static uint16_t s_quiet;                /* 连续低于残余转速电流的块数（ms） */
 
-void FlyStart_NoteRunEnd(void) { s_mayMove = 1; }
+void FlyStart_NoteRunEnd(void) { s_mayMove = 1; s_runEndMs = gSup.ms; }
 static uint8_t s_catchStep;             /* 接管分三拍完成，避免单拍计算量超过 PWM 周期 */
 static uint32_t s_catchOff;             /* 阻抗角 + 90°（2^32 = 一圈） */
 
@@ -200,6 +202,9 @@ void FlyStart_Begin(void)
 {
     pulseBegin();
     s_sumA = 0; s_sumB = 0; s_tick = 0; s_blocks = 0;
+    /* 停机已超过 FLY_MAYMOVE_EXPIRE_MS：短接制动的转子早已低于残余转速，不必按最坏情况空等。
+     * 间隔更短（真滑行中再起动）仍按"可能在转"保守处理。gSup.ms 在快环读不会被打断（PendSV 低于 ADC 中断）。 */
+    if (s_mayMove && (uint32_t)(gSup.ms - s_runEndMs) >= FLY_MAYMOVE_EXPIRE_MS) s_mayMove = 0;
     s_havePrev = 0; s_haveCD = 0; s_sawSpin = s_mayMove; s_prevSpd = 0; s_stillDone = 0; s_catchStep = 0;
     s_spinSeen = 0; s_quiet = 0;
     gFly.stage = FLY_STAGE_SETTLE; gFly.ampM2 = 0; gFly.speed = 0; gFly.stable = 0; gFly.still = 0; gFly.brakeMs = 0;

@@ -144,6 +144,7 @@ static int16_t compSpeed(void)
  * 按主状态分发到 M1_<状态>_Slow，然后更新观测器慢变量（相位补偿、死区幅值）与母线过欠压判定。 */
 void Ctrl_SlowTick(void)
 {
+    gSup.ms++;                          /* 1 kHz 毫秒时基（Stop 状态也在走）：飞车检测判断停机时长 */
     s_mainSlow[gSup.mainState]();
     FluxObs_SlowTick(compSpeed(), gMeas.vbusAvg);
     Protect_BusSlow();                  /* 判定结果由快环 faultDetect 读取 */

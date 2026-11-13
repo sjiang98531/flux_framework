@@ -261,6 +261,10 @@
 
 #define FLYBRAKE_TIME           0.1         /* s，制动后判静止的基准时间（检测到过转动时参与 gFly.stillSpinMs 计算） */
 #define FLY_COLD_STILL_TIME     0.03        /* s，本次检测从未发现转动（冷起动）时的低电流确认时间 */
+/* 上次 Run 结束到本次起动的间隔超过该时间（τ 的倍数）：短接制动的转子已按指数衰减到残余转速以下，
+ * 不必再按最坏情况等待 gFly.stillSpinMs。取 5τ 时残余 < 1%（本电机 τ≈0.2 s，约 1 s）。
+ * 间隔更短（真滑行中再起动）仍按"可能在转"保守处理。 */
+#define FLY_MAYMOVE_EXPIRE_TAUS  5.0
 /* 静止判定转速：短路电流 = 反电势 / |Rs + jwL|，低速时约为 反电势 / Rs。以该转速下的短路电流作为
  * "在转"的电流门限 FLYCURRENT_TH_PU（本电机约 0.316 A），仅与电机参数有关，与采样电路无关。 */
 /* FLY_STILL_RPM：见 cfg_app.h */

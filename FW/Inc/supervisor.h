@@ -64,6 +64,7 @@ typedef struct {
     FaultBits_t      faultRecord;     /* 上电以来出现过的故障位 */
     uint8_t            faultRestarts;   /* 连续故障 / 起动失败次数；>= 5 时不再自动重启，指令归零后清除 */
     uint16_t           faultReleaseTicks;   /* 故障后自动恢复的等待时间（慢环拍） */
+    volatile uint32_t  ms;              /* 上电以来的毫秒计数（慢环 1 kHz 递增，49.7 天回绕）。飞车检测用它判断停机已多久 */
 } Supervisor_TypeDef;
 
 extern Supervisor_TypeDef gSup;

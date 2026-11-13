@@ -285,6 +285,8 @@
 #define FLY_J_KGM2              (FLY_KT_NM_A / (MOTOR_ACC_RPM_S_PER_A * 2.0 * MATH_PI / 60.0))    /* 转动惯量 kg·m²（由加速度系数反推） */
 #define FLY_SHORT_B             (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * MOTOR_PSI_F_WB / MOTOR_RS_OHM)    /* 三相短接时的制动系数 N·m·s/rad（短路转矩 / 机械角速度） */
 #define FLY_BRAKE_TAU_S         (FLY_J_KGM2 / FLY_SHORT_B)    /* 短接制动时转速按指数衰减的时间常数 s */
+/* 停机超过该时间（ms）即认为转子已停：飞车检测据此决定是否跳过最坏情况制动等待 */
+#define FLY_MAYMOVE_EXPIRE_MS   ((uint32_t)(FLY_MAYMOVE_EXPIRE_TAUS * FLY_BRAKE_TAU_S * 1000.0 + 0.5))
 #define FLY_TIMEOUT_BLOCKS      ((uint32_t)(FLY_BRAKE_TIMEOUT_S * 1000.0 + 0.5))    /* 短接制动超时（ms） */
 #define FLY_CATCH_Q15           Q15(FLY_CATCH_RPM / SPEED_MAX)    /* 同向直接接进闭环的转速下限（Q15） */
 #define TRACK_END_Q15           Q15(TRACK_END_RPM / SPEED_MAX)    /* 零电流跟踪的结束转速（Q15） */
