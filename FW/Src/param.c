@@ -18,10 +18,12 @@
 #include "foc_core.h"
 #include "speed_ctrl.h"
 #include "flux_obs.h"
-#include "est.h"
-#include "flux_pll.h"
 #include "diag.h"
 #include "supervisor.h"
+#include "startup.h"
+#include "openloop.h"
+#include "flystart.h"
+#include "qmath.h"
 
 MotorParam_TypeDef gParam;
 CtrlGain_TypeDef gGain;
@@ -51,18 +53,21 @@ void Param_Defaults(MotorParam_TypeDef *p)
 static uint16_t checkParam(const MotorParam_TypeDef *p)
 {
     uint16_t bad = 0;
+    double psiN = (p->psiWb > 0 && p->ldH > 0 && p->lqH > 0) ? FLUX_PSI_N_OF(p->psiWb, p->ldH, p->lqH) : FLUX_PSI_N;
     /* bit0 Rs：满量程电流下的电阻压降须小于电压满量程（电流环、观测器两种电压基准均检查） */
     if (!(p->rsOhm > 0 && p->rsOhm * I_MAX / UDC_MAX < 0.9 && p->rsOhm * I_MAX / FLUX_V_BASE < 0.9)) bad |= 1u;
     /* bit1 L：满量程电流下的电感磁链 L*I 须在观测器磁链量程内；表贴式（MOTOR_IPM = 0）要求 Ld = Lq */
-    if (!(p->lqH > 0 && p->ldH > 0 && p->lqH * I_MAX / FLUX_PSI_N < 0.9 && p->ldH * I_MAX / FLUX_PSI_N < 0.9)
+    if (!(p->lqH > 0 && p->ldH > 0 && p->lqH * I_MAX / psiN < 0.9 && p->ldH * I_MAX / psiN < 0.9)
         || (!MOTOR_IPM && p->ldH != p->lqH)) bad |= 2u;
     /* bit2 L(i)：拐点在电流量程内，斜率非负且 Q12 可容纳 */
     if (!(p->lsKneeA >= 0 && p->lsKneeA < I_MAX && p->lsPerA >= 0 && p->lsPerA * I_MAX < 7.0)) bad |= 4u;
-    /* bit3 psi：最大定子磁链 psi + L*I 在观测器量程内；满量程转速下的反电势不超过电压满量程 */
-    if (!(p->psiWb > 0 && (p->psiWb + p->lqH * I_MAX) / FLUX_PSI_N < 0.9 && W_EMAX_RAD_S * p->psiWb / UDC_MAX < 1.0)) bad |= 8u;
+    /* bit3 psi：最大定子磁链 psi + L*I 在观测器量程内；满量程转速下的反电势不超过电压满量程；磁链基准积分步长和分辨率合理 */
+    if (!(p->psiWb > 0 && (p->psiWb + p->lqH * I_MAX) / psiN < 0.9 && p->psiWb / psiN >= 0.03 &&
+          W_EMAX_RAD_S * p->psiWb / UDC_MAX < 1.0 &&
+          2.0 * MATH_PI * FLUX_WN_HZ_OF(p->psiWb, p->ldH, p->lqH) / PWM_FREQ < 0.99997)) bad |= 8u;
     else {
         /* psi 过小时 NLFO 归一化系数（与 1/psi^2 成正比）会超出 int16 */
-        int32_t n = FLUX_NLFO_NORM_Q8_OF(FLUX_NOMINAL_Q15_OF(p->psiWb));
+        int32_t n = FLUX_NLFO_NORM_Q8_OF(FLUX_NOMINAL_Q15_AT(p->psiWb, psiN));
         if (n < 64 || n > 32767) bad |= 8u;
     }
     /* bit4 加速度系数：为正，且计算出的速度环 Kp 未被截断为 0 */
@@ -78,6 +83,7 @@ static uint16_t checkParam(const MotorParam_TypeDef *p)
 static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
 {
     int32_t k;
+    double psiN = FLUX_PSI_N_OF(p->psiWb, p->ldH, p->lqH);
     g->cfgWarn = 0;
     /* 电流环：Kp = 2*pi*CURRENT_BW_HZ*L，Ki = 2*pi*CURRENT_BW_HZ*R/PWM_FREQ（Kp/Ki = L/R，PI 零点对消电机极点，
      * 闭环为一阶、带宽 CURRENT_BW_HZ）。d、q 轴各用各自的电感（44842 / 475） */
@@ -101,16 +107,17 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     if (W_EMAX_RAD_S * p->psiWb / UDC_MAX >= 1.0) g->cfgWarn |= 8u;
     g->decKLqQ12 = DECOUPLE_K_L_Q12_OF(p->lqH);
     g->decKLdQ12 = DECOUPLE_K_L_Q12_OF(p->ldH);
-    /* 观测器：psi_f 在观测器磁链单位下的值及其平方，NLFO 归一化系数 */
-    g->fluxNomQ15 = FLUX_NOMINAL_Q15_OF(p->psiWb);
+    /* 观测器：按当前参数的磁链基准计算 psi_f 及其平方、积分步长 KTs、NLFO 归一化系数 */
+    g->fluxNomQ15 = FLUX_NOMINAL_Q15_AT(p->psiWb, psiN);
     g->fluxNom2 = (int32_t)g->fluxNomQ15 * (int32_t)g->fluxNomQ15;
     g->nlfoNormQ8 = (int16_t)FLUX_NLFO_NORM_Q8_OF(g->fluxNomQ15);
+    g->fluxKtsQ15 = FLUX_KTS_Q15_OF(p->psiWb, p->ldH, p->lqH);
     /* 观测器电压模型 psi_s = ∫(v - Rs*i)、psi_r = psi_s - L*i 的两个系数；
      * 电流环电压单位下的 Rs（定位判静止用）；IPM 的 Ld - Lq */
     g->fluxKrsQ15 = FLUX_KRS_Q15_OF(p->rsOhm);
-    g->fluxKlQ15 = FLUX_KL_Q15_OF(p->lqH);
+    g->fluxKlQ15 = FLUX_KL_Q15_AT(p->lqH, psiN);
     g->focKrsQ15 = FOC_KRS_Q15_OF(p->rsOhm);
-    g->fluxKdlQ15 = FLUX_KDL_Q15_OF(p->ldH, p->lqH);
+    g->fluxKdlQ15 = FLUX_KDL_Q15_AT(p->ldH, p->lqH, psiN);
     /* 观测器电感饱和 L(i)：拐点、斜率 */
     g->lsKneeQ15 = FLUX_LS_KNEE_Q15_OF(p->lsKneeA);
     g->lsSatKQ12 = FLUX_LS_SAT_K_Q12_OF(p->lsPerA);
@@ -128,13 +135,44 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     if (SPEED_TO_THETA >= 32767) g->cfgWarn |= 4u;
     /* IPD 注入电压：电流三角波幅值 IPD_HF_A，按 Lq 计算 */
     g->ipdHfVQ15 = Q15(IPD_HF_V_OF(p->lqH) / UDC_MAX);
-    /* 飞车：阻抗角系数 w*Lq/Rs、短接暂态等待时间（L/R 的倍数） */
+    /* 飞车：阻抗角系数 w*Lq/Rs、短接暂态等待时间（L/R 的倍数）、门限电流与等待停稳 / 过期时间 */
     g->flyWlrQ12 = FLY_WLR_Q12_OF(p->lqH, p->rsOhm);
     g->flySettleBlocks = FLY_SETTLE_BLOCKS_OF(p->ldH, p->rsOhm);
-    /* I/F 开环：按设计加速度 OPENLOOP_ACC_RPM_S 拖动所需的 iq（加速度 / 加速度系数），切闭环时作为前馈 */
+    {
+        double thPu = FLYCURRENT_TH_PU_OF(p->psiWb, p->rsOhm);
+        double x = FLY_STILL_RPM / FLY_STILL_END_RPM, y = (x - 1.0) / (x + 1.0), y2 = y * y, s = y, ln = 0.0, ms;
+        int j;
+        g->flyBemfAmpTh = Q15(thPu);
+        g->flyEndAmpTh = Q15(thPu * FLY_STILL_END_RPM / FLY_STILL_RPM);
+        for (j = 1; j < 60; j += 2) { ln += s / j; s *= y2; }
+        ms = FLY_STILL_BLOCKS + FLY_BRAKE_TAU_S_OF(p->psiWb, p->rsOhm, p->accRpmSPerA) * 2.0 * ln * 1000.0;
+        g->flyStillSpinMs = (uint16_t)(ms > 60000.0 ? 60000.0 : ms);
+        g->flyMayMoveExpireMs = FLY_MAYMOVE_EXPIRE_MS_OF(p->psiWb, p->rsOhm, p->accRpmSPerA);
+    }
+    /* 起动与开环：定位摆周期、阻尼、摆动测量延迟、I/F 加速度、电流过渡斜率 */
+    {
+        uint32_t t = QMath_Isqrt64(ALIGN_T2_TICKS2_OF(p->psiWb, p->accRpmSPerA));
+        g->alignPeriodTicks = (uint16_t)(t > 65535u ? 65535u : t);
+        g->alignSwingMinSpd = (int16_t)(ALIGN_SWING_MIN_SPD_T / (double)(t ? t : 1) + 0.5);
+        g->alignDampQ8 = (int32_t)(ALIGN_C1_OF(p->psiWb) * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM_OF(p->psiWb) * ALIGN_J_OF(p->psiWb, p->accRpmSPerA) * 1099511627776.0)) / 1048576.0);
+        g->swingLagAngQ12 = ALIGN_SWING_LAG_ANG_Q12_OF(p->lqH, p->rsOhm);
+    }
+    g->openLoopAccStepQ31 = OPENLOOP_ACC_STEP_Q31_OF(p->accRpmSPerA);
+    g->currentSlewStepQ15 = CURRENT_SLEW_STEP_Q15_OF(p->accRpmSPerA);
+    g->rampOpenLoopQ31 = Q31(OPENLOOP_ACC_RPM_S_OF(p->accRpmSPerA) / SPEED_MAX / SLOWLOOP_FREQ);
+    g->rampOpenLoopRevQ31 = Q31(OPENLOOP_REV_ACC_RPM_S_OF(p->accRpmSPerA) / SPEED_MAX / SLOWLOOP_FREQ);
+    /* I/F 开环：按设计加速度 OPENLOOP_ACC_RPM_S 拖动所需的 iq（加速度 / 加速度系数），切闭环时作为前馈（openloop.c） */
     g->openLoopAccFfIq = OPENLOOP_ACC_FF_IQ_OF(p->accRpmSPerA);
     /* 定位判静止：ALIGN_STILL_RPM 对应的反电势 */
     g->alignStillEmfQ15 = ALIGN_STILL_EMF_Q15_OF(p->psiWb);
+    /* 母线回馈减速与超速保护 */
+    g->busRegenStartQ15 = BUS_REGEN_START_Q15_OF(p->psiWb);
+    g->busRegenFullQ15 = BUS_REGEN_FULL_Q15_OF(p->psiWb);
+    g->busRegenIqMaxQ15 = BUS_REGEN_IQ_MAX_Q15_OF(p->psiWb);
+    g->busRegenKQ12 = BUS_REGEN_K_Q12_OF(p->psiWb);
+    g->busVdcRefSq = BUS_VDC_REF_SQ_OF(p->psiWb);
+    g->busVdcKQ8 = BUS_VDC_K_Q8_OF(p->psiWb, p->accRpmSPerA);
+    g->protectSpeedOcQ15 = PROTECT_SPEED_OC_Q15_OF(p->psiWb);
 }
 
 /* 将参数与增益装入各模块。调用方已关中断并确认电机处于 Stop（Param_ApplyNow 例外，见下）。
@@ -145,8 +183,11 @@ static void install(const MotorParam_TypeDef *p, const CtrlGain_TypeDef *g)
     gGain = *g;
     FocCore_LoadGains();                    /* 电流环 PI 增益（解耦系数在使用处直接读 gGain） */
     SpeedCtrl_LoadGains();                  /* 速度环 PI 增益（前馈系数直接读 gGain） */
-    FluxObs_LoadModel();                    /* 观测器 Rs、L、NLFO 归一化（L(i)、死区系数直接读 gGain） */
+    FluxObs_LoadModel();                    /* 观测器 Rs、L、KTs、NLFO 归一化（L(i)、死区系数直接读 gGain） */
     FluxPLL_LoadGains(&gEst.pll);           /* PLL 增益 */
+    Startup_LoadGains();                    /* 定位摆周期、阻尼增益 */
+    OpenLoop_LoadGains();                   /* 飞车接管开环步长 */
+    FlyStart_LoadGains();                   /* 飞车电流门限与停稳等待时间 */
     gFluxDiag.cfgWarn = (uint16_t)((gFluxDiag.cfgWarn & ~14u) | gGain.cfgWarn);    /* 只更新 bit1~3，其他位为其他模块的告警 */
     gParamStat.applyCount++;
 }

@@ -3,12 +3,12 @@
  * @brief   状态机、子状态切换、保护、初始化调度
  *
  * 模块划分：起动相关子状态的处理函数在 startup.c，闭环 Spin（含零电流跟踪、失锁、回退融合）在 spin.c，
- * 速度环在 speed_ctrl.c，观测器 / PLL 调度在 est.c，母线过欠压在 protect.c。
+ * 速度环在 speed_ctrl.c，观测器 / PLL 调度在 flux_obs.c，母线过欠压在 protect.c。
  *
  * 状态机分两层：
  *   主状态 gSup.mainState：Init（上电一拍）-> Stop（PWM 关闭、等待指令）-> Run（运行）；任何时刻出现故障 -> Fault，
  *     故障消失 FAULTRELEASE_TIME 后回到 Stop。
- *   Run 子状态 gSup.runState：Charge（自举电容预充）-> FlyCheck（飞车检测）-> Align（IPD / 定位）
+ *   Run 子状态 gSup.runState：Charge（自举电容预充）-> FlyCheck（飞车检测）-> Align（IPD / 摆动起动 / 辨识定位）
  *     -> OpenLoop（I/F 开环拖动）-> Spin（闭环）。飞车检测可直接跳到 OpenLoop 或 Spin；Spin 转速过低时回退到 OpenLoop。
  * 每个状态有一个快环函数（每 PWM 周期，ADC 中断）和一个慢环函数（1 kHz，PendSV），由下方函数表分发。
  * 状态切换函数统一命名为 Sup_Switch<源><目标>，切换所需操作（开关桥臂、预置积分器、切换角度来源）在其中一次完成。
@@ -16,7 +16,7 @@
  * 函数一览：
  *   Ctrl_Init / Ctrl_ResetRunVariables   上电初始化 / 每次停机、故障时清除运行状态
  *   Ctrl_FastTick / Ctrl_SlowTick        快环 / 慢环入口（在 hal_sc32r602.c 的中断中调用）
- *   M1_<主状态>_Fast / _Slow             各主状态每拍的处理
+ *   <主状态>Fast / <主状态>Slow          各主状态每拍的处理（fault / init / stop / run）
  *   softStopSlow                         软停机：电流矢量按限定速率降到 0
  *   stopRampSlow                         受控减速停机：闭环中收到停机指令时先由速度环减速到 TRACK_END_RPM
  *   Sup_Switch*                          状态切换
@@ -26,8 +26,6 @@
 #include "hal.h"
 #include "foc_core.h"
 #include "flux_obs.h"
-#include "flux_pll.h"
-#include "est.h"
 #include "startup.h"
 #include "openloop.h"
 #include "speed_ctrl.h"
@@ -123,7 +121,7 @@ void Ctrl_ResetRunVariables(void)
 }
 
 /* 快环入口：在 ADC 中断中每个 PWM 周期调用一次（16 kHz，62.5 us），此时采样已完成（gMeas.iabc / vbus）。
- * 按主状态分发到 M1_<状态>_Fast；非 Run 状态下观测器保持复位 */
+ * 按主状态分发到 faultFast / initFast / stopFast / runFast；非 Run 状态下观测器保持复位 */
 RAMFUNC void Ctrl_FastTick(void)
 {
     s_mainFast[gSup.mainState]();
@@ -131,7 +129,7 @@ RAMFUNC void Ctrl_FastTick(void)
 }
 
 /* 观测器去直流相位补偿所用转速：Spin 使用 PLL 转速；I/F 拖动使用开环转速（转子同步）；
- * 其余状态（定位、飞车检测、停机）不补偿。 */
+ * 其余状态（Align、飞车检测、停机）不补偿。 */
 static int16_t compSpeed(void)
 {
     if (gSup.mainState != MainState_Run) return 0;
@@ -141,7 +139,7 @@ static int16_t compSpeed(void)
 }
 
 /* 慢环入口：在 PendSV 中断中调用，由快环每 16 拍挂起一次（1 kHz），优先级低于快环（可被快环打断）。
- * 按主状态分发到 M1_<状态>_Slow，然后更新观测器慢变量（相位补偿、死区幅值）与母线过欠压判定。 */
+ * 按主状态分发到 faultSlow / initSlow / stopSlow / runSlow，然后更新观测器慢变量与母线过欠压判定。 */
 void Ctrl_SlowTick(void)
 {
     gSup.ms++;                          /* 1 kHz 毫秒时基（Stop 状态也在走）：飞车检测判断停机时长 */
@@ -279,7 +277,7 @@ static void stopSlow(void)
     Meas_SlowFilter();
 }
 
-/* 软停机：收到停机指令后不直接关闭 PWM，而是先将电流矢量按 SOFT_STOP_STEP_Q15 的幅值变化率
+/* 软停机：收到停机指令后不直接关闭 PWM，而是先将电流矢量按 gGain.currentSlewStepQ15 的幅值变化率
  * 降到 0（方向不变），再关闭。若直接关闭，绕组电流会在几毫秒内经二极管泄放，转矩突变产生噪声。
  * 变化率与 S 形斜坡允许的最大转矩变化率相同（SPEED_RAMP_UP / b / SPEED_RAMP_ROUND_S）：起动、调速、停机
  * 全程统一限制转矩变化率。此期间不执行子状态慢环（速度环、I/F 切换），快环照常运行（电流环、观测器 / 开环角）。
@@ -288,9 +286,10 @@ static uint8_t softStopSlow(void)
 {
     int32_t d = gFoc.idqRef.s16D, q = gFoc.idqRef.s16Q;
     int32_t m = (int32_t)QMath_Isqrt32((uint32_t)(d * d + q * q));
-    if (m <= SOFT_STOP_STEP_Q15) { FocCore_SetIdqRef(0, 0); return 1; }
-    d = d * (m - SOFT_STOP_STEP_Q15) / m;
-    q = q * (m - SOFT_STOP_STEP_Q15) / m;
+    int32_t step = gGain.currentSlewStepQ15;
+    if (m <= step) { FocCore_SetIdqRef(0, 0); return 1; }
+    d = d * (m - step) / m;
+    q = q * (m - step) / m;
     FocCore_SetIdqRef((int16_t)d, (int16_t)q);
     return 0;
 }
@@ -402,7 +401,7 @@ void Sup_SwitchChargeFlyCheck(void)
     gSup.runState = RunState_FlyCheck;
 }
 
-/* FlyCheck -> Align（飞车检测判为静止）：开启上下桥互补输出，进入 IPD / 定位（由 Startup_OnEnterAlign 决定先做 IPD 还是直接定位） */
+/* FlyCheck -> Align（飞车检测判为静止）：开启上下桥互补输出，进入 IPD / 摆动起动（参数辨识时为阻尼定位） */
 void Sup_SwitchFlyCheckAlign(void)
 {
     Startup_OnEnterAlign();         /* 定位计时、角度清零 */
@@ -451,40 +450,6 @@ void Sup_SwitchFlyCheckOpenLoop(void)
 
 /* 慢环中的切换：耗时计算在临界区外"准备"（OpenLoop_Prepare，只计算、不修改状态），
  * 临界区内只"提交"（赋值 + 切换状态），以缩短关中断时间。 */
-void Sup_SwitchAlignOpenLoop(void)
-{
-    OpenLoopEntry_TypeDef e;
-    OpenLoop_PrepareCold(&e);
-    e.olCur = e.olCurTarget;           /* 定位后电流已在开环方向上：从额定开环电流开始 */
-    e.accStep = e.accStepFull;
-    {
-        IRQ_LOCK();
-        Est_OnEnterOpenLoopCold();
-        OpenLoop_Commit(&e);           /* I/F：从定位角、零速开始拖动 */
-        gSup.runState = RunState_OpenLoop;
-        SpeedCtrl_UseOpenLoopRamp();
-        IRQ_UNLOCK();
-    }
-}
-
-/* 直接拖动（STARTUP_MODE_DRAG）-> I/F：转子位置未知，从 0° 以牵入转速 f0 开始（openloop.c） */
-void Sup_SwitchDragOpenLoop(void)
-{
-    OpenLoopEntry_TypeDef e;
-    OpenLoop_PrepareDrag(&e);
-    {
-        IRQ_LOCK();
-        gFoc.theta = 0;
-        gFoc.thetaInv = 0;
-        FocCore_PresetPI(0, 0);
-        Est_OnEnterOpenLoopCold();       /* 观测器初始化为 |psi_f|∠0（转子位置未知，转动后收敛） */
-        OpenLoop_Commit(&e);           /* I/F：先以 f0 匀速牵入（电压型驱动），之后加速 */
-        gSup.runState = RunState_OpenLoop;
-        SpeedCtrl_UseOpenLoopRamp();
-        IRQ_UNLOCK();
-    }
-}
-
 /* 摆动中起动（STARTUP_MODE_SWING）-> I/F：转子正以 speedQ15 经过 theta（Q15 角度），开环角、开环转速从转子的角度和转速开始。
  * 电流环积分器保持（电流矢量连续），观测器初始化为 |psi_f|∠theta */
 void Sup_SwitchSwingOpenLoop(int16_t theta, int16_t speedQ15)

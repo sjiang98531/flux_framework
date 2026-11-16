@@ -10,7 +10,7 @@
 #include "supervisor.h"
 #include "hal.h"
 #include "foc_core.h"
-#include "est.h"
+#include "flux_obs.h"
 #include "startup.h"
 #include "openloop.h"
 #include "speed_ctrl.h"
@@ -19,6 +19,7 @@
 #include "protect.h"
 #include "flystart.h"
 #include "identify.h"
+#include "param.h"
 #include "qmath.h"
 #include <stdlib.h>
 #include "compiler.h"
@@ -218,7 +219,7 @@ static uint8_t fallbackBlend(void)
         s_fbLim = -1;
         return 0;
     }
-    s_fbLim -= CURRENT_SLEW_STEP_Q15;
+    s_fbLim -= gGain.currentSlewStepQ15;
     if (s_fbLim < 0) s_fbLim = 0;
     if (d > s_fbLim) d = s_fbLim;
     if (d < -s_fbLim) d = -s_fbLim;

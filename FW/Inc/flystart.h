@@ -16,7 +16,7 @@
  *   1. 短接后等待 FLY_SETTLE_TAUS 个 L/R 时间常数（电流暂态衰减）
  *   2. 每 1 ms 求一次电流矢量平均 I_n。相邻两块 Δφ = atan2(I_{n-1}×I_n, I_{n-1}·I_n)
  *      （叉积 / 点积经一阶低通后再求角度）= 1 ms 内转过的电角度 -> 转速，符号即转向
- *   3. |I| < 门限持续 FLYBRAKE_TIME -> FLY_STILL（静止，转入定位）
+ *   3. |I| < 门限持续 FLYBRAKE_TIME -> FLY_STILL（静止，进入 Align：IPD / 摆动起动）
  *      连续 FLY_STABLE_MS 次稳定：|转速| 足够高（同向 FLY_CATCH_RPM、反向 FLY_REV_SPIN_MIN_RPM）-> FLY_CATCH，
  *      >= FLY_LOW_MIN_RPM -> FLY_CATCH_OPENLOOP，
  *      接管角 = 本拍 ∠i + 阻抗角（见上式）
@@ -61,12 +61,13 @@ extern FlyStart_TypeDef gFly;
 
 typedef enum {
     FLY_BUSY = 0,       /* 正在测量 / 制动 */
-    FLY_STILL,          /* 静止 -> 定位 */
+    FLY_STILL,          /* 静止 -> Align（IPD / 摆动起动 / 辨识定位） */
     FLY_CATCH,          /* 转速足够（同向 >= FLY_CATCH_RPM、反向 >= FLY_REV_SPIN_MIN_RPM）-> 直接进入 Spin */
     FLY_CATCH_OPENLOOP,       /* FLY_LOW_MIN_RPM ~ 上述门限 -> 直接进入 I/F 开环 */
     FLY_TIMEOUT         /* 制动超时 -> 故障 */
 } FlyVerdict_t;
 void FlyStart_Init(void);       /* 上电：电流门限、检测到过转动后等待停稳的时间 */
+void FlyStart_LoadGains(void);  /* 从 gGain 重新装载飞车门限与等待停稳时间（param.c 更新参数时调用） */
 /* 进入 FlyCheck 时调用：清除状态 */
 void FlyStart_Begin(void);
 /* Run 从 OpenLoop / Spin 退出（停机、故障）时调用：转子可能仍在滑行，下次飞车检测按"检测到过转动"等待停稳 */

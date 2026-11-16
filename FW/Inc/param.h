@@ -43,32 +43,49 @@ typedef struct {
 typedef struct {
     /* ---- 电流环 PI（foc_core.c）：Kp = 2*pi*带宽*L，Ki = 2*pi*带宽*R / PWM 频率（零极点对消），已封顶 65535 */
     int32_t curKpD, curKiD, curKpQ, curKiQ;
-    /* ---- 速度环 PI（speed_ctrl.c）：按 SPEED_WN_HZ / SPEED_ZETA 和加速度系数算；
-     *      spdFfKQ16 = 轨迹加速度 -> 前馈 iq 的系数（Q16）；spdAccPerIqQ8 = 其倒数：iq -> 每拍斜坡增量（Q8） */
-    int32_t spdKp, spdKi, spdFfKQ16, spdAccPerIqQ8;
+    /* ---- 速度环与母线回馈控制（speed_ctrl.c） */
+    int32_t spdKp, spdKi, spdFfKQ16, spdAccPerIqQ8;   /* 速度 PI、加速度前馈（Q16）及其倒数（Q8） */
+    int32_t rampOpenLoopQ31, rampOpenLoopRevQ31;       /* I/F 开环 / 反转过零加速度对应的慢环斜坡步长（Q31） */
+    int16_t busRegenStartQ15, busRegenFullQ15;         /* 母线回馈兜底起始 / 满限（Q15） */
+    int16_t busRegenIqMaxQ15;                          /* 母线回馈方向允许的最大 iq（Q15） */
+    int32_t busRegenKQ12;                              /* 母线回馈兜底削顶斜率（Q12） */
+    int32_t busVdcRefSq;                               /* 母线电压控制器调节点平方（Q30） */
+    int64_t busVdcKQ8;                                 /* 母线电压控制器增益（Q8） */
     /* ---- dq 解耦前馈（foc_core.c）：反电势 w*psi（Q15）、交叉耦合 w*Lq*iq、w*Ld*id（Q12，系数可能 > 1） */
     int32_t decKEmfQ15, decKLqQ12, decKLdQ12;
-    /* ---- 磁链观测器（flux_obs.c） */
+    /* ---- 磁链观测器与锁相环（flux_obs.c） */
     int16_t fluxNomQ15;     /* psi_f 在观测器磁链单位里的值（Q15），NLFO 以其为幅值目标、PLL 增益按其归一化 */
     int32_t fluxNom2;       /* fluxNomQ15 的平方，NLFO 比较 |psi|^2 用（快环不开方） */
     int16_t nlfoNormQ8;     /* NLFO 修正增益的归一化系数（Q8），把时间常数做成 FLUX_NLFO_TAU_S */
+    int16_t fluxKtsQ15;     /* 观测器积分步长 KTs（Q15，随动态磁链基准变化） */
     /* fluxKrsQ15  Rs：Q15 电流 -> 观测器 Q15 电压（电阻压降 Rs*i）
      * fluxKlQ15   Lq：Q15 电流 -> 观测器 Q15 磁链（L*i，从定子磁链中减去得到转子磁链）
-     * focKrsQ15   Rs：Q15 电流 -> 电流环 Q15 电压（定位时从 q 轴电压中扣除电阻压降，用于判静止）
-     * fluxKdlQ15  Ld - Lq（内嵌式 IPM 的有效磁链；表贴式为 0） */
+     * focKrsQ15   Rs：Q15 电流 -> 电流环 Q15 电压（辨识定位时从 q 轴电压中扣除电阻压降）
+     * fluxKdlQ15  Ld - Lq（内嵌式 IPM 的有效磁链与 MTPA；表贴式为 0） */
     int16_t fluxKrsQ15, fluxKlQ15, focKrsQ15, fluxKdlQ15;
     int16_t lsKneeQ15;      /* 电感饱和拐点（Q15 电流） */
     int32_t lsSatKQ12;      /* 拐点后电感下降斜率（Q12，每 Q15 满量程电流）；0 = 不饱和 */
     int16_t dtKtQ15;        /* 死区补偿：每相电压误差 = 母线 * dtKt（Q15 = 等效死区 / PWM 周期）；0 = 不补偿 */
-    /* ---- PLL（flux_pll.c）：按 FLUXPLL_WN_HZ / ZETA 算，再除以 fluxNomQ15（鉴相器输出和磁链幅值成正比）；
-     *      int16 放不下时封顶 32767 并置 cfgWarn bit2 */
-    int16_t pllKp, pllKi;
-    /* ---- 其他模块 */
+    int16_t pllKp, pllKi;   /* PLL（flux_obs.c）：按 FLUXPLL_WN_HZ / ZETA 算并除以 fluxNomQ15；封顶 32767 时置 cfgWarn bit2 */
+    /* ---- 起动与 I/F 开环（ipd.c / startup.c / openloop.c / supervisor.c） */
     int16_t ipdHfVQ15;          /* IPD 注入电压（Q15）：按注入电流幅值和 Lq 计算，ipd.c */
-    int32_t flyWlrQ12;          /* 飞车：w*Lq/Rs 在满量程转速下的值（Q12），算短路电流的阻抗角 atan(w*L/R)，flystart.c */
-    uint16_t flySettleBlocks;   /* 飞车：短接后等电流暂态衰减的时间（ms）= FLY_SETTLE_TAUS 个 L/R 时间常数 */
-    int16_t openLoopAccFfIq;    /* I/F 开环：按 OPENLOOP_ACC_RPM_S 加速需要的 iq（Q15），startup.c 的切换前馈 */
-    int32_t alignStillEmfQ15;   /* 定位：转速 ALIGN_STILL_RPM 对应的反电势（Q15），q 轴电压扣除 Rs*i 后低于该值判为静止 */
+    uint16_t alignPeriodTicks;  /* 定位单摆周期（慢环拍） */
+    int16_t alignSwingMinSpd;   /* 摆动起动最小峰值转速（Q15） */
+    int32_t alignDampQ8;        /* 定位阻尼增益（Q8） */
+    int32_t alignStillEmfQ15;   /* 定位：转速 ALIGN_STILL_RPM 对应的反电势（Q15），低于该值判为静止 */
+    int32_t swingLagAngQ12;     /* 摆动起动反电势测量延迟角度系数（Q12） */
+    int32_t openLoopAccStepQ31; /* I/F 开环每快环拍转速步长（Q31） */
+    int16_t openLoopAccFfIq;    /* I/F 开环：按 OPENLOOP_ACC_RPM_S 加速需要的 iq（Q15），切换前馈 */
+    int32_t currentSlewStepQ15; /* 软停机 / 电流过渡每慢环拍步长（Q15） */
+    /* ---- 飞车检测（flystart.c） */
+    int32_t flyWlrQ12;          /* 满量程转速下 w*Lq/Rs（Q12），算短路电流阻抗角 atan(w*L/R) */
+    uint16_t flySettleBlocks;   /* 短接后等电流暂态衰减的时间（ms）= FLY_SETTLE_TAUS 个 L/R 时间常数 */
+    int16_t flyBemfAmpTh;       /* 判"在转"短路电流门限（Q15） */
+    int16_t flyEndAmpTh;        /* 残余转速对应短路电流门限（Q15） */
+    uint16_t flyStillSpinMs;    /* 测到转动后等待停稳时间（ms） */
+    uint32_t flyMayMoveExpireMs;/* 停机后跳过最坏情况等待的过期时间（ms） */
+    /* ---- 保护与告警（protect.c / diag.c） */
+    int32_t protectSpeedOcQ15;  /* 超速保护门限（Q15） */
     uint16_t cfgWarn;           /* 增益超出定点范围被封顶：bit1 电流环，bit2 PLL，bit3 反电势前馈超量程 */
 } CtrlGain_TypeDef;
 

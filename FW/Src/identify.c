@@ -19,9 +19,8 @@
 #include "foc_core.h"
 #include "meas.h"
 #include "foc_math.h"
-#include "svpwm.h"
 #include "qmath.h"
-#include "est.h"
+#include "flux_obs.h"
 #include "spin.h"
 #include "param.h"
 #include <stdlib.h>
@@ -35,11 +34,18 @@ IdentResult_TypeDef gIdent;
 volatile IdentCfg_TypeDef gIdentCfg = { 0 };
 IdentTest_TypeDef gIdentTest;
 
-/* 死区阶梯各档 d 轴电流（A）：从定位电流附近向上到 1 A，再向下细分到 0.05 A（反映过零附近的特性） */
+/* 辨识电流按 MOTOR_I_RATED_A 缩放（本电机 0.75 A 时 IDENT_I_SCALE = 1.0，与原值逐位相同）；
+ * 最大测试电流（2.5 * SCALE）不超过 SPD_PI_LIMIT 与 0.8 * I_MAX */
+#define IDENT_I_SCALE_RAW   (MOTOR_I_RATED_A / 0.75)
+#define IDENT_I_SCALE_MAX   ((SPD_PI_LIMIT < 0.8 * I_MAX ? SPD_PI_LIMIT : 0.8 * I_MAX) / 2.5)
+#define IDENT_I_SCALE       (IDENT_I_SCALE_RAW < IDENT_I_SCALE_MAX ? IDENT_I_SCALE_RAW : IDENT_I_SCALE_MAX)
+#define IDENT_Q15_I(a)      Q15((a) * IDENT_I_SCALE / I_MAX)
+
+/* 死区阶梯各档 d 轴电流（按额定电流缩放）：从定位电流附近向上，再向下细分到小电流段（反映过零附近的特性） */
 static const int16_t s_dtLevel[IDENT_DT_N] = {
-    Q15(1.00 / I_MAX), Q15(0.80 / I_MAX), Q15(0.60 / I_MAX), Q15(0.50 / I_MAX), Q15(0.40 / I_MAX),
-    Q15(0.30 / I_MAX), Q15(0.25 / I_MAX), Q15(0.20 / I_MAX), Q15(0.15 / I_MAX), Q15(0.10 / I_MAX),
-    Q15(0.05 / I_MAX)
+    IDENT_Q15_I(1.00), IDENT_Q15_I(0.80), IDENT_Q15_I(0.60), IDENT_Q15_I(0.50), IDENT_Q15_I(0.40),
+    IDENT_Q15_I(0.30), IDENT_Q15_I(0.25), IDENT_Q15_I(0.20), IDENT_Q15_I(0.15), IDENT_Q15_I(0.10),
+    IDENT_Q15_I(0.05)
 };
 #define DT_SETTLE_MS    300
 #define DT_AVG_MS       200
@@ -123,7 +129,7 @@ static void dtFit(void)
     uint16_t i;
     for (i = 0; i < IDENT_DT_N; i++) {
         float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0);
-        if (x < 0.45f) continue;
+        if (x < 0.45f * (float)IDENT_I_SCALE) continue;
         sx += x; sy += y; sxx += x * x; sxy += x * y; n += 1;
     }
     if (n < 2 || (n * sxx - sx * sx) <= 0) return;
@@ -164,9 +170,9 @@ static const uint8_t  s_acSegF[AC_NSEG]  = { 0, 1, 2, 0, 1, 2, 3, 0, 0, 0, 0, 3,
 #define AC_S_Q10L   11      /* q 12.5 Hz 1.0 A */
 #define AC_S_Q10B2  12      /* q 25 Hz 1.0 / 1.5 / 2.0 / 2.5 A，偏置 2 倍 */
 static const int16_t  s_acSegA[AC_NSEG]  = {
-    Q15(0.4 / I_MAX), Q15(0.4 / I_MAX), Q15(0.4 / I_MAX), Q15(0.4 / I_MAX), Q15(0.4 / I_MAX), Q15(0.4 / I_MAX),
-    Q15(0.4 / I_MAX), Q15(1.0 / I_MAX), Q15(1.5 / I_MAX), Q15(2.0 / I_MAX), Q15(2.5 / I_MAX), Q15(1.0 / I_MAX),
-    Q15(1.0 / I_MAX), Q15(1.5 / I_MAX), Q15(2.0 / I_MAX), Q15(2.5 / I_MAX) };
+    IDENT_Q15_I(0.4), IDENT_Q15_I(0.4), IDENT_Q15_I(0.4), IDENT_Q15_I(0.4), IDENT_Q15_I(0.4), IDENT_Q15_I(0.4),
+    IDENT_Q15_I(0.4), IDENT_Q15_I(1.0), IDENT_Q15_I(1.5), IDENT_Q15_I(2.0), IDENT_Q15_I(2.5), IDENT_Q15_I(1.0),
+    IDENT_Q15_I(1.0), IDENT_Q15_I(1.5), IDENT_Q15_I(2.0), IDENT_Q15_I(2.5) };
 /* 大幅值 q 段同时沿 N 极施加直流 0.1 A * (A/1A)^2 以固定转子：q 方向交流电流产生的磁阻转矩平均值 ∝ (Lq - Ld) * A^2 * sin 2δ，
  * 本电机 Ld < Lq，q 方向为不稳定平衡点，转子会逐渐转离（注入方向随之偏离 q 轴）。
  * N 极直流产生的永磁转矩刚度 ∝ psi * Ib，Ib > (Lq - Ld) A^2 / (2 psi) ≈ 0.05 A^2 即可抑制，取 2 倍。
@@ -174,8 +180,8 @@ static const int16_t  s_acSegA[AC_NSEG]  = {
  * 偏置本身会加深铁芯饱和、使 Lq 测量值偏小（交叉饱和），因此四档各测偏置 1 倍、2 倍两次，
  * 线性外推到 0 偏置：L0 = 2 L1 - L2。 */
 static const int16_t  s_acSegB[AC_NSEG]  = { 0, 0, 0, 0, 0, 0,
-    0, Q15(0.1 / I_MAX), Q15(0.225 / I_MAX), Q15(0.4 / I_MAX), Q15(0.625 / I_MAX), Q15(0.1 / I_MAX),
-    Q15(0.2 / I_MAX), Q15(0.45 / I_MAX), Q15(0.8 / I_MAX), Q15(1.25 / I_MAX) };
+    0, IDENT_Q15_I(0.1), IDENT_Q15_I(0.225), IDENT_Q15_I(0.4), IDENT_Q15_I(0.625), IDENT_Q15_I(0.1),
+    IDENT_Q15_I(0.2), IDENT_Q15_I(0.45), IDENT_Q15_I(0.8), IDENT_Q15_I(1.25) };
 static volatile uint16_t s_acSeg;    /* 段号 0..AC_NSEG-1，AC_NSEG 表示完成 */
 static int16_t  s_acAmp, s_acBias;
 static int32_t  s_acEnv, s_acEnvStep;  /* 幅值包络（Q15）：每段开始 AC_RAMP 个周期内从 0 线性升至 1 */
@@ -418,9 +424,10 @@ static const float s_dfSin[DF_NP] = { 0.0490677f, 0.1467305f, 0.2429802f, 0.3368
 
 static uint8_t dfStep(void)     /* 1 = 完成 */
 {
-    float ik = 0.05f * (float)s_dfI, k;
+    float sc = (float)IDENT_I_SCALE;
+    float ik = 0.05f * sc * (float)s_dfI, k, kStep = 0.005f / sc, kMax = 0.6001f / sc;
     uint16_t i, j;
-    for (k = 0; k <= 0.6001f; k += 0.005f) {
+    for (k = 0; k <= kMax; k += kStep) {
         float slr = 0, srr = 0, sll = 0, l0, e;
         for (i = 0; i < 5; i++) {
             float a = gIdent.lqAtA[i], r = 0;
@@ -551,8 +558,9 @@ void Ident_Slow(void)
 #define RUN_PRE_MS      500
 #define RUN_SKIP_MS     20
 #define RUN_COAST_MS    400     /* 滑行时长：越长加速度系数受 PLL 转速噪声影响越小 */
-/* 运行辨识的最低起始转速（经验值）：滑行 RUN_COAST_MS 的掉速须保持在 TRACK_END_RPM 以上，本电机取 315 rpm */
-#define RUN_MIN_RPM     315.0
+/* 运行辨识的最低起始转速：滑行 RUN_COAST_MS 的掉速须保持在 TRACK_END_RPM / 回退转速以上，本电机取 315 rpm */
+#define RUN_MIN_BASE_RPM    (1.25 * (OPENLOOP_FALLBACK_RPM > TRACK_END_RPM ? OPENLOOP_FALLBACK_RPM : TRACK_END_RPM))
+#define RUN_MIN_RPM         (RUN_MIN_BASE_RPM < 0.7 * MOTOR_SPEED_RATED_RPM ? RUN_MIN_BASE_RPM : 0.7 * MOTOR_SPEED_RATED_RPM)
 static uint8_t  s_rnSt;             /* 0 等待稳速，1 滑行前平均，2 滑行（保持跟踪），3 本指令已完成 */
 static uint16_t s_rnT;
 static int16_t  s_rnCmd;

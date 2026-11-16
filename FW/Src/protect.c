@@ -6,6 +6,7 @@
 #include "meas.h"
 #include "hal.h"
 #include "cfg_derived.h"
+#include "param.h"
 #include "qmath.h"
 #include "compiler.h"
 
@@ -96,5 +97,5 @@ uint8_t Protect_PhaseSlow(int16_t speedQ15)
 /* 超速：|转速| 超过 PROTECT_SPEED_OC_RPM（反电势达到回馈兜底母线门限的转速与机械允许转速中的较小值）时返回 1 */
 uint8_t Protect_OverSpeed(int16_t speedQ15)
 {
-    return (uint8_t)((speedQ15 < 0 ? -(int32_t)speedQ15 : speedQ15) > PROTECT_SPEED_OC_Q15);
+    return (uint8_t)((speedQ15 < 0 ? -(int32_t)speedQ15 : speedQ15) > gGain.protectSpeedOcQ15);
 }

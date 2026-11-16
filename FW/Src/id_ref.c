@@ -6,6 +6,7 @@
 #include "foc_core.h"
 #include "speed_ctrl.h"
 #include "flux_obs.h"
+#include "param.h"
 #include "qmath.h"
 
 IdRef_TypeDef gIdRef;
@@ -33,13 +34,18 @@ void IdRef_Reset(void)
 #endif
 }
 
-/* MTPA：标幺 id = (sqrt(1 + (2a*iq)^2) - 1) / (2a)，a = (Ld-Lq)*I_MAX/psi_f */
+/* MTPA：id = (sqrt(psi_f^2 + (2*(Ld-Lq)*iq)^2) - psi_f) / (2*(Ld-Lq))，慢环计算 */
 static int16_t mtpaId(int16_t iq)
 {
 #if MOTOR_IPM && CTRL_MTPA_ENABLE
-    int64_t x = ((int64_t)iq * MTPA_K2A_Q16) >> 15;             /* 2a*iq_n，Q16 */
-    uint32_t s = QMath_Isqrt64((uint64_t)((int64_t)1 << 32) + (uint64_t)(x * x));  /* Q16 */
-    int64_t id = ((int64_t)((int32_t)s - 65536) * MTPA_KINV) >> 16;
+    int32_t psi = gGain.fluxNomQ15, kdl = gGain.fluxKdlQ15;
+    int64_t p, q, id;
+    uint32_t s;
+    if (kdl == 0 || psi <= 0) return 0;
+    p = (int64_t)psi << 15;                     /* psi_f，Q30 */
+    q = (int64_t)iq * kdl * 2;                  /* 2*(Ld-Lq)*iq，Q30 */
+    s = QMath_Isqrt64((uint64_t)(p * p + q * q));
+    id = ((int64_t)s - p) / (2 * kdl);
     return QMath_Sat16((int32_t)QMath_Clamp((int32_t)id, 32767));
 #else
     (void)iq;

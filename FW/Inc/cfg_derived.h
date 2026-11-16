@@ -35,7 +35,7 @@
                                  (SPEED_FB_FILT_TICKS) <= 64.0 ? 6 : 7)
 #define SPEED_FB_FILT_REAL_HZ   (SLOWLOOP_FREQ / (2.0 * MATH_PI * (double)(1 << SPEED_FB_FILT_SH)))    /* 取整后实际的转速滤波截止频率 Hz */
 
-/* 母线门限排布（cfg_internal.h"门限排布"）：测量延迟 Td 内最大回馈能量对应的电压升 dV_d，从过压门限往下每 dV_d 一档 */
+/* 母线门限排布（cfg_internal.h"回馈减速：母线电压控制"）：测量延迟 Td 内最大回馈能量对应的电压升 dV_d，从过压门限往下每 dV_d 一档 */
 /* 时间常数 -> 一阶移位滤波的位数：窗口 2^SH 拍取最接近 tau * f 的 2 的幂（对数意义四舍五入），0~13 */
 #define SH_FOR_TICKS(t)      ((t) < 1.414 ? 0 : (t) < 2.828 ? 1 : (t) < 5.657 ? 2 : (t) < 11.31 ? 3 : (t) < 22.63 ? 4 : \
                                  (t) < 45.25 ? 5 : (t) < 90.51 ? 6 : (t) < 181.0 ? 7 : (t) < 362.0 ? 8 : (t) < 724.1 ? 9 : \
@@ -45,36 +45,59 @@
 #define OPENLOOP_PLL_FILT_SH          SH_FOR_TICKS(OPENLOOP_PLL_FILT_TAU_S * SLOWLOOP_FREQ)    /* I/F 期间 PLL 转速滤波（判断能不能切闭环）的移位位数 */
 #define ALIGN_EMF_FILT_SH    SH_FOR_TICKS(ALIGN_EMF_FILT_TAU_S * SLOWLOOP_FREQ)    /* 定位判静止用的反电势滤波移位位数 */
 #define SPIN_CHECK_TICKS        ((uint16_t)(SPIN_CHECK_S * SLOWLOOP_FREQ + 0.5) < 1 ? 1 : (uint16_t)(SPIN_CHECK_S * SLOWLOOP_FREQ + 0.5))    /* Spin 里失锁判断要持续的慢环拍数（至少 1） */
-#define MOTOR_KT_NM_A           (1.5 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB)    /* 转矩常数 N·m/A = 1.5 * 极对数 * psi_f（本电机 1.06） */
-#define BUS_DELAY_S             ((double)((1 << MEAS_VBUS_FILT_SH) + 1) / SLOWLOOP_FREQ)    /* 母线电压测量延迟 Td s（滤波窗口 + 1 拍）：控制器"看到"电压升高之前已经过去的时间 */
-#define BUS_REGEN_P_MAX_W       (MOTOR_KT_NM_A * SPD_PI_LIMIT * MOTOR_SPEED_RATED_RPM * 2.0 * MATH_PI / 60.0)    /* 最大回馈功率 W = 最大转矩 * 额定转速（最坏情况的估计） */
-#define BUS_DV_DELAY_V          (BUS_REGEN_P_MAX_W * BUS_DELAY_S / (BOARD_CBUS_UF * 1e-6 * BOARD_DCBUS_OVP_V))    /* 测量延迟 Td 内最大回馈功率把母线推高的电压 dV_d = P*Td / (C*V)：门限之间至少隔这么多 */
-#define BUS_REGEN_FULL_V        (BOARD_DCBUS_OVP_V - BUS_DV_DELAY_V)    /* 回馈兜底"全力制动"门限 = 过压保护往下一档 */
-#define BUS_REGEN_START_V       (BUS_REGEN_FULL_V - BUS_DV_DELAY_V)    /* 回馈兜底开始介入的门限 = 再往下一档 */
-#define BUS_VDC_REF_V           (BUS_REGEN_START_V - BUS_DV_DELAY_V)    /* 回馈减速时母线电压控制器的调节点 = 再往下一档（本板约 387 V） */
-#define BUS_IDLE_MAX_V          (BOARD_VBUS_IN_MAX_V * (1.0 + BOARD_VBUS_TOL))    /* 空载母线可能的最高读数（输入上限 + 采样误差），调节点必须高于它 */
+#define MOTOR_KT_NM_A_OF(psi)       (1.5 * MOTOR_POLE_PAIRS * (psi))    /* 转矩常数 N·m/A = 1.5 * 极对数 * psi_f（本电机 1.06） */
+#define MOTOR_KT_NM_A               MOTOR_KT_NM_A_OF(MOTOR_PSI_F_WB)
+#define BUS_DELAY_S                 ((double)((1 << MEAS_VBUS_FILT_SH) + 1) / SLOWLOOP_FREQ)    /* 母线电压测量延迟 Td s（滤波窗口 + 1 拍）：控制器"看到"电压升高之前已经过去的时间 */
+#define BUS_IDLE_MAX_V              (BOARD_VBUS_IN_MAX_V * (1.0 + BOARD_VBUS_TOL))    /* 空载母线可能的最高读数（输入上限 + 采样误差），调节点必须高于它 */
+/* 单档最大允许压升：保证三档之下的 BUS_VDC_REF_V 始终高于空载母线上限 BUS_IDLE_MAX_V（留 10% 裕量）。
+ * 大功率电机在 SPD_PI_LIMIT 下的回馈压升超出此值时，自动按比例下调回馈方向的 iq 上限 BUS_REGEN_IQ_MAX_A */
+#define BUS_DV_MAX_V                (0.9 * (BOARD_DCBUS_OVP_V - BUS_IDLE_MAX_V) / 3.0)
+#define BUS_REGEN_P_MAX_W_OF(psi)   (MOTOR_KT_NM_A_OF(psi) * SPD_PI_LIMIT * MOTOR_SPEED_RATED_RPM * 2.0 * MATH_PI / 60.0)    /* 最大回馈功率 W = 最大转矩 * 额定转速（最坏情况的估计） */
+#define BUS_REGEN_P_MAX_W           BUS_REGEN_P_MAX_W_OF(MOTOR_PSI_F_WB)
+#define BUS_DV_RAW_V_OF(psi)        (BUS_REGEN_P_MAX_W_OF(psi) * BUS_DELAY_S / (BOARD_CBUS_UF * 1e-6 * BOARD_DCBUS_OVP_V))    /* 测量延迟 Td 内最大回馈功率把母线推高的电压 */
+#define BUS_DV_DELAY_V_OF(psi)      (BUS_DV_RAW_V_OF(psi) < BUS_DV_MAX_V ? BUS_DV_RAW_V_OF(psi) : BUS_DV_MAX_V)    /* 门限之间至少隔这么多 */
+#define BUS_DV_DELAY_V              BUS_DV_DELAY_V_OF(MOTOR_PSI_F_WB)
+#define BUS_REGEN_IQ_MAX_A_OF(psi)  (BUS_DV_RAW_V_OF(psi) > BUS_DV_MAX_V ? SPD_PI_LIMIT * (BUS_DV_MAX_V / BUS_DV_RAW_V_OF(psi)) : SPD_PI_LIMIT)
+#define BUS_REGEN_IQ_MAX_A          BUS_REGEN_IQ_MAX_A_OF(MOTOR_PSI_F_WB)
+#define BUS_REGEN_IQ_MAX_Q15_OF(psi) Q15(BUS_REGEN_IQ_MAX_A_OF(psi) / I_MAX)
+#define BUS_REGEN_IQ_MAX_Q15        BUS_REGEN_IQ_MAX_Q15_OF(MOTOR_PSI_F_WB)
+#define BUS_REGEN_FULL_V_OF(psi)    (BOARD_DCBUS_OVP_V - BUS_DV_DELAY_V_OF(psi))    /* 回馈兜底"全力制动"门限 = 过压保护往下一档 */
+#define BUS_REGEN_START_V_OF(psi)   (BUS_REGEN_FULL_V_OF(psi) - BUS_DV_DELAY_V_OF(psi))    /* 回馈兜底开始介入的门限 = 再往下一档 */
+#define BUS_VDC_REF_V_OF(psi)       (BUS_REGEN_START_V_OF(psi) - BUS_DV_DELAY_V_OF(psi))    /* 回馈减速时母线电压控制器的调节点 = 再往下一档（本板约 387 V） */
+#define BUS_REGEN_FULL_V            BUS_REGEN_FULL_V_OF(MOTOR_PSI_F_WB)
+#define BUS_REGEN_START_V           BUS_REGEN_START_V_OF(MOTOR_PSI_F_WB)
+#define BUS_VDC_REF_V               BUS_VDC_REF_V_OF(MOTOR_PSI_F_WB)
 /* 保护（protect.h）：缺相窗口 = PHASELESS_PERIODS 个电周期，慢环每拍累加 |转速 Q15|，满一个电周期的累加值
  * = 32768 * 60 * SLOWLOOP_FREQ / (SPEED_MAX * p)；窗口最长 2 s（低于约 24 rpm 转不满就丢弃，也防 u32 累加溢出） */
 #define PHASELESS_ACC_FULL      ((uint32_t)(PHASELESS_PERIODS * 32768.0 * 60.0 * SLOWLOOP_FREQ / (SPEED_MAX * MOTOR_POLE_PAIRS) + 0.5))
 #define PHASELESS_N_MAX         ((uint32_t)(2 * PWM_FREQ))    /* 缺相窗口最长的快环拍数（2 s） */
 /* 超速：反电势线电压峰值到兜底满 BUS_REGEN_FULL_V 的转速，和机械允许转速取小 */
-#define PROTECT_SPEED_UCG_RPM   (BUS_REGEN_FULL_V / (1.7320508 * MOTOR_PSI_F_WB) * 60.0 / (2.0 * MATH_PI * MOTOR_POLE_PAIRS))
-#define PROTECT_SPEED_OC_RPM    (MOTOR_SPEED_LIMIT_RPM < PROTECT_SPEED_UCG_RPM ? MOTOR_SPEED_LIMIT_RPM : PROTECT_SPEED_UCG_RPM)
-#define PROTECT_SPEED_OC_Q15    ((int32_t)(PROTECT_SPEED_OC_RPM / SPEED_MAX * 32768.0))
+#define PROTECT_SPEED_UCG_RPM_OF(psi) (BUS_REGEN_FULL_V_OF(psi) / (1.7320508 * (psi)) * 60.0 / (2.0 * MATH_PI * MOTOR_POLE_PAIRS))
+#define PROTECT_SPEED_OC_RPM_OF(psi)  (MOTOR_SPEED_LIMIT_RPM < PROTECT_SPEED_UCG_RPM_OF(psi) ? MOTOR_SPEED_LIMIT_RPM : PROTECT_SPEED_UCG_RPM_OF(psi))
+#define PROTECT_SPEED_OC_Q15_OF(psi)  ((int32_t)(PROTECT_SPEED_OC_RPM_OF(psi) / SPEED_MAX * 32768.0))
+#define PROTECT_SPEED_UCG_RPM   PROTECT_SPEED_UCG_RPM_OF(MOTOR_PSI_F_WB)
+#define PROTECT_SPEED_OC_RPM    PROTECT_SPEED_OC_RPM_OF(MOTOR_PSI_F_WB)
+#define PROTECT_SPEED_OC_Q15    PROTECT_SPEED_OC_Q15_OF(MOTOR_PSI_F_WB)
 /* 兜底的回馈 iq 削顶（speed_ctrl.c）：母线 Q15（UDC_MAX 基准）和斜率 Q12（每 Q15 母线电压超出对应多少 Q15 iq 上限） */
-#define BUS_REGEN_START_Q15     ((int16_t)(BUS_REGEN_START_V / UDC_MAX * 32768.0))
-#define BUS_REGEN_FULL_Q15      ((int16_t)(BUS_REGEN_FULL_V / UDC_MAX * 32768.0))
-#define BUS_REGEN_K_Q12         ((int32_t)((SPD_PI_LIMIT / I_MAX * 32768.0) / (BUS_REGEN_FULL_Q15 - BUS_REGEN_START_Q15) * 4096.0 + 0.5))
+#define BUS_REGEN_START_Q15_OF(psi) ((int16_t)(BUS_REGEN_START_V_OF(psi) / UDC_MAX * 32768.0))
+#define BUS_REGEN_FULL_Q15_OF(psi)  ((int16_t)(BUS_REGEN_FULL_V_OF(psi) / UDC_MAX * 32768.0))
+#define BUS_REGEN_K_Q12_OF(psi)     ((int32_t)((BUS_REGEN_IQ_MAX_A_OF(psi) / I_MAX * 32768.0) / (BUS_REGEN_FULL_Q15_OF(psi) - BUS_REGEN_START_Q15_OF(psi)) * 4096.0 + 0.5))
+#define BUS_REGEN_START_Q15     BUS_REGEN_START_Q15_OF(MOTOR_PSI_F_WB)
+#define BUS_REGEN_FULL_Q15      BUS_REGEN_FULL_Q15_OF(MOTOR_PSI_F_WB)
+#define BUS_REGEN_K_Q12         BUS_REGEN_K_Q12_OF(MOTOR_PSI_F_WB)
 #define BUS_REGEN_BRAKE_Q15     ((int16_t)(BUS_REGEN_BRAKE_A / I_MAX * 32768.0 + 0.5))
 /* 母线电压控制器（speed_ctrl.c busVdcLimit）。v = 母线 Q15，e2 = Vref^2 - v^2（Q30），s = |转速| Q15：
  *   允许的斜坡步长（Q31 / 慢环拍）= e2 * BUS_VDC_K_Q8 / s >> 8
  *   K = Kv * C/2 * UDC_MAX^2 / 2^30（J / Q30） * b / Kt（rpm/s per W*s/rad） * 32768*60/(2*pi*SPEED_MAX)（1/w 换成 1/s）
  *       / SPEED_MAX / SLOWLOOP_FREQ * 2^31（rpm/s 换成 Q31 步长） */
-#define BUS_VDC_REF_Q15         ((int32_t)(BUS_VDC_REF_V / UDC_MAX * 32768.0))
-#define BUS_VDC_REF_SQ          (BUS_VDC_REF_Q15 * BUS_VDC_REF_Q15)
-#define BUS_VDC_K_Q8            ((int64_t)(2.0 * MATH_PI * BUS_VDC_BW_HZ * 0.5 * BOARD_CBUS_UF * 1e-6 * UDC_MAX * UDC_MAX / 1073741824.0 \
-                                 * MOTOR_ACC_RPM_S_PER_A / MOTOR_KT_NM_A * 32768.0 * 60.0 / (2.0 * MATH_PI * SPEED_MAX) \
+#define BUS_VDC_REF_Q15_OF(psi) ((int32_t)(BUS_VDC_REF_V_OF(psi) / UDC_MAX * 32768.0))
+#define BUS_VDC_REF_SQ_OF(psi)  (BUS_VDC_REF_Q15_OF(psi) * BUS_VDC_REF_Q15_OF(psi))
+#define BUS_VDC_K_Q8_OF(psi, acc) ((int64_t)(2.0 * MATH_PI * BUS_VDC_BW_HZ * 0.5 * BOARD_CBUS_UF * 1e-6 * UDC_MAX * UDC_MAX / 1073741824.0 \
+                                 * (acc) / MOTOR_KT_NM_A_OF(psi) * 32768.0 * 60.0 / (2.0 * MATH_PI * SPEED_MAX) \
                                  / SPEED_MAX / SLOWLOOP_FREQ * 2147483648.0 * 256.0 + 0.5))
+#define BUS_VDC_REF_Q15         BUS_VDC_REF_Q15_OF(MOTOR_PSI_F_WB)
+#define BUS_VDC_REF_SQ          BUS_VDC_REF_SQ_OF(MOTOR_PSI_F_WB)
+#define BUS_VDC_K_Q8            BUS_VDC_K_Q8_OF(MOTOR_PSI_F_WB, MOTOR_ACC_RPM_S_PER_A)
 #define BUS_VDC_SMIN_Q15        ((int32_t)(0.01 * 32768.0))     /* 只防除零：转速很低时允许减速度远大于额定，取多少都不影响结果 */
 #define BUS_VDC_FILT_Q15        ((int32_t)(32768.0 * 2.0 * MATH_PI * BUS_VDC_BW_HZ / SLOWLOOP_FREQ + 0.5))   /* 制动 id 一阶平滑 */
 #define BUS_BRAKE_LAM_K_Q12     ((int32_t)(4096.0 / BUS_BRAKE_FULL_LAMBDA + 0.5))
@@ -106,10 +129,15 @@
 /* 斜坡 jerk（Q31 / 慢环拍^2）：SPEED_RAMP_ROUND_S 内加速度从 0 升到 SPEED_RAMP_UP */
 #define SPEED_JERK_Q31          ((int32_t)(SPEED_RAMP_UP / SPEED_MAX / SLOWLOOP_FREQ * 2147483648.0 / (SPEED_RAMP_ROUND_S * SLOWLOOP_FREQ) + 0.5))
 /* 回退 I/F 后过零的开环加减速度（rpm/s）：OpenLoop_Prepare 按 OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A 放大 OPENLOOP_ACC_RPM_S */
-#define OPENLOOP_REV_ACC_RPM_S        (OPENLOOP_ACC_RPM_S * OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A)
-/* 软停机：电流幅值每慢环拍减小多少（Q15），= S 形斜坡的最大转矩变化率 SPEED_RAMP_UP / b / SPEED_RAMP_ROUND_S */
-#define CURRENT_SLEW_STEP_Q15   ((int32_t)(CURRENT_SLEW_A_S / SLOWLOOP_FREQ / I_MAX * 32768.0 + 0.5))
-#define SOFT_STOP_STEP_Q15      CURRENT_SLEW_STEP_Q15
+#define OPENLOOP_ACC_RPM_S_OF(acc)     (OPENLOOP_ACC_FRAC * (acc) * OPENLOOP_CURRENT_A)
+#define OPENLOOP_REV_ACC_RPM_S_OF(acc) (OPENLOOP_ACC_RPM_S_OF(acc) * OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A)
+#define OPENLOOP_REV_ACC_RPM_S         OPENLOOP_REV_ACC_RPM_S_OF(MOTOR_ACC_RPM_S_PER_A)
+/* 软停机：电流幅值每慢环拍减小多少（Q15），= S 形斜坡的最大转矩变化率（不低于 CURRENT_SLEW_MIN_A_S） */
+#define CURRENT_SLEW_JERK_A_S_OF(acc)  (SPEED_RAMP_UP / (acc) / SPEED_RAMP_ROUND_S)
+#define CURRENT_SLEW_A_S_OF(acc)       (CURRENT_SLEW_JERK_A_S_OF(acc) > CURRENT_SLEW_MIN_A_S ? CURRENT_SLEW_JERK_A_S_OF(acc) : CURRENT_SLEW_MIN_A_S)
+#define CURRENT_SLEW_STEP_Q15_OF(acc)  ((int32_t)(CURRENT_SLEW_A_S_OF(acc) / SLOWLOOP_FREQ / I_MAX * 32768.0 + 0.5))
+#define CURRENT_SLEW_STEP_Q15          CURRENT_SLEW_STEP_Q15_OF(MOTOR_ACC_RPM_S_PER_A)
+#define SOFT_STOP_STEP_Q15             CURRENT_SLEW_STEP_Q15
 /* 斜率前馈：iq_ff(Q15) = 每拍斜坡增量(Q31) * SPEED_FF_K_Q16 >> 16 */
 #define SPEED_FF_K_Q16_OF(acc)  ((int32_t)(SPEED_MAX * SLOWLOOP_FREQ / ((acc) * I_MAX) * 32768.0 / 2147483648.0 * 65536.0 + 0.5))
 #define SPEED_FF_K_Q16          SPEED_FF_K_Q16_OF(MOTOR_ACC_RPM_S_PER_A)
@@ -146,18 +174,24 @@
 #define FLUX_V_BASE             (UDC_MAX)
 #define FLUX_PARAM_MARGIN       1.5
 #define FLUX_STATOR_FILL        (0.9 / FLUX_PARAM_MARGIN)
-#define FLUX_STATOR_MAX_WB      (MOTOR_PSI_F_WB + (MOTOR_LD_H > MOTOR_LQ_H ? MOTOR_LD_H : MOTOR_LQ_H) * I_MAX)
-#define FLUX_WN_FIT_HZ          (FLUX_V_BASE * FLUX_STATOR_FILL / (2 * MATH_PI * FLUX_STATOR_MAX_WB))
+#define FLUX_STATOR_MAX_WB_OF(psi, ld, lq) ((psi) + ((ld) > (lq) ? (ld) : (lq)) * I_MAX)
+#define FLUX_STATOR_MAX_WB      FLUX_STATOR_MAX_WB_OF(MOTOR_PSI_F_WB, MOTOR_LD_H, MOTOR_LQ_H)
+#define FLUX_WN_FIT_HZ_OF(psi, ld, lq)     (FLUX_V_BASE * FLUX_STATOR_FILL / (2 * MATH_PI * FLUX_STATOR_MAX_WB_OF(psi, ld, lq)))
+#define FLUX_WN_FIT_HZ          FLUX_WN_FIT_HZ_OF(MOTOR_PSI_F_WB, MOTOR_LD_H, MOTOR_LQ_H)
 #define FLUX_WN_MAX_HZ          (0.9 * PWM_FREQ / (2 * MATH_PI))
-#define FLUX_WN_HZ              (FLUX_WN_FIT_HZ < FLUX_WN_MAX_HZ ? FLUX_WN_FIT_HZ : FLUX_WN_MAX_HZ)
-#define FLUX_PSI_N              (FLUX_V_BASE / (2 * MATH_PI * FLUX_WN_HZ))
+#define FLUX_WN_HZ_OF(psi, ld, lq)         (FLUX_WN_FIT_HZ_OF(psi, ld, lq) < FLUX_WN_MAX_HZ ? FLUX_WN_FIT_HZ_OF(psi, ld, lq) : FLUX_WN_MAX_HZ)
+#define FLUX_WN_HZ              FLUX_WN_HZ_OF(MOTOR_PSI_F_WB, MOTOR_LD_H, MOTOR_LQ_H)
+#define FLUX_PSI_N_OF(psi, ld, lq)         (FLUX_V_BASE / (2 * MATH_PI * FLUX_WN_HZ_OF(psi, ld, lq)))
+#define FLUX_PSI_N              FLUX_PSI_N_OF(MOTOR_PSI_F_WB, MOTOR_LD_H, MOTOR_LQ_H)
 /* psi_f 在观测器 Q15 磁链单位里的值（0.141 Wb -> 6111） */
-#define FLUX_NOMINAL_Q15_OF(psi) Q15((psi) / FLUX_PSI_N)
+#define FLUX_NOMINAL_Q15_AT(psi, psiN)     Q15((psi) / (psiN))
+#define FLUX_NOMINAL_Q15_OF(psi)           FLUX_NOMINAL_Q15_AT(psi, FLUX_PSI_N)
 #define FLUX_NOMINAL_Q15        FLUX_NOMINAL_Q15_OF(MOTOR_PSI_F_WB)
 #define FLUX_KRS_Q15_OF(R)      Q15((R) * I_MAX / FLUX_V_BASE)
 /* 电流环电压单位（UDC_MAX 基准）下的 Rs：Q15 电流 -> Q15 电压（定位阻尼从 q 轴电压里扣电阻压降用） */
 #define FOC_KRS_Q15_OF(R)       Q15((R) * I_MAX / UDC_MAX)
-#define FLUX_KL_Q15_OF(L)       Q15((L) * I_MAX / FLUX_PSI_N)
+#define FLUX_KL_Q15_AT(L, psiN) Q15((L) * I_MAX / (psiN))
+#define FLUX_KL_Q15_OF(L)       FLUX_KL_Q15_AT(L, FLUX_PSI_N)
 /* IPD（cfg_internal.h）：门限 Q8；注入电压 V = 2 * I * L * PWM_FREQ（每拍电流变化 2I，三角波幅值 I），按 Lq 计算（param.c）；
  * 时长换算为快环拍 / 慢环拍；偏置电流 Q15 及每慢环拍的斜坡步长 */
 #define IPD_MIN_RATIO_Q8        ((uint16_t)(IPD_MIN_RATIO * 256.0 + 0.5))
@@ -178,19 +212,13 @@
 #define FLUX_LS_KNEE_Q15_OF(k)  Q15((k) / I_MAX)
 #define FLUX_LS_SAT_K_Q12_OF(p) ((int32_t)((p) * I_MAX * 4096.0 + 0.5))
 #define FLUX_LS_MIN_Q15         Q15(MOTOR_LS_SAT_MIN)
-#define FLUX_KTS_Q15            Q15(2.0f * 3.14159265f * FLUX_WN_HZ / PWM_FREQ)
+#define FLUX_KTS_Q15_OF(psi, ld, lq) Q15(2.0f * 3.14159265f * FLUX_WN_HZ_OF(psi, ld, lq) / PWM_FREQ)
+#define FLUX_KTS_Q15            FLUX_KTS_Q15_OF(MOTOR_PSI_F_WB, MOTOR_LD_H, MOTOR_LQ_H)
 /* (Ld - Lq) 在"Q15 电流 -> Q15 磁链"单位下，有符号 Q15 */
-#define FLUX_KDL_Q15_OF(ld, lq) Q15(((ld) - (lq)) * I_MAX / FLUX_PSI_N)
+#define FLUX_KDL_Q15_AT(ld, lq, psiN) Q15(((ld) - (lq)) * I_MAX / (psiN))
+#define FLUX_KDL_Q15_OF(ld, lq) FLUX_KDL_Q15_AT(ld, lq, FLUX_PSI_N)
 
-/* ---- MTPA / 弱磁 ---------------------------------------------------------- */
-#if MOTOR_IPM
-/* a = (Ld - Lq) * I_MAX / psi_f（无量纲）。MTPA 在标幺下：
- *   id_n = (sqrt(1 + (2a*iq_n)^2) - 1) / (2a)
- * 定点：x = 2a*iq_n 用 Q16；id_q15 = (s - 65536) * MTPA_KINV >> 16，MTPA_KINV = 16384/a */
-#define MTPA_A                  ((MOTOR_LD_H - MOTOR_LQ_H) * I_MAX / MOTOR_PSI_F_WB)
-#define MTPA_K2A_Q16            ((int32_t)(2.0 * MTPA_A * 65536.0))
-#define MTPA_KINV               ((int32_t)(16384.0 / MTPA_A))
-#endif
+/* ---- 弱磁 ----------------------------------------------------------------- */
 /* 弱磁积分增益：fwInteg（id 的 Q31）每慢环拍 += (WEAKEN_KI_Q20 * e_q15) >> 4 */
 #define WEAKEN_KI_Q20               ((int32_t)(WEAKEN_KI_A_PER_S / I_MAX / SLOWLOOP_FREQ * 1048576.0))
 #define WEAKEN_VLIM_Q15             Q15(1.0 - WEAKEN_VOLTAGE_MARGIN)    /* 弱磁开始介入的电压利用率（留 WEAKEN_VOLTAGE_MARGIN 的余量） */
@@ -223,23 +251,20 @@
 /* 定位阻尼增益（A/V）：摆的刚度 K = 1.5*p^2*psi_f*I（N·m/rad，机械角），
  * J = 1.5*p*psi_f*60/(2*pi*b)；B = 2*zeta*sqrt(K*J)；iq = -B*w_m/(1.5*p*psi_f)，
  * 反电势 e_q = p*psi_f*w_m  ->  iq = -[B/(1.5*p^2*psi_f^2)] * e_q。换成 Q15 电流/Q15 电压，Q8 */
-#define ALIGN_K_NM           (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * ALIGN_A)
-#define ALIGN_J              (1.5 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * 60.0 / (2 * MATH_PI * MOTOR_ACC_RPM_S_PER_A))
-/* sqrt(K*J) 要开方，在 Startup_Init 里算一次：gain_q8 = ALIGN_C1 * sqrt(K*J) */
-#define ALIGN_C1             (2 * ALIGN_ZETA / (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * MOTOR_PSI_F_WB) \
-                                 * UDC_MAX / I_MAX * 256.0)
+#define ALIGN_K_NM_OF(psi)          (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * (psi) * ALIGN_A)
+#define ALIGN_J_OF(psi, acc)        (1.5 * MOTOR_POLE_PAIRS * (psi) * 60.0 / (2 * MATH_PI * (acc)))
+#define ALIGN_C1_OF(psi)            (2 * ALIGN_ZETA / (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * (psi) * (psi)) \
+                                     * UDC_MAX / I_MAX * 256.0)
+#define ALIGN_T2_S2_OF(psi, acc)    (4.0 * MATH_PI * MATH_PI * ALIGN_J_OF(psi, acc) / ALIGN_K_NM_OF(psi))
+#define ALIGN_T2_TICKS2_OF(psi, acc) ((uint64_t)(ALIGN_T2_S2_OF(psi, acc) * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
+#define ALIGN_K_NM           ALIGN_K_NM_OF(MOTOR_PSI_F_WB)
+#define ALIGN_J              ALIGN_J_OF(MOTOR_PSI_F_WB, MOTOR_ACC_RPM_S_PER_A)
+/* sqrt(K*J) 要开方，在 param.c computeGain() 里算一次：gain_q8 = ALIGN_C1 * sqrt(K*J) */
+#define ALIGN_C1             ALIGN_C1_OF(MOTOR_PSI_F_WB)
 /* 定位摆周期的平方 T^2 = 4*pi^2*J/K（s^2），用于配置检查（慢环频率须远高于摆动频率） */
-#define ALIGN_T2_S2          (4.0 * MATH_PI * MATH_PI * ALIGN_J / ALIGN_K_NM)
-/* 定位摆周期的平方换算为慢环拍数的平方（Startup_Init 开方得到 T 的拍数，各段为 T 的倍数） */
-#define ALIGN_T2_TICKS2      ((uint64_t)(ALIGN_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
-/* 直接拖动：开环电流下的摆动周期平方 T_n^2 = 定位摆周期^2 * ALIGN_A / OPENLOOP_CURRENT_A（刚度与电流成正比），s^2 / 慢环拍^2；
- * OpenLoop_Init 开方一次得到 T_n 的拍数：牵入转速 f0 = DRAG_F0_RATIO / T_n，牵入段 DRAG_HOLD_T * T_n */
-#define DRAG_T2_S2           (ALIGN_T2_S2 * ALIGN_A / OPENLOOP_CURRENT_A)
-#define DRAG_T2_TICKS2       ((uint64_t)(DRAG_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
-/* 1 Hz（电频率）对应的转速 Q31：f0 = 本值 * DRAG_F0_RATIO * SLOWLOOP_FREQ / T_n 拍数（上电计算一次） */
-#define DRAG_HZ_Q31          ((int64_t)(60.0 / MOTOR_POLE_PAIRS / SPEED_MAX * 2147483648.0 + 0.5))
-/* 电压型驱动的电流积分增益 = 正常 Ki * DRAG_CUR_BW_HZ / CURRENT_BW_HZ（Q16，最小取 1） */
-#define DRAG_KI_RATIO_Q16    ((int32_t)(DRAG_CUR_BW_HZ / CURRENT_BW_HZ * 65536.0 + 0.5))
+#define ALIGN_T2_S2          ALIGN_T2_S2_OF(MOTOR_PSI_F_WB, MOTOR_ACC_RPM_S_PER_A)
+/* 定位摆周期的平方换算为慢环拍数的平方（param.c computeGain() 开方得到 T 的拍数，各段为 T 的倍数） */
+#define ALIGN_T2_TICKS2      ALIGN_T2_TICKS2_OF(MOTOR_PSI_F_WB, MOTOR_ACC_RPM_S_PER_A)
 /* 冷起动开环角超前转子的平衡负载角 δ_eq = asin(OPENLOOP_ACC_FRAC)（泰勒级数到 7 次，x <= 0.5 时误差 < 3e-4 rad），Q31 角度（2^32 = 一圈） */
 #define OPENLOOP_LEAD_RAD    (OPENLOOP_ACC_FRAC + OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC / 6.0 \
                               + 3.0 / 40.0 * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC * OPENLOOP_ACC_FRAC \
@@ -253,10 +278,12 @@
 #define ALIGN_SWING_SETTLE_TICKS ((uint16_t)(4.0 * ALIGN_EMF_FILT_TAU_S * SLOWLOOP_FREQ + 0.5))
 /* 摆动中起动：反电势测量的延迟 = 滤波时间常数 + 电流 PI 积分项跟随扰动的时间常数（L/R + 1/电流环带宽）；
  * 转速 Q15 在该延迟内转过的电角度（Q15 角度），Q12 */
-#define ALIGN_SWING_LAG_S        (ALIGN_EMF_FILT_TAU_S + MOTOR_LQ_H / MOTOR_RS_OHM + 1.0 / (2.0 * MATH_PI * CURRENT_BW_HZ))
-#define ALIGN_SWING_LAG_ANG_Q12  ((int32_t)(SPEED_MAX / 60.0 * MOTOR_POLE_PAIRS * ALIGN_SWING_LAG_S * 2.0 * 4096.0 + 0.5))
+#define ALIGN_SWING_LAG_S_OF(L, R)      (ALIGN_EMF_FILT_TAU_S + (L) / (R) + 1.0 / (2.0 * MATH_PI * CURRENT_BW_HZ))
+#define ALIGN_SWING_LAG_ANG_Q12_OF(L, R) ((int32_t)(SPEED_MAX / 60.0 * MOTOR_POLE_PAIRS * ALIGN_SWING_LAG_S_OF(L, R) * 2.0 * 4096.0 + 0.5))
+#define ALIGN_SWING_LAG_S        ALIGN_SWING_LAG_S_OF(MOTOR_LQ_H, MOTOR_RS_OHM)
+#define ALIGN_SWING_LAG_ANG_Q12  ALIGN_SWING_LAG_ANG_Q12_OF(MOTOR_LQ_H, MOTOR_RS_OHM)
 /* 可接入的最小峰值转速 = ALIGN_SWING_MIN_DELTA * 平衡负载角 * 摆动角频率（电角速度）；此处为 Q15 转速 * 摆动周期（慢环拍），
- * Startup_Init 中除以摆动周期的拍数 */
+ * param.c computeGain() 中除以摆动周期的拍数 */
 #define ALIGN_SWING_MIN_SPD_T    (ALIGN_SWING_MIN_DELTA * OPENLOOP_LEAD_RAD * SLOWLOOP_FREQ * 60.0 / MOTOR_POLE_PAIRS / SPEED_MAX * 32768.0)
 /* "静止"门限：反电势 p*psi_f*w_m（Q15 电压） */
 #define ALIGN_STILL_EMF_Q15_OF(psi) ((int32_t)(ALIGN_STILL_RPM * 2 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS * (psi) / UDC_MAX * 32768.0 + 0.5))
@@ -265,28 +292,35 @@
 #define OPENLOOP_REV_IQ_Q15           Q15(OPENLOOP_REV_CURRENT_A / I_MAX)
 #define OPENLOOP_WARM_IMAX_Q15        Q15(OPENLOOP_WARM_MAX_A / I_MAX)
 #define OPENLOOP_WARM_KI_Q15          ((int32_t)(32768.0 / MATH_SIN_DEG(OPENLOOP_WARM_DELTA_DEG) + 0.5))      /* 1/sin(δmax)，Q15 */
-#define OPENLOOP_ACC_STEP_Q31         ((int32_t)(OPENLOOP_ACC_RPM_S / SPEED_MAX / PWM_FREQ * 2147483648.0))      /* 每快环拍 */
+#define OPENLOOP_ACC_STEP_Q31_OF(acc) ((int32_t)(OPENLOOP_ACC_RPM_S_OF(acc) / SPEED_MAX / PWM_FREQ * 2147483648.0))      /* 每快环拍 */
+#define OPENLOOP_ACC_STEP_Q31         OPENLOOP_ACC_STEP_Q31_OF(MOTOR_ACC_RPM_S_PER_A)
 #define OPENLOOP_HANDOVER_Q31         ((int32_t)(OPENLOOP_HANDOVER_RPM / SPEED_MAX * 2147483648.0))
 #define OPENLOOP_SPIN_MIN_Q15         Q15(OPENLOOP_SPIN_MIN_RPM / SPEED_MAX)
 #define OPENLOOP_FALLBACK_Q15         Q15(OPENLOOP_FALLBACK_RPM / SPEED_MAX)
 #define OPENLOOP_FALLBACK_Q31         ((int32_t)(OPENLOOP_FALLBACK_RPM / SPEED_MAX * 2147483648.0))
 /* I/F 加速度对应的加速电流（模型：MOTOR_ACC_RPM_S_PER_A），切换时作为加速前馈的起点 */
-#define OPENLOOP_ACC_FF_IQ_OF(acc)    Q15((OPENLOOP_ACC_RPM_S / (acc)) / I_MAX)
+#define OPENLOOP_ACC_FF_IQ_OF(acc)    Q15((OPENLOOP_ACC_RPM_S_OF(acc) / (acc)) / I_MAX)
 
 /* ---- 飞车检测（flystart.c） ---- */
 #define FLY_BLOCK_TICKS         (PWM_FREQ / 1000)           /* 每块 1 ms */
+#define FLYCURRENT_TH_PU_OF(psi, R) (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * (psi) / (R) / I_MAX)
 #define FLY_SETTLE_BLOCKS_OF(L, R) ((uint16_t)(FLY_SETTLE_TAUS * (L) / (R) * 1000.0 + 0.5))
 #define FLY_SETTLE_BLOCKS       FLY_SETTLE_BLOCKS_OF(MOTOR_LD_H, MOTOR_RS_OHM)
 #define FLY_STILL_BLOCKS        ((uint16_t)(FLYBRAKE_TIME * 1000.0 + 0.5))
 #define FLY_COLD_STILL_BLOCKS   ((uint16_t)(FLY_COLD_STILL_TIME * 1000.0 + 0.5))   /* 冷起动：本次检测从未发现转动 */
-/* 短接制动的转速衰减时间常数 τ = J / B（见 cfg_internal.h FLY_STILL_END_RPM）：
+/* 短接制动的转速衰减时间常数 τ = J / B（残余转速 FLY_STILL_END_RPM 见 cfg_app.h）：
  *   Kt = 1.5 p ψf（N·m/A），J = Kt / (MOTOR_ACC_RPM_S_PER_A · 2π/60)，B = 1.5 p² ψf² / Rs（N·m·s/rad，低速 ωL << Rs） */
-#define FLY_KT_NM_A             (1.5 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB)    /* 转矩常数 N·m/A */
-#define FLY_J_KGM2              (FLY_KT_NM_A / (MOTOR_ACC_RPM_S_PER_A * 2.0 * MATH_PI / 60.0))    /* 转动惯量 kg·m²（由加速度系数反推） */
-#define FLY_SHORT_B             (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB * MOTOR_PSI_F_WB / MOTOR_RS_OHM)    /* 三相短接时的制动系数 N·m·s/rad（短路转矩 / 机械角速度） */
-#define FLY_BRAKE_TAU_S         (FLY_J_KGM2 / FLY_SHORT_B)    /* 短接制动时转速按指数衰减的时间常数 s */
+#define FLY_KT_NM_A_OF(psi)     (1.5 * MOTOR_POLE_PAIRS * (psi))
+#define FLY_J_KGM2_OF(psi, acc) (FLY_KT_NM_A_OF(psi) / ((acc) * 2.0 * MATH_PI / 60.0))
+#define FLY_SHORT_B_OF(psi, R)  (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * (psi) * (psi) / (R))
+#define FLY_BRAKE_TAU_S_OF(psi, R, acc) (FLY_J_KGM2_OF(psi, acc) / FLY_SHORT_B_OF(psi, R))
+#define FLY_MAYMOVE_EXPIRE_MS_OF(psi, R, acc) ((uint32_t)(FLY_MAYMOVE_EXPIRE_TAUS * FLY_BRAKE_TAU_S_OF(psi, R, acc) * 1000.0 + 0.5))
+#define FLY_KT_NM_A             FLY_KT_NM_A_OF(MOTOR_PSI_F_WB)    /* 转矩常数 N·m/A */
+#define FLY_J_KGM2              FLY_J_KGM2_OF(MOTOR_PSI_F_WB, MOTOR_ACC_RPM_S_PER_A)    /* 转动惯量 kg·m²（由加速度系数反推） */
+#define FLY_SHORT_B             FLY_SHORT_B_OF(MOTOR_PSI_F_WB, MOTOR_RS_OHM)    /* 三相短接时的制动系数 N·m·s/rad（短路转矩 / 机械角速度） */
+#define FLY_BRAKE_TAU_S         FLY_BRAKE_TAU_S_OF(MOTOR_PSI_F_WB, MOTOR_RS_OHM, MOTOR_ACC_RPM_S_PER_A)    /* 短接制动时转速按指数衰减的时间常数 s */
 /* 停机超过该时间（ms）即认为转子已停：飞车检测据此决定是否跳过最坏情况制动等待 */
-#define FLY_MAYMOVE_EXPIRE_MS   ((uint32_t)(FLY_MAYMOVE_EXPIRE_TAUS * FLY_BRAKE_TAU_S * 1000.0 + 0.5))
+#define FLY_MAYMOVE_EXPIRE_MS   FLY_MAYMOVE_EXPIRE_MS_OF(MOTOR_PSI_F_WB, MOTOR_RS_OHM, MOTOR_ACC_RPM_S_PER_A)
 #define FLY_TIMEOUT_BLOCKS      ((uint32_t)(FLY_BRAKE_TIMEOUT_S * 1000.0 + 0.5))    /* 短接制动超时（ms） */
 #define FLY_CATCH_Q15           Q15(FLY_CATCH_RPM / SPEED_MAX)    /* 同向直接接进闭环的转速下限（Q15） */
 #define TRACK_END_Q15           Q15(TRACK_END_RPM / SPEED_MAX)    /* 零电流跟踪的结束转速（Q15） */

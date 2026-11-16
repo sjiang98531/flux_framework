@@ -4,7 +4,7 @@
  * ==========================================================================*/
 #include "flystart.h"
 #include "meas.h"
-#include "est.h"
+#include "flux_obs.h"
 #include "hal.h"
 #include "foc_math.h"
 #include "qmath.h"
@@ -182,19 +182,18 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
     }
 }
 
-/* 上电：判"在转"的电流门限；检测到过转动后"等待停稳"的时间 = FLYBRAKE_TIME + τ·ln(门限转速 / 残余转速)
- * （ln 用 atanh 级数，上电算一次，不链接 libm） */
+/* 从 gGain 重新装载飞车检测门限与等待停稳时间（上电及 param.c 更新参数时） */
+void FlyStart_LoadGains(void)
+{
+    gFly.s16BemfAmpTh = gGain.flyBemfAmpTh;
+    gFly.s16EndAmpTh = gGain.flyEndAmpTh;
+    gFly.stillSpinMs = gGain.flyStillSpinMs;
+}
+
+/* 上电：判"在转"的电流门限；检测到过转动后"等待停稳"的时间 = FLYBRAKE_TIME + τ·ln(门限转速 / 残余转速) */
 void FlyStart_Init(void)
 {
-    gFly.s16BemfAmpTh = Q15(FLYCURRENT_TH_PU);
-    gFly.s16EndAmpTh = Q15(FLYCURRENT_TH_PU * FLY_STILL_END_RPM / FLY_STILL_RPM);
-    {
-        double x = FLY_STILL_RPM / FLY_STILL_END_RPM, y = (x - 1.0) / (x + 1.0), y2 = y * y, t = y, ln = 0.0, ms;
-        int k;
-        for (k = 1; k < 60; k += 2) { ln += t / k; t *= y2; }
-        ms = FLY_STILL_BLOCKS + FLY_BRAKE_TAU_S * 2.0 * ln * 1000.0;
-        gFly.stillSpinMs = (uint16_t)(ms > 60000.0 ? 60000.0 : ms);
-    }
+    FlyStart_LoadGains();
 }
 
 /* 进入飞车检测（FlyCheck）时清除全部状态，首先进行短脉冲测速 */
@@ -202,9 +201,9 @@ void FlyStart_Begin(void)
 {
     pulseBegin();
     s_sumA = 0; s_sumB = 0; s_tick = 0; s_blocks = 0;
-    /* 停机已超过 FLY_MAYMOVE_EXPIRE_MS：短接制动的转子早已低于残余转速，不必按最坏情况空等。
+    /* 停机已超过 flyMayMoveExpireMs：短接制动的转子早已低于残余转速，不必按最坏情况空等。
      * 间隔更短（真滑行中再起动）仍按"可能在转"保守处理。gSup.ms 在快环读不会被打断（PendSV 低于 ADC 中断）。 */
-    if (s_mayMove && (uint32_t)(gSup.ms - s_runEndMs) >= FLY_MAYMOVE_EXPIRE_MS) s_mayMove = 0;
+    if (s_mayMove && (uint32_t)(gSup.ms - s_runEndMs) >= gGain.flyMayMoveExpireMs) s_mayMove = 0;
     s_havePrev = 0; s_haveCD = 0; s_sawSpin = s_mayMove; s_prevSpd = 0; s_stillDone = 0; s_catchStep = 0;
     s_spinSeen = 0; s_quiet = 0;
     gFly.stage = FLY_STAGE_SETTLE; gFly.ampM2 = 0; gFly.speed = 0; gFly.stable = 0; gFly.still = 0; gFly.brakeMs = 0;
@@ -243,7 +242,7 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     }
     HAL_PwmShortLowSides(gHal.caliDuty);               /* 三相下桥短接（同时起制动作用） */
     FocMath_ClarkeSat(&gMeas.iabc, &gMeas.iab);
-    /* 静止在上一块末尾判出，下一拍才切换（冷起动约 FLY_COLD_STILL_TIME 后切到定位） */
+    /* 静止在上一块末尾判出，下一拍才切换（冷起动约 FLY_COLD_STILL_TIME 后进入 Align） */
     if (s_stillDone) { gFly.stage = FLY_STAGE_STILL; return FLY_STILL; }
     /* 接管：判定之后第 1 拍计算阻抗角，第 2 拍用当拍电流计算转子角并切换 */
     if (s_catchStep == 1) { s_catchOff = impedanceOffset(gFly.speedCatch); s_catchStep = 2; return FLY_BUSY; }

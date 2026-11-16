@@ -1,6 +1,6 @@
 /* ============================================================================
  * @file    foc_core.c
- * @brief   电流环（d/q 两个 PI + 解耦前馈 + 电压圆限幅）、母线归一化、调制。接口说明见 foc_core.h
+ * @brief   电流环（d/q 两个 PI + 解耦前馈 + 电压圆限幅）、母线归一化、SVPWM 调制。接口说明见 foc_core.h
  *
  * 快环每拍执行顺序：FocCore_Clarke（foc_core.h）-> 估计模块 / 起动模块写入 gFoc.theta
  *   -> FocCore_CurrentLoop（Park、计算电压圆、DqPI、反 Park、母线归一化）-> FocCore_Modulate（SVPWM、写比较值）。
@@ -9,20 +9,86 @@
 #include <stddef.h>
 #include "hal.h"
 #include "meas.h"
-#include "est.h"
-#include "ctrl_pi.h"
-#include "svpwm.h"
+#include "flux_obs.h"
 #include "qmath.h"
 #include "compiler.h"
 #include "param.h"
 
 FocCore_TypeDef gFoc;
+Svpwm_TypeDef gSvpwm;
+
+/* ---- SVPWM（扇区法 X/Y/Z，七段式 / 五段式，母线电流重构） -------------------- */
+typedef struct { uint8_t v1, n1, v2, n2, c[3], p1, p2; } SvSector;
+static const SvSector s_svTab[7] = {
+    { 0, 0, 0, 0, { 0, 0, 0 }, 0, 0 },
+    { 2, 0, 1, 0, { 1, 0, 2 }, 1, 2 },     /* 1：t1 = Z,  t2 = Y  */
+    { 1, 0, 0, 1, { 0, 2, 1 }, 0, 1 },     /* 2：t1 = Y,  t2 = -X */
+    { 2, 1, 0, 0, { 0, 1, 2 }, 0, 2 },     /* 3：t1 = -Z, t2 = X  */
+    { 0, 1, 2, 0, { 2, 1, 0 }, 2, 0 },     /* 4：t1 = -X, t2 = Z  */
+    { 0, 0, 1, 1, { 2, 0, 1 }, 1, 0 },     /* 5：t1 = X,  t2 = -Y */
+    { 1, 1, 2, 1, { 1, 2, 0 }, 2, 1 },     /* 6：t1 = -Y, t2 = -Z */
+};
+
+void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod)
+{
+    u->Alpha = 0;
+    u->Beta = 0;
+    u->CompA = 0;
+    u->CompB = 0;
+    u->CompC = 0;
+    u->Mode = SEVENMODE;
+    u->Sector = 0;
+    u->N_halfPeriod = halfPeriod;
+}
+
+RAMFUNC void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibusRec)
+{
+    int32_t r3 = (u->Alpha * 28378) >> 15;
+    int32_t xyz[3], tt[3], i3[3];
+    int32_t half, vb, vc, t1, t2, P, a1, a2, t0;
+    const SvSector *k;
+    uint8_t n = 0;
+
+    xyz[0] = u->Beta; half = xyz[0] >> 1;
+    xyz[1] = half + r3; xyz[2] = half - r3;
+    vb = r3 - half; vc = -(r3 + half);
+    P = u->N_halfPeriod;
+
+    if (xyz[0] >= 0) n = 1;
+    if (vb >= 0) n += 2;
+    if (vc >= 0) n += 4;
+    u->Sector = n;
+    if (n == 0 || n == 7) {
+        u->CompA = u->CompB = u->CompC = (int16_t)(P >> 1);
+        if (u->Mode == SEVENMODE || u->Mode == FIVEMODE) *ibusRec = 0;
+        return;
+    }
+    k = &s_svTab[n];
+
+    t1 = k->n1 ? -xyz[k->v1] : xyz[k->v1];
+    t2 = k->n2 ? -xyz[k->v2] : xyz[k->v2];
+    a1 = (P * t1 + 16384) >> 15;
+    a2 = (P * t2 + 16384) >> 15;
+    t0 = P - a1 - a2;
+
+    if (u->Mode == SEVENMODE) {
+        tt[0] = t0 >> 1;
+        tt[1] = tt[0] + a1;
+        tt[2] = tt[1] + a2;
+    } else if (u->Mode == FIVEMODE) {
+        tt[0] = t0;
+        tt[1] = P - a2;
+        tt[2] = P;
+    } else {
+        u->CompA = u->CompB = u->CompC = (int16_t)(P >> 1);
+        return;
+    }
+    u->CompA = (int16_t)tt[k->c[0]]; u->CompB = (int16_t)tt[k->c[1]]; u->CompC = (int16_t)tt[k->c[2]];
+    i3[0] = iabc->s16A; i3[1] = iabc->s16B; i3[2] = iabc->s16C;
+    *ibusRec = (int16_t)((i3[k->p1] * t1 - i3[k->p2] * t2) >> 15);
+}
 
 RAMFUNC static void dqPI(void);
-/* 电压型驱动（直接拖动的牵入段）：s_drive 非空时电流环 Kp = 0、积分很慢，电压主要由 s_drive 给出的前馈决定；
- * 反电势产生的电流不被电流环抵消，经定子电阻消耗，为转子提供阻尼。s_driveD/Q = 上一拍前馈，退出时并入积分器 */
-static FocCore_FfFn volatile s_drive;
-static int32_t s_driveD, s_driveQ;
 
 /* 上电初始化：装载电流环增益，清零积分器（输出限幅每拍按电压圆重设） */
 void FocCore_Init(void)
@@ -49,27 +115,9 @@ void FocCore_LoadGains(void)
     gFoc.piQ.qKp = gGain.curKpQ; gFoc.piQ.qKi = gGain.curKiQ;
 }
 
-/* 进入 / 退出电压型驱动（临界区内调用，只赋值）。fn 非空：Kp = 0，Ki = 正常值 * DRAG_CUR_BW_HZ / CURRENT_BW_HZ（至少 1）；
- * fn = 0：上一拍的前馈并入积分器（PI 输出不跳变），恢复正常增益 */
-void FocCore_SetVoltageDrive(FocCore_FfFn fn)
-{
-    if (fn) {
-        int32_t kd = (gGain.curKiD * DRAG_KI_RATIO_Q16) >> 16, kq = (gGain.curKiQ * DRAG_KI_RATIO_Q16) >> 16;
-        gFoc.piD.qKp = 0; gFoc.piQ.qKp = 0;
-        gFoc.piD.qKi = kd > 0 ? kd : 1; gFoc.piQ.qKi = kq > 0 ? kq : 1;
-        s_driveD = 0; s_driveQ = 0;
-    } else if (s_drive) {
-        gFoc.piD.qdSum = QMath_AddSat32(gFoc.piD.qdSum, s_driveD << 15);
-        gFoc.piQ.qdSum = QMath_AddSat32(gFoc.piQ.qdSum, s_driveQ << 15);
-        FocCore_LoadGains();
-    }
-    s_drive = fn;
-}
-
-/* 停机 / 重新起动前：清零积分器、电压、电流指令、角度，复位解耦开关，退出电压型驱动 */
+/* 停机 / 重新起动前：清零积分器、电压、电流指令、角度，复位解耦开关 */
 void FocCore_ResetRun(void)
 {
-    if (s_drive) { s_drive = 0; FocCore_LoadGains(); }
     gFoc.piD.qdSum = 0;
     gFoc.piQ.qdSum = 0;
     gFoc.vdq.s16Q = 0;
@@ -178,7 +226,7 @@ void FocCore_SetIdqRef(int16_t d, int16_t q)
 }
 
 /* 将两个积分器（即 dq 电压）按角度 a 旋转。I/F 切闭环时，参考坐标系由开环角切换为观测器角，二者相差 a：
- * 电压矢量在空间中保持不变，仅更换坐标系表示，因此 dq 分量需反向旋转同一角度（startup.c openLoopHandover） */
+ * 电压矢量在空间中保持不变，仅更换坐标系表示，因此 dq 分量需反向旋转同一角度（openloop.c openLoopHandover） */
 void FocCore_RotatePI(SinCos_TypeDef a)
 {
     int32_t vd = gFoc.piD.qdSum, vq = gFoc.piQ.qdSum;     /* 乘法写成 32x32->64（在临界区内调用，需尽量短） */
@@ -194,8 +242,7 @@ RAMFUNC static void dqPI(void)
 {
     int32_t t, ffd = 0, ffq = 0, vd, lim;
     applyDecoupleRequest();
-    if (s_drive) { s_drive(&ffd, &ffq); s_driveD = ffd; s_driveQ = ffq; }
-    else if (s_decOn) decoupleFF(&ffd, &ffq);
+    if (s_decOn) decoupleFF(&ffd, &ffq);
     /* PI 输出范围 = 电压限幅 - 前馈 */
     gFoc.piD.qOutMax = gFoc.vmax - ffd;
     gFoc.piD.qOutMin = -gFoc.vmax - ffd;

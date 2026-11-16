@@ -1,7 +1,7 @@
 /* ============================================================================
  * @file    openloop.c
  * @brief   I/F 开环（Run 子状态 OpenLoop）：开环拖动，以及开环与闭环之间的切换
- *          （openLoopHandover：开环 -> 闭环；OpenLoop_Prepare* / Commit：定位、IPD、闭环回退、飞车接管 -> 开环）。接口见 openloop.h
+ *          （openLoopHandover：开环 -> 闭环；OpenLoop_Prepare* / Commit：IPD、摆动起动、闭环回退、飞车接管 -> 开环）。接口见 openloop.h
  *
  * I/F 开环原理：电流矢量幅值恒定（OPENLOOP_CURRENT_A），角度按设定加速度积分旋转（不依赖转子位置）。
  *   转子自动跟随：电流矢量与转子 d 轴的夹角（负载角 δ）自动调整到 I*sin(δ)*Kt = 负载转矩 + 加速转矩。
@@ -11,7 +11,6 @@
 #include "startup.h"
 #include "supervisor.h"
 #include "foc_core.h"
-#include "est.h"
 #include "hal.h"
 #include "speed_ctrl.h"
 #include "protect.h"
@@ -32,10 +31,6 @@ static int32_t s_accScaleQ12 = 4096;
 static int32_t s_olCur, s_olCurTarget;      /* 开环电流当前值 / 目标值（Q15）；回退时由小升至目标（CURRENT_SLEW_A_S） */
 static volatile int32_t s_accStep = OPENLOOP_ACC_STEP_Q31;   /* 快环读 */
 static int32_t s_accStepFull;                         /* 开环电流达到目标后的加速度步长 */
-/* 直接拖动：匀速牵入段剩余拍数（0 = 不在牵入段）、牵入段拍数与转速 f0（上电计算一次）、电压前馈中与电流 / 转速相关的部分（慢环写，快环读） */
-static uint16_t s_dragTicks, s_dragHoldTicks;
-static int32_t s_dragSpeedQ31;
-static volatile int32_t s_dragVd, s_dragVq;
 
 /* 当前开环转速（Q15），供观测器相位补偿等使用 */
 int16_t OpenLoop_SpeedQ15(void) { return (int16_t)(s_olSpeed >> 16); }
@@ -97,7 +92,7 @@ int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
  * 拆分的目的是将耗时的开方查找与除法移出临界区 / 快环，缩短关中断时间。
  *   warm = 1：从运行状态接管。iq = 闭环此刻的 q 轴电流指令，speedQ15 = 开环起始转速；
  *     revCur / revAcc = 开环需过零（目标方向与 PLL 转速 / 起始转速方向相反），分别决定开环电流和加速度缩放。
- *   warm = 0：冷起动（定位结束），开环角 = 定位角、零速。 */
+ *   warm = 0：冷起动（IPD / 摆动起动后），开环角 = 转子角 + 平衡负载角。 */
 static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
 {
     int32_t cur = OPENLOOP_IQ_Q15;
@@ -139,28 +134,19 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
     /* 反转过零时开环电流至少为 OPENLOOP_REV_CURRENT_A：加速度按 OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A 增大，余量与冷起动相同
      * （按"所需 iq"增加的那部分电流用于已有转矩需求，不用于加速）。冷起动 / 同向 = 1 */
     e->accScaleQ12 = (warm && revAcc) ? (int32_t)(((int64_t)OPENLOOP_REV_IQ_Q15 << 12) / OPENLOOP_IQ_Q15) : 4096;
-    e->accStepFull = (int32_t)(((int64_t)OPENLOOP_ACC_STEP_Q31 * e->accScaleQ12) >> 12);
+    e->accStepFull = (int32_t)(((int64_t)gGain.openLoopAccStepQ31 * e->accScaleQ12) >> 12);
     /* 开环加速度与开环电流成正比：电流仍按 CURRENT_SLEW_A_S 向目标上升时，可产生的转矩相应受限，
      * 加速度按同一比例给出，负载角余量（OPENLOOP_ACC_RPM_S 取最大加速度的 1/3）全程保持不变。
      * accStepFull * 电流 < 2^31 由配置检查 OPENLOOP_ACC_STEP_FITS 保证（32 位乘除） */
     e->accStep = (e->accStepFull * cur) / e->olCurTarget;
-    e->drag = 0;
 }
 
-/* 冷起动（定位 / IPD 之后）：开环角 = 转子角 + 平衡负载角、零速、开环电流从 1/4 起上升（加速度同比例），d 轴电流阶跃较小 */
+/* 冷起动（IPD 之后）：开环角 = 转子角 + 平衡负载角、零速、开环电流从 1/4 起上升（加速度同比例），d 轴电流阶跃较小 */
 void OpenLoop_PrepareCold(OpenLoopEntry_TypeDef *e)
 {
     prepareOpenLoop(0, 0, 0, 0, 0, e);
     e->olCur = e->olCurTarget >> 2;
     e->accStep = (e->accStepFull * e->olCur) / e->olCurTarget;
-}
-
-/* 直接拖动：同冷起动，但牵入段不加速（转速 = f0，提交时按目标取方向），电流环切换为电压型驱动 */
-void OpenLoop_PrepareDrag(OpenLoopEntry_TypeDef *e)
-{
-    OpenLoop_PrepareCold(e);
-    e->accStep = 0;
-    e->drag = 1;
 }
 
 /* 摆动中起动：转子正以 speedQ15（与目标同向）经过当前控制角。同冷起动（开环角 = 转子角 + 平衡负载角），但开环转速从转子转速开始，
@@ -175,33 +161,6 @@ void OpenLoop_PrepareSwing(int16_t speedQ15, OpenLoopEntry_TypeDef *e)
     e->accStep = (e->accStepFull * e->olCur) / e->olCurTarget;
 }
 
-/* 直接拖动牵入段的电压前馈（快环中由电流环调用）：慢环给出的 Rs*id + w0*(psi_f + Ld*id)，加上本拍实测电流对应的逆变器电压误差 */
-static void dragFF(int32_t *ffd, int32_t *ffq)
-{
-    Dq_TypeDef dt = FluxObs_DtErr(gMeas.iab, gFoc.ang);
-    *ffd = s_dragVd + dt.s16D;
-    *ffq = s_dragVq + dt.s16Q;
-}
-
-/* 直接拖动的电压前馈（慢环，随电流指令更新）：牵入段转速恒定，iq 指令 = 0 */
-static void dragFFUpdate(void)
-{
-    int32_t w = s_olSpeed >> 16, id = s_olCur;
-    s_dragVd = QMath_MulQ15(gGain.focKrsQ15, (int16_t)id);
-    s_dragVq = ((w * gGain.decKEmfQ15) >> 15) + ((((w * id) >> 15) * gGain.decKLdQ12) >> 12);
-}
-
-/* 牵入段结束（慢环，临界区内只赋值）：退出电压型驱动（前馈并入积分器），开环角超前平衡负载角，开始加速 */
-static void dragEnd(void)
-{
-    int32_t acc = (s_accStepFull * s_olCur) / s_olCurTarget;
-    IRQ_LOCK();
-    FocCore_SetVoltageDrive(0);
-    s_olTheta = (int32_t)((uint32_t)s_olTheta + (uint32_t)(s_olTarget < 0 ? -OPENLOOP_LEAD_Q31 : OPENLOOP_LEAD_Q31));
-    s_accStep = acc;
-    IRQ_UNLOCK();
-}
-
 /* 从运行状态接管（回退 / 飞车）：iqNow = 此刻的 q 轴电流指令；revCur / revAcc = 开环需过零（分别决定开环电流、加速度缩放）；
  * speedQ15 = 开环起始转速 */
 void OpenLoop_PrepareWarm(int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
@@ -209,13 +168,13 @@ void OpenLoop_PrepareWarm(int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t
     prepareOpenLoop(1, iqNow, revCur, revAcc, speedQ15, e);
 }
 
-/* 进入 I/F 的"提交"（在临界区内 / 快环中调用，只赋值）：开环目标、开环角（冷起动 = 定位角；接管 = PLL 角 + 预先计算的偏移）、
+/* 进入 I/F 的"提交"（在临界区内 / 快环中调用，只赋值）：开环目标、开环角（冷起动 = 转子角 + 平衡负载角；接管 = PLL 角 + 预先计算的偏移）、
  * 开环转速、电流、加速度，电流指令沿开环 d 轴 */
 void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e)
 {
     s_olTarget = openLoopTarget();
     Protect_PhaseReset();           /* 缺相窗口从进入 I/F 时重新计 */
-    /* 冷起动：转子角（定位角 / IPD 的 N 极角）再超前平衡负载角，起动即处于平衡点、负载角不摆动（cfg_internal.h OPENLOOP_ACC_FRAC） */
+    /* 冷起动：转子角（摆动过轴角 / IPD N 极角）再超前平衡负载角，起动即处于平衡点、负载角不摆动（cfg_internal.h OPENLOOP_ACC_FRAC） */
     s_olTheta = e->warm ? (int32_t)((uint32_t)gEst.pll.s32Theta + e->thetaOffset)
                         : (int32_t)(((uint32_t)(int32_t)gFoc.theta << 16) + (uint32_t)(s_olTarget < 0 ? -OPENLOOP_LEAD_Q31 : OPENLOOP_LEAD_Q31));
     s_olSpeed = e->olSpeed;
@@ -225,19 +184,12 @@ void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e)
     s_accStepFull = e->accStepFull;
     s_accStep = e->accStep;
     FocCore_SetIdqRef((int16_t)e->olCur, 0);
-    s_dragTicks = 0;
-    if (e->drag) {                  /* 直接拖动：f0 匀速牵入 DRAG_HOLD_T 个 T_n，方向按目标；电流环电压型驱动 */
-        s_olSpeed = s_olTarget < 0 ? -s_dragSpeedQ31 : s_dragSpeedQ31;
-        s_dragTicks = s_dragHoldTicks;
-        dragFFUpdate();
-        FocCore_SetVoltageDrive(dragFF);
-    }
     s_pllFilt = gEst.pll.s32Speed;
     s_agree = 0; s_hold = 0;
 }
 
 /* 飞车接管进入 I/F（快环中执行）：接管时闭环电流 iq = 0（Sup_SwitchFlyCheckOpenLoop 先清零），入口参数除起始转速外
- * 均为常数，仅分"开环需过零 / 不过零"两种。上电时（Startup_Init）预先计算，快环中按方向选取一份、填入转速并提交：常数时间 */
+ * 均为常数，仅分"开环需过零 / 不过零"两种。上电及参数更新时（OpenLoop_Init / OpenLoop_LoadGains）预先计算，快环中按方向选取一份、填入转速并提交：常数时间 */
 static OpenLoopEntry_TypeDef s_catchIf[2];
 
 void OpenLoop_CommitCatch(int16_t spd)
@@ -295,17 +247,23 @@ static void openLoopHandover(void)
     }
 }
 
-/* 上电：直接拖动的牵入参数；飞车接管进入 I/F 的两份入口参数（iq = 0，同向 / 过零），快环接管时直接取用（常数时间） */
+/* 从 gGain 重新装载飞车接管开环加速度步长（上电及 param.c 更新参数时） */
+void OpenLoop_LoadGains(void)
+{
+    uint8_t k;
+    for (k = 0; k < 2; k++) {
+        if (s_catchIf[k].olCurTarget <= 0) continue;
+        s_catchIf[k].accStepFull = (int32_t)(((int64_t)gGain.openLoopAccStepQ31 * s_catchIf[k].accScaleQ12) >> 12);
+        s_catchIf[k].accStep = (s_catchIf[k].accStepFull * s_catchIf[k].olCur) / s_catchIf[k].olCurTarget;
+    }
+}
+
+/* 上电：飞车接管进入 I/F 的两份入口参数（iq = 0，同向 / 过零），快环接管时直接取用（常数时间） */
 void OpenLoop_Init(void)
 {
-    {   /* 直接拖动：T_n = 开环电流下的摆动周期（拍）；牵入转速 f0 = DRAG_F0_RATIO / T_n；匀速牵入段 = DRAG_HOLD_T * T_n */
-        uint32_t tn = QMath_Isqrt64(DRAG_T2_TICKS2);
-        if (tn == 0) tn = 1;
-        s_dragHoldTicks = (uint16_t)(tn * (uint32_t)(DRAG_HOLD_T * 256.0 + 0.5) >> 8);
-        s_dragSpeedQ31 = (int32_t)(DRAG_HZ_Q31 * (int64_t)(DRAG_F0_RATIO * SLOWLOOP_FREQ * 256.0 + 0.5) / ((int64_t)tn << 8));   /* 上电一次的 64 位除法 */
-    }
     OpenLoop_PrepareWarm(0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
     OpenLoop_PrepareWarm(0, 1, 1, 0, &s_catchIf[1]);
+    OpenLoop_LoadGains();
 }
 
 /* ---------------------------------------------------------------------------
@@ -343,14 +301,10 @@ void OpenLoop_Slow(void)
     s_olTarget = openLoopTarget();
     s_pllFilt += (gEst.pll.s32Speed >> OPENLOOP_PLL_FILT_SH) - (s_pllFilt >> OPENLOOP_PLL_FILT_SH);
     if (s_olCur < s_olCurTarget) {      /* 回退时开环电流升至目标 */
-        s_olCur += CURRENT_SLEW_STEP_Q15;
+        s_olCur += gGain.currentSlewStepQ15;
         if (s_olCur > s_olCurTarget) s_olCur = s_olCurTarget;
-        if (s_dragTicks == 0) s_accStep = (s_accStepFull * s_olCur) / s_olCurTarget;     /* 32 位，见 OpenLoop_Prepare */
+        s_accStep = (s_accStepFull * s_olCur) / s_olCurTarget;     /* 32 位，见 OpenLoop_Prepare */
         FocCore_SetIdqRef((int16_t)s_olCur, 0);
-    }
-    if (s_dragTicks) {                  /* 直接拖动牵入段：前馈随电流指令更新，到时开始加速 */
-        dragFFUpdate();
-        if (--s_dragTicks == 0) dragEnd();
     }
 
     /* 缺相：与 Spin 相同的判据（protect.h），电周期按开环转速计 */

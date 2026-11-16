@@ -20,17 +20,11 @@
 #define RUN_CCW                 (1)
 #define RUN_DIR                 RUN_CW
 
-/* 起动方式（上电默认值；运行中可修改 gStartup.mode，下一次起动生效）：
- *   STARTUP_MODE_IPD    检测初始位置：约 0.17 s，转子不动，无电流脉冲（高频注入 + 直流偏置）；检测失败时本次自动退回定位
- *   STARTUP_MODE_DRAG   直接拖动（静音起动）：不定位，给出指令即开始转动；开始约 0.5 s 转子被牵入同步，可能先反转一小段
- *                       （最多约半个极距），之后持续加速，无停顿
- *   STARTUP_MODE_ALIGN  定位后立即加速（静音起动）：定位约 0.9 s（时间固定，不等转子停稳），之后直接从平衡负载角加速；
- *                       转子先被拉到 0°（可能先反转一小段）
+/* 起动方式（上电默认值；运行中可修改 gStartup.mode，下一次起动生效；非法值按摆动起动处理）：
+ *   STARTUP_MODE_IPD    检测初始位置：约 0.17 s，转子不动，无电流脉冲（高频注入 + 直流偏置）；检测失败时本次自动退回摆动起动
  *   STARTUP_MODE_SWING  摆动中起动（静音起动）：定位电流将转子拉向 0°，不加阻尼、不等转子停稳，转子顺转向摆过 0° 的瞬间
  *                       即从当时的角度和转速接入 I/F 连续加速，约 0.3 ~ 0.8 s 开始加速；转子可能先反转一段（最多约一个极距） */
 #define STARTUP_MODE_IPD        0
-#define STARTUP_MODE_DRAG       1
-#define STARTUP_MODE_ALIGN      2
 #define STARTUP_MODE_SWING      3
 #define STARTUP_MODE            STARTUP_MODE_SWING
 
@@ -66,9 +60,9 @@
  *     n [rpm] = k * UDC_RATE * 60 / (2*pi * 极对数 * psi_f)       本电机每 1% 约 42 rpm
  * 各门限之间的大小关系由配置检查保证（cfg_check_list.h）。 */
 
-/* ---- 定位（STARTUP_MODE_ALIGN、IPD 检测失败时、参数辨识的静止测量时使用）----
+/* ---- 定位（仅参数辨识 IDENT_TEST = 1 静止测量时使用，SWING 起动使用同一定位电流 ALIGN_A）----
  * 定位电流下转子相当于单摆，周期 T 由电机参数与定位电流自动计算（本电机 0.5 s）：最短 1.6 T、停稳判据持续 0.4 T、最长 4 T。 */
-#define ALIGN_STILL_RPM         10         /* rpm，转子停稳判据（k 约 0.2%）。每次都等满上限时调高 */
+#define ALIGN_STILL_RPM         10         /* rpm，参数辨识静止测量的停稳判据（k 约 0.2%）。每次都等满上限时调高 */
 
 /* ---- 开环拖动（I/F）与闭环的交接 ---- */
 #define OPENLOOP_HANDOVER_RPM   105.0       /* rpm，I/F 切入闭环的转速（k 约 2.5%）。切换瞬间抖动或无法切入（报堵转）时调高 */
@@ -80,7 +74,7 @@
 
 /* ---- 顺逆风（飞车）起动 ---- */
 #define FLY_STILL_RPM           31.5        /* rpm，低于该转速按静止处理（k 约 0.75%） */
-#define FLY_STILL_END_RPM       2.0         /* rpm，制动后开始定位时允许的残余转速。制动后定位出现抖动时调低 */
+#define FLY_STILL_END_RPM       2.0         /* rpm，制动后开始 IPD / 摆动起动时允许的残余转速。制动后起动出现抖动时调低 */
 #define FLY_LOW_MIN_RPM         42.0        /* rpm，同向转速不低于该值时直接接入 I/F，更低则先制动（须高于 FLY_STILL_RPM，k 约 1%） */
 #define FLY_REV_SPIN_MIN_RPM    504.0       /* rpm，反向旋转时不低于该值才直接接入闭环（约 2 倍 OPENLOOP_FALLBACK_RPM） */
 

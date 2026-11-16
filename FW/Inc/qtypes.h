@@ -37,7 +37,7 @@ typedef struct {
     uint16_t u16Sh;    /* 移位位数，时间常数约 2^sh 拍 */
 } LowPass_TypeDef;
 
-/* PI 调节器（ctrl_pi.h Pi_Run32 / Pi_Run64）：积分和（Q15 << 15）、增益、限幅、输入、输出 */
+/* PI 调节器（foc_math.h Pi_Run32 / Pi_Run64）：积分和（Q15 << 15）、增益、限幅、输入、输出 */
 typedef struct {
     int32_t qdSum;    /* 积分值 << 15（输出单位） */
     int32_t qKp, qKi;    /* 比例 / 积分增益（输出 += K * 误差 >> 15） */
@@ -46,7 +46,7 @@ typedef struct {
     int32_t qOut;    /* 输出 */
 } PI_TypeDef;
 
-/* 磁链 PLL（flux_pll.c）：角度 / 转速 Q31，积分状态，增益 */
+/* 磁链 PLL（flux_obs.c）：角度 / 转速 Q31，积分状态，增益 */
 typedef struct {
     int32_t s32Theta;    /* 电角度 Q16.16（>> 16 得 Q15 角度，65536 = 一圈） */
     int32_t s32Speed;    /* 转速 Q31（0x7FFFFFFF ≈ SPEED_MAX） */

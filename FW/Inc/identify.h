@@ -57,10 +57,10 @@ extern IdentResult_TypeDef gIdent;
  * 置 1 后给出一个转速指令即自动完成辨识（gIdentCfg.mode = IDENT_MODE_AUTO，默认）：
  *   1. 静止测量：Charge -> FlyCheck -> Align（定位到 gIdentCfg.alignDeg）-> R/L -> 死区阶梯 -> IPD -> 交流阻抗 / 饱和，
  *      转子不转，约 15 s；结果交给 param.c 后自动停机（Run -> Stop），参数装入（gParamStat.pending = 0）后自动重新起动；
- *   2. 运行测量：正常起动（IPD / 定位 -> I/F），I/F 到达目标转速后先测磁链并生效，再切闭环；闭环稳速 2 s 后零电流滑行 0.4 s，
+ *   2. 运行测量：正常起动（IPD / 摆动起动 -> I/F），I/F 到达目标转速后先测磁链并生效，再切闭环；闭环稳速 2 s 后零电流滑行 0.4 s，
  *      测得 psi_f 与加速度系数并立即生效，随后按指令转速继续运行；gIdent.state = IDENT_DONE。
- *   运行测量要求转速不低于 RUN_MIN_RPM（315 rpm，保证滑行 0.4 s 后仍高于 TRACK_END_RPM）：指令更低时，
- *   测量期间按其 1.1 倍（347 rpm）运行，测量完成后回到指令转速。
+ *   运行测量要求转速不低于 RUN_MIN_RPM（按电机转速自适应，本电机 315 rpm，保证滑行 0.4 s 后仍高于 TRACK_END_RPM）：指令更低时，
+ *   测量期间按其 1.1 倍（本电机 347 rpm）运行，测量完成后回到指令转速。
  *   中途停机或故障：下次起动从未完成的步骤继续（静止测量未完成则重做）。重新辨识：停机后将 gIdent.state 写 0。
  *   结果仅保存在 RAM（gParam），掉电丢失；长期使用需按 gIdent 填回 cfg_motor.h / cfg_board.h。
  * 只执行其中一步：gIdentCfg.mode = IDENT_MODE_STATIC（仅静止测量，完成后保持零电压，给指令 0 停机，回到 Stop 时生效）/

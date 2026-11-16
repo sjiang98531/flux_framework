@@ -1,6 +1,6 @@
 /* ============================================================================
  * @file    startup.c
- * @brief   起动各子状态：Charge（预充）、FlyCheck（飞车检测分发）、Align（IPD / 定位）；
+ * @brief   起动各子状态：Charge（预充）、FlyCheck（飞车检测分发）、Align（IPD / 摆动起动 / 辨识定位）；
  *          I/F 开环（OpenLoop）在 openloop.c。
  *          接口说明见 startup.h
  * ==========================================================================*/
@@ -8,7 +8,6 @@
 #include "openloop.h"
 #include "supervisor.h"
 #include "foc_core.h"
-#include "est.h"
 #include "hal.h"
 #include "speed_ctrl.h"
 #include "protect.h"
@@ -24,16 +23,15 @@ Startup_TypeDef gStartup;
 
 static volatile int16_t s_alignTheta;      /* 定位角（慢环写，快环读） */
 static uint16_t s_alignTicks;
-/* 定位各段拍数（Startup_Init 按摆动周期 T 计算一次）：最短 / 判停稳持续 / 最长 */
+#if IDENT_TEST
+/* 静止参数辨识的阻尼定位参数（Startup_LoadGains 按摆动周期 T 计算）：最短 / 判停稳持续 / 最长、阻尼增益 */
 static uint16_t s_alignMinTicks, s_alignStillTicks, s_alignMaxTicks;
-static uint16_t s_alignGoTicks;            /* 定位后立即加速：定位总拍数（电流上升 + ALIGN_GO_T 个 T） */
-static uint8_t s_alignGo;                  /* 1 = 本次定位到时间即拖动（起动用）；0 = 等停稳（参数辨识） */
 static int32_t s_dampQ8;                   /* 定位阻尼增益：Q15 电流 / Q15 电压，Q8 */
-static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
-static int32_t s_dtFilt;                   /* 同一滤波器滤波的逆变器电压误差 q 分量（判停稳用） */
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
+#endif
+static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
+static int32_t s_dtFilt;                   /* 同一滤波器滤波的逆变器电压误差 q 分量（摆动伪峰值参考 / 辨识停稳判据） */
 static volatile uint8_t s_ipd;             /* 1 = Align 子状态正在执行 IPD（慢环写，快环读） */
-static uint8_t s_drag;                     /* 1 = 起动方式为直接拖动：下一个慢环拍进入 I/F */
 /* 摆动中起动：1 = 本次起动采用；转向（+1 / -1）；判定"无摆动"的拍数、最长等待拍数；可接入的最小峰值转速（Q15）；
  * e_q 上升途中记录的最近两个电平（L2 较新）及当时的 d 轴积分项；是否出现过超过门限的反电势 */
 static uint8_t s_swing;
@@ -44,61 +42,69 @@ static int32_t s_swingL1, s_swingL2, s_swingVd1, s_swingVd2;
 static int32_t s_swingNegL1, s_swingNegL2, s_swingNegVd1, s_swingNegVd2;   /* 逆向峰值用同一套电平记录 */
 static uint8_t s_swingMoved;
 
-/* 进入 Align（飞车检测判为静止）：清除定位状态。起动方式（gStartup.mode）为 IPD 时先执行 IPD，结果不可信时再定位；否则直接拖动。
- * 参数辨识的静止测量：定位到指定角 */
+/* 启动摆动中起动（SWING 主流程或 IPD 失败退回时调用） */
+static void beginSwing(void)
+{
+    s_swing = 1;
+    s_alignTicks = 0;
+    s_emfFilt = 0;
+    s_dtFilt = 0;
+    s_swingDir = OpenLoop_Reversal(1) ? -1 : 1;
+    s_swingL1 = 0;
+    s_swingL2 = 0;
+    s_swingNegL1 = 0;
+    s_swingNegL2 = 0;
+    s_swingMoved = 0;
+    s_alignTheta = (int16_t)(-s_swingDir * ALIGN_SWING_SWEEP_Q15);
+}
+
+/* 进入 Align（飞车检测判为静止）：起动方式（gStartup.mode）为 IPD 时先执行 IPD，结果不可信时退回摆动起动；否则直接摆动起动。
+ * 参数辨识的静止测量：定位到指定角并等待停稳 */
 void Startup_OnEnterAlign(void)
 {
     s_alignTicks = 0;
     s_emfFilt = 0;
     s_dtFilt = 0;
-    s_still = 0;
     s_alignTheta = 0;
     FocCore_SetIdqRef(0, 0);
     s_ipd = 0;
-    s_drag = 0;
     s_swing = 0;
-    s_alignGo = 1;
-    if (IDENT_TEST && Ident_StaticThisStart()) {
-        s_alignGo = 0;     /* 参数辨识：定位到指定角 */
+#if IDENT_TEST
+    s_still = 0;
+    if (Ident_StaticThisStart()) {
         s_alignTheta = Ident_AlignTheta();
         Ident_Reset();
-    } else {
-        /* 不执行静止测量（运行测量 / 已完成）时正常起动：上一次静止测量停在 phase 4，需清除，否则 Align 会一直交由测量程序处理 */
-        if (IDENT_TEST) Ident_Idle();
-        /* 起动方式仅在此处读取一次：本轮中途修改 gStartup.mode 不影响正在执行的 IPD / 定位 */
-        if (gStartup.mode == STARTUP_MODE_IPD) { Ipd_Start(); s_ipd = 1; }    /* 先检测初始位置，检测失败再定位 */
-        else if (gStartup.mode == STARTUP_MODE_SWING) {             /* 摆动中起动：电流矢量从定位轴之后扫向定位轴 */
-            s_swing = 1;
-            s_swingDir = OpenLoop_Reversal(1) ? -1 : 1;
-            s_swingL1 = 0;
-            s_swingL2 = 0;
-            s_swingNegL1 = 0;
-            s_swingNegL2 = 0;
-            s_swingMoved = 0;
-            s_alignTheta = (int16_t)(-s_swingDir * ALIGN_SWING_SWEEP_Q15);
-        }
-        else if (gStartup.mode != STARTUP_MODE_ALIGN) s_drag = 1;    /* 直接拖动；STARTUP_MODE_ALIGN 时定位后立即加速 */
+        return;
     }
+    /* 不执行静止测量（运行测量 / 已完成）时正常起动：上一次静止测量停在 phase 4，需清除，否则 Align 会一直交由测量程序处理 */
+    Ident_Idle();
+#endif
+    /* 起动方式仅在此处读取一次：本轮中途修改 gStartup.mode 不影响正在执行的 IPD / 摆动起动（其他值按摆动起动） */
+    if (gStartup.mode == STARTUP_MODE_IPD) { Ipd_Start(); s_ipd = 1; }
+    else beginSwing();
 }
 
-/* 上电：预充时间、定位阻尼增益、起动方式默认值 */
+/* 从 gGain 重新装载定位摆周期各段拍数（上电及 param.c 更新参数时） */
+void Startup_LoadGains(void)
+{
+    uint32_t t = gGain.alignPeriodTicks;
+#if IDENT_TEST
+    s_alignMinTicks = (uint16_t)(t * (uint32_t)(ALIGN_MIN_T * 256.0 + 0.5) >> 8);
+    s_alignStillTicks = (uint16_t)(t * (uint32_t)(ALIGN_STILL_T * 256.0 + 0.5) >> 8);
+    s_alignMaxTicks = (uint16_t)(t * (uint32_t)(ALIGN_MAX_T * 256.0 + 0.5) >> 8);
+    s_dampQ8 = gGain.alignDampQ8;
+#endif
+    s_swingQuietTicks = (uint16_t)(t * (uint32_t)(ALIGN_SWING_QUIET_T * 256.0 + 0.5) >> 8);
+    s_swingMaxTicks = (uint16_t)(t * (uint32_t)(ALIGN_SWING_MAX_T * 256.0 + 0.5) >> 8);
+    s_swingMinSpd = gGain.alignSwingMinSpd;
+}
+
+/* 上电：预充时间、起动方式默认值、装载定位与摆动参数 */
 void Startup_Init(void)
 {
     gStartup.preChargeCmd = PWM_FREQ / 1000.0 * PRECHARGE_TIME;
     gStartup.mode = STARTUP_MODE;
-    {   /* 定位各段 = 摆动周期 T 的倍数（cfg_internal.h ALIGN_*_T） */
-        uint32_t t = QMath_Isqrt64(ALIGN_T2_TICKS2);
-        s_alignMinTicks = (uint16_t)(t * (uint32_t)(ALIGN_MIN_T * 256.0 + 0.5) >> 8);
-        s_alignStillTicks = (uint16_t)(t * (uint32_t)(ALIGN_STILL_T * 256.0 + 0.5) >> 8);
-        s_alignMaxTicks = (uint16_t)(t * (uint32_t)(ALIGN_MAX_T * 256.0 + 0.5) >> 8);
-        s_alignGoTicks = (uint16_t)(ALIGN_A / ALIGN_RAMP_A_S * SLOWLOOP_FREQ + 0.5) + (uint16_t)(t * (uint32_t)(ALIGN_GO_T * 256.0 + 0.5) >> 8);
-        s_swingQuietTicks = (uint16_t)(t * (uint32_t)(ALIGN_SWING_QUIET_T * 256.0 + 0.5) >> 8);
-        s_swingMaxTicks = (uint16_t)(t * (uint32_t)(ALIGN_SWING_MAX_T * 256.0 + 0.5) >> 8);
-        s_swingMinSpd = (int16_t)(ALIGN_SWING_MIN_SPD_T / (double)(t ? t : 1) + 0.5);
-    }
-
-    /* 仅上电时计算一次（含开方与浮点） */
-    s_dampQ8 = (int32_t)(ALIGN_C1 * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM * ALIGN_J * 1099511627776.0)) / 1048576.0);
+    Startup_LoadGains();
 }
 
 /* 停机复位：预充计数清零 */
@@ -167,9 +173,9 @@ void Startup_FlyCheckSlow(void)
 }
 
 /* ---------------------------------------------------------------------------
- * Align：d 轴电流斜坡升至 ALIGN_A 定位，q 轴按反电势施加阻尼，停稳后进入 I/F
+ * Align：IPD 初始位置检测 / 摆动中起动（SWING）/ 参数辨识阻尼定位
  * -------------------------------------------------------------------------*/
-/* Align 快环：辨识模式 / IPD 时由其直接输出电压；定位时电流环按定位角运行（电流指令由慢环给出） */
+/* Align 快环：辨识模式 / IPD 时由其直接输出电压；摆动起动 / 辨识定位时电流环按定位角运行（电流指令由慢环给出） */
 void Startup_AlignFast(void)
 {
     FocCore_Clarke();
@@ -202,7 +208,7 @@ static void swingCatch(int32_t e, int32_t ed, int8_t sign)
     /* atan(t) = t*pi/4 + 0.273*t*(1 - t)（0 <= t <= 1，误差 < 0.3°），换成 Q15 角度 */
     th = (((t * 3217) >> 12) + ((((t * 1118) >> 12) * (4096 - t)) >> 12)) * 10430 >> 12;
     w = ((e + (ed * ed) / (2 * e)) << 15) / gGain.decKEmfQ15;   /* sqrt(e^2 + ed^2) 的一阶近似 / 磁链，Q15 转速 */
-    th += (w * ALIGN_SWING_LAG_ANG_Q12) >> 12;
+    th += (w * gGain.swingLagAngQ12) >> 12;
     Sup_SwitchSwingOpenLoop((int16_t)(sign * th), (int16_t)(sign * w));
 }
 static void alignSwingSlow(void)
@@ -261,18 +267,13 @@ static void alignSwingSlow(void)
 }
 
 /* Align 慢环：
- *   直接拖动：立即进入 I/F（openloop.c 牵入段）；
  *   摆动中起动：见 alignSwingSlow；
- *   IPD 中：推进检测（Ipd_Slow），完成后判定，可信 -> 从 N 极角直接进入 I/F；不可信 -> 退回定位；
- *   定位：d 轴电流按斜坡升至 ALIGN_A，q 轴按反电势施加阻尼（转子摆动时施加反向转矩抑制）；
- *         起动（STARTUP_MODE_ALIGN、IPD 检测失败）：到达固定时间（电流上升 + ALIGN_GO_T 个 T）即进入 I/F；
- *         参数辨识：达到最短时间且反电势持续低于门限（已停稳），或超过最长时间 -> 开始测量 */
+ *   IPD 中：推进检测（Ipd_Slow），完成后判定，可信 -> 从 N 极角直接进入 I/F；不可信 -> 退回摆动中起动；
+ *   参数辨识（IDENT_TEST = 1）：d 轴电流按斜坡升至 ALIGN_A，q 轴按反电势施加阻尼，
+ *     达到最短时间且反电势持续低于门限（已停稳），或超过最长时间 -> 开始静止测量（Ident_Begin） */
 void Startup_AlignSlow(void)
 {
-    int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15;
-    int32_t emf, iq;
     if (IDENT_TEST && Ident_Active()) { Ident_Slow(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
-    if (s_drag) { Sup_SwitchDragOpenLoop(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
     if (s_swing) { alignSwingSlow(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
     if (s_ipd) {
         Ipd_Slow();
@@ -280,9 +281,10 @@ void Startup_AlignSlow(void)
             if (Ipd_Evaluate()) {
                 Sup_SwitchIpdOpenLoop(gIpd.theta);  /* 从测得的 N 极角开始拖动，无需定位 */
             } else {
-                /* 凸极或极性对比度不足（转子在动等）：本次退回定位。偏置电流已回到 0，PWM 输出零电压。
-                 * 先清积分器再清 s_ipd（分别为一次 32 / 8 位写）：快环看到 s_ipd = 0 时积分器已为 0 */
+                /* 凸极或极性对比度不足（无凸极电机、转子在动等）：本次退回摆动中起动。偏置电流已回到 0，PWM 输出零电压。
+                 * 先清积分器并初始化摆动状态，再清 s_ipd（单字节写）：快环看到 s_ipd = 0 时定位角与积分器已就绪 */
                 FocCore_PresetPI(0, 0);
+                beginSwing();
                 s_ipd = 0;
             }
         }
@@ -290,30 +292,34 @@ void Startup_AlignSlow(void)
         Meas_SpeedHoldZero();
         return;
     }
-    if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
-    /* 阻尼：q 轴反电势 e_q = w*psi_f，经 ALIGN_EMF_FILT_TAU_S 低通，iq = -k*e_q。
-     * e_q 取 q 轴电流 PI 的积分项（= Rs*iq + 逆变器电压误差 + e_q，稳态电压）减去 Rs*iq_实测，而不用 PI 总输出：
-     * 总输出中含 Kp*误差 的瞬态分量，阻尼指令变化时会跳变，环路增益 > 1 时会振荡。 */
-    emf = (gFoc.piQ.qdSum >> 15) - QMath_MulQ15(gGain.focKrsQ15, gFoc.idq.s16Q);
-    s_emfFilt += emf - (s_emfFilt >> ALIGN_EMF_FILT_SH);
-    /* 另外扣除逆变器电压误差。定位时 d 轴电流在另两相上各为 -ALIGN_A/2，摆动产生的 iq 会把其中一相推入
-     * 死区误差的线性段（INVERTER_DT_I0_A 以内，等效电阻约为 Rs 的 2 倍以上），该电压随 iq 同步变化：不扣除时
-     * 反电势只估出真值的一半左右，阻尼只有设计值的一半，判停稳也会在转子仍在摆动时成立（容差见 cfg_internal.h ALIGN_ZETA）。 */
-    s_dtFilt += FluxObs_DtErr(gMeas.iab, gFoc.ang).s16Q - (s_dtFilt >> ALIGN_EMF_FILT_SH);
-    iq = -(((s_emfFilt - s_dtFilt) >> ALIGN_EMF_FILT_SH) * s_dampQ8 >> 8);
-    iq = QMath_Clamp(iq, ALIGN_ID_Q15);
-    FocCore_SetIdqRef((int16_t)id, (int16_t)iq);
-    ++s_alignTicks;
-    {   /* 起动：到时间即拖动；参数辨识：满足最短时间后等待停稳 */
-        int32_t e = (s_emfFilt - s_dtFilt) >> ALIGN_EMF_FILT_SH;
-        if (e < 0) e = -e;
-        if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
-        if (s_alignGo ? s_alignTicks >= s_alignGoTicks
-                      : ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks)) {
-            if (IDENT_TEST && Ident_StaticThisStart()) Ident_Begin();  /* 参数辨识：不切入 I/F，从此开始测量 */
-            else Sup_SwitchAlignOpenLoop();  /* 定位后立即加速：观测器初始化为 |psi_f|∠0 */
+#if IDENT_TEST
+    {
+        int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15;
+        int32_t emf, iq;
+        if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
+        /* 阻尼：q 轴反电势 e_q = w*psi_f，经 ALIGN_EMF_FILT_TAU_S 低通，iq = -k*e_q。
+         * e_q 取 q 轴电流 PI 的积分项（= Rs*iq + 逆变器电压误差 + e_q，稳态电压）减去 Rs*iq_实测，而不用 PI 总输出：
+         * 总输出中含 Kp*误差 的瞬态分量，阻尼指令变化时会跳变，环路增益 > 1 时会振荡。 */
+        emf = (gFoc.piQ.qdSum >> 15) - QMath_MulQ15(gGain.focKrsQ15, gFoc.idq.s16Q);
+        s_emfFilt += emf - (s_emfFilt >> ALIGN_EMF_FILT_SH);
+        /* 另外扣除逆变器电压误差。定位时 d 轴电流在另两相上各为 -ALIGN_A/2，摆动产生的 iq 会把其中一相推入
+         * 死区误差的线性段（INVERTER_DT_I0_A 以内，等效电阻约为 Rs 的 2 倍以上），该电压随 iq 同步变化：不扣除时
+         * 反电势只估出真值的一半左右，阻尼只有设计值的一半，判停稳也会在转子仍在摆动时成立（容差见 cfg_internal.h ALIGN_ZETA）。 */
+        s_dtFilt += FluxObs_DtErr(gMeas.iab, gFoc.ang).s16Q - (s_dtFilt >> ALIGN_EMF_FILT_SH);
+        iq = -(((s_emfFilt - s_dtFilt) >> ALIGN_EMF_FILT_SH) * s_dampQ8 >> 8);
+        iq = QMath_Clamp(iq, ALIGN_ID_Q15);
+        FocCore_SetIdqRef((int16_t)id, (int16_t)iq);
+        ++s_alignTicks;
+        {   /* 参数辨识：满足最短时间后等待停稳 */
+            int32_t e = (s_emfFilt - s_dtFilt) >> ALIGN_EMF_FILT_SH;
+            if (e < 0) e = -e;
+            if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
+            if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
+                Ident_Begin();
+            }
         }
     }
+#endif
     Meas_SlowFilter();
     Meas_SpeedHoldZero();
 }

@@ -1,10 +1,10 @@
 /* ============================================================================
  * @file    flux_obs.c
- * @brief   转子磁链观测器，接口说明见 flux_obs.h
+ * @brief   转子磁链观测器、锁相环（FluxPLL）与无感角度估计调度（gEst），接口说明见 flux_obs.h
  *
  * 原理（电压模型磁链观测器）：
  *   定子电压方程 v = Rs*i + d(psi_s)/dt  ->  psi_s = ∫(v - Rs*i) dt（定子磁链）
- *   转子磁链 psi_r = psi_s - L*i，其方向即转子 d 轴（N 极），角度由 PLL（flux_pll.c）锁定。
+ *   转子磁链 psi_r = psi_s - L*i，其方向即转子 d 轴（N 极），角度由本文件 FluxPLL 锁定。
  * 纯积分存在三个问题，分别对应一项修正：
  *   1. 电压 / 电流中的直流偏置导致积分漂移 -> 积分前对反电势 e = v - Rs*i 去直流（一阶高通，FLUX_HPF_TAU_S）；
  *      高通在低速时引入相位超前 -> 输出时反向旋转对应角度补偿（由 FluxObs_SlowTick 计算 s_compCos / s_compSin）。
@@ -18,8 +18,6 @@
 #include "flux_obs.h"
 #include "foc_core.h"
 #include "meas.h"
-#include "est.h"
-#include "svpwm.h"
 #include "qmath.h"
 #include "compiler.h"
 #include "param.h"
@@ -81,7 +79,7 @@ FORCE_INLINE void dtComp(int16_t ia, int16_t ib, int16_t *va, int16_t *vb)
     *vb = (int16_t)(*vb - ((((xb - xc) * 18919) >> 15) * vdt >> 15));
 }
 
-/* 同一误差模型变换到角 a 的 dq 坐标（Q15 电压，指令 = 实际 + 误差）。定位判停稳（慢环）、直接拖动的电压前馈（快环，牵入段）使用 */
+/* 同一误差模型变换到角 a 的 dq 坐标（Q15 电压，指令 = 实际 + 误差）。参数辨识定位判停稳（慢环）与死区拟合（identify.c）使用 */
 Dq_TypeDef FluxObs_DtErr(AlphaBeta_TypeDef iab, SinCos_TypeDef a)
 {
     int16_t ea = 0, eb = 0;
@@ -109,6 +107,11 @@ static void setTarget(int32_t tgt);
 /* 从 gGain 重新装载模型参数（上电或 param.c 更新参数时；在 Stop 状态下调用） */
 void FluxObs_LoadModel(void)
 {
+    if (gFluxObs.s16KTs > 0 && gFluxObs.s16KTs != gGain.fluxKtsQ15) {
+        gFluxObs.s32PsiAlF = (int32_t)(((int64_t)gFluxObs.s32PsiAlF * gGain.fluxKtsQ15) / gFluxObs.s16KTs);
+        gFluxObs.s32PsiBeF = (int32_t)(((int64_t)gFluxObs.s32PsiBeF * gGain.fluxKtsQ15) / gFluxObs.s16KTs);
+    }
+    gFluxObs.s16KTs = gGain.fluxKtsQ15;
     gFluxObs.s16KRs = gGain.fluxKrsQ15;
     gFluxObs.s16KLq = gGain.fluxKlQ15;
     gFluxObs.s16NlfoNormQ8 = gGain.nlfoNormQ8;
@@ -120,8 +123,8 @@ void FluxObs_LoadModel(void)
 /* 上电：装载模型参数、积分步长 KTs、去直流窗口，清除状态 */
 void FluxObs_Init(void)
 {
+    gFluxObs.s16KTs = gGain.fluxKtsQ15;
     FluxObs_LoadModel();
-    gFluxObs.s16KTs = FLUX_KTS_Q15;
     gFluxObs.sEalAvgMA.u16Sh = FLUX_HPF_SH; gFluxObs.sEbeAvgMA.u16Sh = FLUX_HPF_SH;
     FluxObs_Reset();
 }
@@ -172,7 +175,7 @@ void FluxObs_SetIdRef(int16_t idQ15)
 }
 #endif
 
-/* 冷起动（IPD / 定位 -> I/F）时调用：磁链初始化为 |psi_f|∠theta（此时转子位于该角度），观测器从正确状态开始 */
+/* 冷起动（IPD / 摆动起动 -> I/F）时调用：磁链初始化为 |psi_f|∠theta（此时转子位于该角度），观测器从正确状态开始 */
 void FluxObs_BeginOpenLoop(void)
 {
     /* 仅在冷起动 Align/IPD -> OpenLoop 时调用（由 Est_OnEnterOpenLoopCold 调用，PLL 与转速清零也在该处） */
@@ -288,4 +291,111 @@ RAMFUNC void FluxObs_Run(void)
         y = ((pb * c - ps * s) >> 15) - lib;
     }
     gFluxObs.s16PsiRAl = (int16_t)QMath_Clamp(x, PSI_LIMIT); gFluxObs.s16PsiRBe = (int16_t)QMath_Clamp(y, PSI_LIMIT);
+}
+
+/* ============================================================================
+ * 转子磁链锁相环（FluxPLL）与无感角度估计调度（gEst）
+ * ==========================================================================*/
+#define SPEED_LIMIT 0x7FFF8000L
+
+void FluxPLL_LoadGains(PLL_TypeDef *p)
+{
+    p->s16PGain = gGain.pllKp;
+    p->s16IGain = gGain.pllKi;
+}
+
+void FluxPLL_Init(PLL_TypeDef *p)
+{
+    FluxPLL_LoadGains(p);
+    p->s16ThGain   = (int16_t)SPEED_TO_THETA;
+    p->s32Theta    = 0;
+    p->s32Speed    = 0;
+    p->s32I_1      = 0;
+}
+
+RAMFUNC int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta)
+{
+    SinCos_TypeDef a = FocMath_SinCos(theta);
+    return (int16_t)(QMath_MulQ15(psiBeta, a.s16Cos) - QMath_MulQ15(psiAlpha, a.s16Sin));
+}
+
+FORCE_INLINE int32_t speedClamp(int32_t v)
+{
+    if (v >  SPEED_LIMIT) return  SPEED_LIMIT;
+    if (v < -SPEED_LIMIT) return -SPEED_LIMIT;
+    return v;
+}
+
+FORCE_INLINE int32_t angleStep(int32_t speed, int16_t kTheta)
+{
+    return (int32_t)(speed >> 15) * (int32_t)kTheta;
+}
+
+FORCE_INLINE int16_t advance(PLL_TypeDef *p, int32_t kpTerm, int32_t kiTerm)
+{
+    p->s32I_1   = speedClamp(QMath_AddSat32(p->s32I_1, kiTerm));
+    p->s32Speed = speedClamp(QMath_AddSat32(p->s32I_1, kpTerm));
+    p->s32Theta = (int32_t)((uint32_t)p->s32Theta + (uint32_t)angleStep(p->s32Speed, p->s16ThGain));
+    return (int16_t)(p->s32Theta >> 16);
+}
+
+RAMFUNC int16_t FluxPLL_StepQ15(const PLL_TypeDef *p, int32_t advQ8)
+{
+    int32_t step = angleStep(p->s32Speed, p->s16ThGain);
+    return (int16_t)(((step >> 8) * advQ8) >> 16);
+}
+
+RAMFUNC int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p)
+{
+    int32_t kpTerm = (int32_t)err * p->s16PGain;
+    int32_t kiTerm = (int32_t)err * p->s16IGain;
+    return advance(p, kpTerm, kiTerm);
+}
+
+Est_TypeDef gEst;
+
+RAMFUNC int16_t Est_TrackTick(void)
+{
+    int16_t thK = (int16_t)(gEst.pll.s32Theta >> 16), err;
+    FluxObs_Run();
+    err = FluxPLL_PhaseError(gFluxObs.s16PsiRAl, gFluxObs.s16PsiRBe, thK);
+    gEst.thetaPll = FluxPLL_Run(err, &gEst.pll);
+    return thK;
+}
+
+RAMFUNC void Est_SpinTick(void)
+{
+    int16_t thK = Est_TrackTick();
+    gFoc.theta = thK;
+    gFoc.thetaInv = gFoc.theta + FluxPLL_StepQ15(&gEst.pll, INVPARK_ADV_Q8);
+    Meas_SpeedSource((int16_t)(gEst.pll.s32Speed >> 16));
+}
+
+void Est_OnEnterOpenLoopCold(void)
+{
+    gEst.pll.s32Theta = gFoc.theta << 16;
+    gEst.pll.s32Speed = 0; gEst.pll.s32I_1 = 0;
+    Meas_SpeedReset();
+    FluxObs_BeginOpenLoop();
+}
+
+void Est_ResetRun(void)
+{
+    gEst.pll.s32I_1 = 0;
+    gEst.pll.s32Speed = 0;
+}
+
+void Est_OnCatch(int16_t theta, int16_t spd)
+{
+    int32_t sp = (int32_t)spd << 16;
+    FluxPLL_Init(&gEst.pll);
+    gEst.pll.s32Speed = sp;
+    gEst.pll.s32I_1 = sp;
+    gEst.pll.s32Theta = (int32_t)((uint32_t)(uint16_t)theta << 16) + (sp >> 15) * (int32_t)SPEED_TO_THETA;
+    gEst.thetaPll = (int16_t)(gEst.pll.s32Theta >> 16);
+    gFoc.theta = gEst.thetaPll;
+    gFoc.thetaInv = gEst.thetaPll;
+    FluxObs_SeedCatch(theta);
+    Meas_SpeedSource(spd);
+    Meas_SpeedPreset(spd);
 }

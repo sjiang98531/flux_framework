@@ -53,4 +53,26 @@ Dq_TypeDef FluxObs_DtErr(AlphaBeta_TypeDef iab, SinCos_TypeDef a);
 void FluxObs_SetIdRef(int16_t idQ15);
 #endif
 
+/* ============================================================================
+ * 转子磁链锁相环（FluxPLL）与无感角度估计调度（gEst）
+ * ==========================================================================*/
+void FluxPLL_Init(PLL_TypeDef *p);
+void FluxPLL_LoadGains(PLL_TypeDef *p);    /* 仅重新装载 Kp / Ki（param.c 更新参数时调用） */
+int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta);
+int16_t FluxPLL_StepQ15(const PLL_TypeDef *p, int32_t advQ8);
+int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p);
+
+typedef struct {
+    PLL_TypeDef pll;            /* 磁链 PLL */
+    int16_t     thetaPll;       /* PLL 输出角（已推进到下一拍） */
+} Est_TypeDef;
+
+extern Est_TypeDef gEst;
+
+int16_t Est_TrackTick(void);                /* 观测器 + PLL 跟踪一拍（I/F 拖动期间，返回 k 时刻角） */
+void    Est_SpinTick(void);                 /* Spin 闭环每拍：跟踪 + 反 Park 超前外推 + 写入转速反馈 */
+void    Est_OnEnterOpenLoopCold(void);      /* 进入 I/F 冷起动（IPD / 摆动）：观测器与 PLL 对齐当前角 */
+void    Est_OnCatch(int16_t theta, int16_t spd); /* 飞车直接接管进入 Spin */
+void    Est_ResetRun(void);                 /* 停机 / 故障复位 */
+
 #endif

@@ -12,9 +12,28 @@
 #include "foc_math.h"
 #include "qmath.h"
 #include "meas.h"
-#include "svpwm.h"
 
-/* 电流环状态。角度由估计模块（闭环）或起动模块（定位、开环）每拍写入。 */
+/* ---- 空间矢量脉宽调制（SVPWM） ------------------------------------------- */
+#define SEVENMODE   1           /* 七段式 */
+#define FIVEMODE    0           /* 五段式 */
+
+typedef struct {
+    int32_t Alpha;              /* 输入 αβ 电压，Q15，32768 = Vbus/√3（经 FocCore_BusNormalize 归一化） */
+    int32_t Beta;
+    int16_t CompA;              /* 输出三相比较值 */
+    int16_t CompB;
+    int16_t CompC;
+    uint8_t Sector;             /* 扇区 1..6 */
+    uint8_t Mode;               /* SEVENMODE / FIVEMODE */
+    int16_t N_halfPeriod;       /* PWM 半周期计数 */
+} Svpwm_TypeDef;
+
+extern Svpwm_TypeDef gSvpwm;
+
+void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod);
+void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibusRec);
+
+/* 电流环状态。角度由估计模块（闭环）或起动 / 开环模块（IPD、摆动起动、I/F）每拍写入。 */
 typedef struct {
     int16_t           theta;        /* Park 用的电角度（Q15 角度，65536 = 一圈） */
     int16_t           thetaInv;     /* 反 Park 用的电角度（含延时补偿） */
@@ -36,9 +55,6 @@ extern FocCore_TypeDef gFoc;
 /* 电流环参数初始化 */
 void FocCore_Init(void);
 void FocCore_LoadGains(void);       /* 从 gGain 重新装载电流环 Kp / Ki（param.c 更新参数时调用） */
-/* 电压型驱动：fn 每拍给出 dq 电压前馈（Q15），电流环 Kp = 0、积分很慢；fn = 0 退出（前馈并入积分器，恢复增益） */
-typedef void (*FocCore_FfFn)(int32_t *ffd, int32_t *ffq);
-void FocCore_SetVoltageDrive(FocCore_FfFn fn);
 
 /* i_abc -> i_alpha_beta（快环热路径，内联） */
 FORCE_INLINE void FocCore_Clarke(void)

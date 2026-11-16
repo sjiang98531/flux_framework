@@ -5,14 +5,16 @@
  *   FocMath_SinCos     查表正弦 / 余弦
  *   FocMath_SqrtQ15    查表开方
  *   FocMath_ClarkeSat / FocMath_Park / FocMath_InvPark  坐标变换
+ *   Pi_Run32 / Pi_Run64  定点 PI 调节器
  *
- * 查找表定义在 foc_tables.c（按公式生成）。数据类型见 qtypes.h。
+ * 查找表定义在 qmath.c（按公式生成）。数据类型见 qtypes.h。
  * ==========================================================================*/
 #ifndef FOC_MATH_H
 #define FOC_MATH_H
 #include <stdint.h>
 #include "compiler.h"
 #include "qtypes.h"
+#include "qmath.h"
 
 /* 四分之一周期正弦表 sin(i*90°/256)，Q15 */
 extern const int16_t g_focSinTab[256];
@@ -76,6 +78,40 @@ FORCE_INLINE void FocMath_InvPark(const Dq_TypeDef *in, const SinCos_TypeDef *an
     int32_t d = in->s16D, q = in->s16Q, s = ang->s16Sin, c = ang->s16Cos;
     out->s16Beta  = (int16_t)((c * q + s * d) >> 15);
     out->s16Alpha = (int16_t)((c * d - s * q) >> 15);
+}
+
+/* ---- 定点 PI 调节器（抗积分饱和与防溢出） --------------------------------- */
+FORCE_INLINE void Pi_Run32(PI_TypeDef *p)
+{
+    int32_t err = (int32_t)p->qInRef - (int32_t)p->qInMeas;
+    int32_t hi = (int32_t)p->qOutMax << 15, lo = (int32_t)p->qOutMin << 15;
+    int32_t sum, out;
+    if (err > 32767) err = 32767;
+    if (err < -32767) err = -32767;
+    sum = QMath_AddSat32((int32_t)p->qdSum, (int32_t)p->qKi * err);
+    if (sum >= hi) sum = hi;
+    else if (sum <= lo) sum = lo;
+    p->qdSum = sum;
+    out = (((int32_t)p->qKp * err) >> 15) + (sum >> 15);
+    if (out > p->qOutMax) out = p->qOutMax;
+    else if (out < p->qOutMin) out = p->qOutMin;
+    p->qOut = out;
+}
+
+FORCE_INLINE void Pi_Run64(PI_TypeDef *p)
+{
+    int64_t d = (int64_t)p->qInRef - (int64_t)p->qInMeas;
+    int32_t err = (d > 2147483647) ? 2147483647 : (d < -2147483647) ? -2147483647 : (int32_t)d;
+    int64_t hi = (int64_t)p->qOutMax << 15, lo = (int64_t)p->qOutMin << 15;
+    int64_t sum = (int64_t)p->qdSum + (int64_t)(int32_t)p->qKi * err;
+    int64_t out;
+    if (sum >= hi) sum = hi;
+    else if (sum <= lo) sum = lo;
+    p->qdSum = (int32_t)sum;
+    out = (((int64_t)(int32_t)p->qKp * err) >> 15) + (sum >> 15);
+    if (out > p->qOutMax) out = p->qOutMax;
+    else if (out < p->qOutMin) out = p->qOutMin;
+    p->qOut = (int32_t)out;
 }
 
 #endif

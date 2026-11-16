@@ -69,9 +69,8 @@ CFG_CHECK(FLUX_LS_SAT_SANE, MOTOR_LS_SAT_KNEE_A >= 0 && MOTOR_LS_SAT_KNEE_A < I_
 /* 逆变器电压误差参数：KT 要有分辨率（> 0 时至少 16 LSB）且 < 0.1 个周期；I0 在电流量程内，斜率不溢出 */
 CFG_CHECK(INVERTER_DT_SANE, !INVERTER_DT_COMP || (INVERTER_DT_EFF_S * PWM_FREQ * 32768.0 >= 16 && INVERTER_DT_EFF_S * PWM_FREQ < 0.1 &&
          INVERTER_DT_I0_A > 0.01 && INVERTER_DT_I0_A < I_MAX && 256.0 * I_MAX / INVERTER_DT_I0_A < 60000.0))
-/* 起动方式默认值只能取四种之一 */
-CFG_CHECK(STARTUP_MODE_VALID, STARTUP_MODE == STARTUP_MODE_IPD || STARTUP_MODE == STARTUP_MODE_DRAG || STARTUP_MODE == STARTUP_MODE_ALIGN ||
-         STARTUP_MODE == STARTUP_MODE_SWING)
+/* 起动方式默认值只能取 IPD 或 SWING */
+CFG_CHECK(STARTUP_MODE_VALID, STARTUP_MODE == STARTUP_MODE_IPD || STARTUP_MODE == STARTUP_MODE_SWING)
 /* 摆动中起动：扫掠角为 60° 的整数倍且不超过 180°；判定时间不少于半个摆动周期，最长等待的拍数不超过 uint16；
  * 定位电流不大于拖动电流（接入后电流只升不降）；定点量不溢出；
  * 最小峰值转速对应的反电势不少于 8 LSB（检测电平的间隔为其 1/4） */
@@ -81,9 +80,6 @@ CFG_CHECK(ALIGN_SWING_FITS, ALIGN_SWING_SWEEP_DEG >= 0 && ALIGN_SWING_SWEEP_DEG 
          ALIGN_SWING_MIN_DELTA > 0 && ALIGN_SWING_MIN_DELTA < 1.0 && ALIGN_ID_Q15 <= OPENLOOP_IQ_Q15 &&
          (double)ALIGN_ID_Q15 * ALIGN_SWING_SWEEP_K_Q16 < 2147483647.0 && ALIGN_SWING_LAG_ANG_Q12 < 1000000 &&
          (ALIGN_SWING_MIN_SPD_T * DECOUPLE_K_EMF_Q15_OF(MOTOR_PSI_F_WB) / 32768.0) * (ALIGN_SWING_MIN_SPD_T * DECOUPLE_K_EMF_Q15_OF(MOTOR_PSI_F_WB) / 32768.0) >= 8.0 * 8.0 * ALIGN_T2_TICKS2)
-/* 定位后立即加速：拖动前至少等待 1 T（阻尼 0.75 时摆动衰减到 1/10 以下），总拍数不超过 uint16 */
-CFG_CHECK(ALIGN_GO_FITS, ALIGN_GO_T >= 1.0 && ALIGN_A / ALIGN_RAMP_A_S * SLOWLOOP_FREQ < 32767.0 &&
-         ALIGN_GO_T * ALIGN_GO_T * ALIGN_T2_TICKS2 < 32767.0 * 32767.0)
 /* 停机方式默认值只能取两种之一 */
 CFG_CHECK(STOP_MODE_VALID, STOP_MODE == STOP_MODE_RAMP || STOP_MODE == STOP_MODE_COAST)
 /* IPD 注入电压加偏置电流环的输出不超出线性调制区（额定母线，偏置所需电压按 Rs 计）；拍数、斜坡步长有效；门限合理 */
@@ -131,7 +127,7 @@ CFG_CHECK(OPENLOOP_STILL_RESOLUTION, ALIGN_STILL_EMF_Q15 >= 4)
 CFG_CHECK(NLFO_FITS, FLUX_NLFO_NORM_Q8 >= 64 && FLUX_NLFO_NORM_Q8 < 8192 && FLUX_NLFO_TAU_S >= 0.004 && FLUX_NLFO_TAU_S <= 0.064)
 /* 冷起动平衡负载角：0 < OPENLOOP_ACC_FRAC <= 0.5（δ_eq <= 30°，asin 级数在适用范围内） */
 CFG_CHECK(OPENLOOP_ACC_FRAC_RANGE, OPENLOOP_ACC_FRAC > 0 && OPENLOOP_ACC_FRAC <= 0.5)
-/* I/F 加速度步长 x 开环电流在 32 位内（startup.c 用 32 位乘除，可能在快环里执行）：最大步长（反转加大）x 最大电流 < 2^31 */
+/* I/F 加速度步长 x 开环电流在 32 位内（openloop.c 用 32 位乘除，可能在快环里执行）：最大步长（反转加大）x 最大电流 < 2^31 */
 CFG_CHECK(OPENLOOP_ACC_STEP_FITS, (double)OPENLOOP_ACC_STEP_Q31 * OPENLOOP_REV_IQ_Q15 / OPENLOOP_IQ_Q15 * OPENLOOP_WARM_IMAX_Q15 < 2147483647.0 &&
          (double)OPENLOOP_ACC_STEP_Q31 * OPENLOOP_WARM_IMAX_Q15 < 2147483647.0)
 /* 慢环频率：整除 PWM 频率（快环每 N 拍挂起一次慢环）；至少为慢环中各环节特征频率的 20 倍：
@@ -156,12 +152,6 @@ CFG_CHECK(RAMP_FIXEDPOINT_FITS, SPEED_JERK_Q31 >= 1 && 4294967296.0 / (2.0 * SPE
 CFG_CHECK(OPENLOOP_TICKS_FIT, ALIGN_MAX_T * ALIGN_MAX_T * ALIGN_T2_S2 * SLOWLOOP_FREQ * SLOWLOOP_FREQ < 65535.0 * 65535.0 &&
          ALIGN_MIN_T > 0 && ALIGN_STILL_T >= 0.3 && ALIGN_MAX_T > ALIGN_MIN_T + ALIGN_STILL_T && FLY_SETTLE_BLOCKS >= 1 &&
          OPENLOOP_TIMEOUT_S * SLOWLOOP_FREQ < 65536 && OPENLOOP_AGREE_S * SLOWLOOP_FREQ < 65536)
-
-/* 直接拖动：牵入频率 f0 低于 I/F 摆动频率（0 < DRAG_F0_RATIO < 1）、牵入段至少转一圈、拍数不超过 uint16；
- * 电压型驱动的电流积分带宽须远低于摆动频率（否则积分又将反电势抵消，失去阻尼）且不超过正常电流环带宽 */
-CFG_CHECK(DRAG_FITS, DRAG_F0_RATIO > 0 && DRAG_F0_RATIO < 1 && DRAG_HOLD_T >= 1.0 / DRAG_F0_RATIO &&
-         DRAG_T2_TICKS2 * DRAG_HOLD_T * DRAG_HOLD_T < 65535.0 * 65535.0 &&
-         DRAG_CUR_BW_HZ > 0 && DRAG_CUR_BW_HZ * DRAG_CUR_BW_HZ * DRAG_T2_S2 < 0.25 * 0.25 && DRAG_CUR_BW_HZ < CURRENT_BW_HZ)
 
 /* ---- 飞车检测 ------------------------------------------------------------ */
 /* 短脉冲测速：脉冲周期至少 4 拍（SPEED_MAX 时 120° 电角度换成的拍数太少：PWM 太低或 SPEED_MAX 太高） */

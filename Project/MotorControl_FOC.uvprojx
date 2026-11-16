@@ -491,19 +491,9 @@
           <GroupName>Observer</GroupName>
           <Files>
             <File>
-              <FileName>est.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\FW\Src\est.c</FilePath>
-            </File>
-            <File>
               <FileName>flux_obs.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\flux_obs.c</FilePath>
-            </File>
-            <File>
-              <FileName>flux_pll.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\FW\Src\flux_pll.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -516,11 +506,6 @@
               <FilePath>..\FW\Src\foc_core.c</FilePath>
             </File>
             <File>
-              <FileName>svpwm.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\FW\Src\svpwm.c</FilePath>
-            </File>
-            <File>
               <FileName>meas.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\meas.c</FilePath>
@@ -529,11 +514,6 @@
               <FileName>qmath.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\FW\Src\qmath.c</FilePath>
-            </File>
-            <File>
-              <FileName>foc_tables.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\FW\Src\foc_tables.c</FilePath>
             </File>
           </Files>
         </Group>

@@ -14,7 +14,6 @@
 #include "meas.h"
 #include "foc_core.h"
 #include "hal.h"
-#include "ctrl_pi.h"
 #include "id_ref.h"
 #include <stdlib.h>
 #include "param.h"
@@ -26,7 +25,6 @@ SpeedCtrl_TypeDef gSpd;
 #define RAMP_UP_Q31             RAMP_Q31(SPEED_RAMP_UP, SPEED_MAX)          /* 运行：加速 */
 #define RAMP_DOWN_Q31           RAMP_Q31(SPEED_RAMP_DOWN, SPEED_MAX)        /* 运行：同向减速 */
 #define RAMP_REV_Q31            RAMP_Q31(SPEED_RAMP_REV, SPEED_MAX)         /* 运行：反转的减速段 */
-#define RAMP_OPENLOOP_Q31       RAMP_Q31(OPENLOOP_ACC_RPM_S, SPEED_MAX)     /* I/F 开环加速度（切换融合的起点） */
 #define RAMP_STARTUP_Q31        RAMP_Q31(STARTUP_SPEED_RAMP, SPEED_MAX)     /* I/F 期间（仅显示） */
 
 /* 从 gGain 装载速度 PI 增益（上电及参数更新时） */
@@ -68,9 +66,9 @@ void SpeedCtrl_Init(void)
 static int16_t regenIqAllowed(void)
 {
     int32_t v = gMeas.vbusAvg;
-    if (v <= BUS_REGEN_START_Q15) return gSpd.iqLimit;
-    if (v >= BUS_REGEN_FULL_Q15) return 0;
-    return (int16_t)(((BUS_REGEN_FULL_Q15 - v) * BUS_REGEN_K_Q12) >> 12);
+    if (v <= gGain.busRegenStartQ15) return gGain.busRegenIqMaxQ15;
+    if (v >= gGain.busRegenFullQ15) return 0;
+    return (int16_t)(((gGain.busRegenFullQ15 - v) * gGain.busRegenKQ12) >> 12);
 }
 
 /* 母线电压控制器（原理见 cfg_internal.h"回馈减速"）。在斜坡运行之前调用：
@@ -85,7 +83,7 @@ static void busVdcLimit(void)
     int32_t lam = 0;
     if ((st > 0 && tgt < st) || (st < 0 && tgt > st)) {
         int32_t *pr = (st > 0) ? &gSpd.speedRampSt.s32RampDown : &gSpd.speedRampSt.s32RampUp;
-        int32_t nom = (int32_t)*pr, v = gMeas.vbusAvg, e2 = BUS_VDC_REF_SQ - v * v, s = abs(gMeas.speed), step;
+        int32_t nom = (int32_t)*pr, v = gMeas.vbusAvg, e2 = gGain.busVdcRefSq - v * v, s = abs(gMeas.speed), step;
         int32_t iqLoad = (st > 0) ? gSpd.pi.qOut : -gSpd.pi.qOut;      /* 负载转矩对应的 iq（Q15，与转动同向为正） */
         int32_t stepLoad = (iqLoad > 0) ? (int32_t)(((int64_t)iqLoad * gGain.spdAccPerIqQ8) >> 8) : 0;
         if (s < BUS_VDC_SMIN_Q15) s = BUS_VDC_SMIN_Q15;
@@ -95,7 +93,7 @@ static void busVdcLimit(void)
             /* 不使用 64 位除法。N = e2*K（< 2^44），先用乘法判断是否受限（N >= nom*s*256 即不受限，
              * 多数情况走此分支），受限时 1/s 用一次 32 位除法（s >= SMIN，r = 2^30/s < 2^22），
              * step = (N >> 16) * r >> 22（乘积 < 2^49）。截断误差 < 1 LSB */
-            uint64_t n = (uint64_t)e2 * (uint64_t)BUS_VDC_K_Q8;
+            uint64_t n = (uint64_t)e2 * (uint64_t)gGain.busVdcKQ8;
             if (n >= ((uint64_t)(uint32_t)nom * (uint32_t)s) << 8) {
                 step = nom;
             } else {
@@ -175,7 +173,7 @@ static int32_t rampSCurve(int32_t tgt)
 static void approachFallback(void)
 {
     int32_t st = gSpd.speedRampSt.s32State, c = gSpd.cmd, ac = c < 0 ? -c : c;
-    int32_t ast = st < 0 ? -st : st, aif = RAMP_Q31(OPENLOOP_REV_ACC_RPM_S, SPEED_MAX), a = gSpd.rampAcc < 0 ? -gSpd.rampAcc : gSpd.rampAcc;
+    int32_t ast = st < 0 ? -st : st, aif = gGain.rampOpenLoopRevQ31, a = gSpd.rampAcc < 0 ? -gSpd.rampAcc : gSpd.rampAcc;
     int32_t *pr;
     int64_t zone;
     if (!((st > 0 && c < 0) || (st < 0 && c > 0) || ac < OPENLOOP_SPIN_MIN_Q15)) return;
@@ -291,7 +289,7 @@ void SpeedCtrl_BlendStart(int16_t id0, int16_t iq0, int32_t rampStartQ31, int16_
     gSpd.speedRampSt.s32State = rampStartQ31;
     gSpd.rampQ31 = rampStartQ31;
     gSpd.ramp = (int16_t)(rampStartQ31 >> 16);
-    gSpd.speedRampSt.s32RampUp   = (int32_t)(((int64_t)RAMP_OPENLOOP_Q31 * accScaleQ12) >> 12);
+    gSpd.speedRampSt.s32RampUp   = (int32_t)(((int64_t)gGain.rampOpenLoopQ31 * accScaleQ12) >> 12);
     gSpd.speedRampSt.s32RampDown = gSpd.speedRampSt.s32RampUp;
     /* 开环仍在加速（ff0 != 0）：斜坡加速度延续开环值，前馈连续 */
     gSpd.rampAcc = (ff0 > 0) ? gSpd.speedRampSt.s32RampUp : ((ff0 < 0) ? -gSpd.speedRampSt.s32RampUp : 0);
@@ -341,7 +339,7 @@ void SpeedCtrl_BlendSlow(void)
     if (w > 32767) w = 32767;
     gSpd.blendW = (int16_t)w;
     {   /* 斜坡斜率 I/F 加速度 -> SPEED_RAMP_UP / DOWN；w = 32767 时恰为 SpeedCtrl_OnEnterSpin 设置的值 */
-        int32_t r0 = (int32_t)(((int64_t)RAMP_OPENLOOP_Q31 * gSpd.blendAccQ12) >> 12);
+        int32_t r0 = (int32_t)(((int64_t)gGain.rampOpenLoopQ31 * gSpd.blendAccQ12) >> 12);
         int32_t up = RAMP_UP_Q31, dn = RAMP_DOWN_Q31;
         gSpd.speedRampSt.s32RampUp   = (w >= 32767) ? up : r0 + (int32_t)(((int64_t)(up - r0) * w) >> 15);
         gSpd.speedRampSt.s32RampDown = (w >= 32767) ? dn : r0 + (int32_t)(((int64_t)(dn - r0) * w) >> 15);
