@@ -54,24 +54,23 @@ static uint16_t checkParam(const MotorParam_TypeDef *p)
 {
     uint16_t bad = 0;
     double psiN = (p->psiWb > 0 && p->ldH > 0 && p->lqH > 0) ? FLUX_PSI_N_OF(p->psiWb, p->ldH, p->lqH) : FLUX_PSI_N;
-    /* bit0 Rs：满量程电流下的电阻压降须小于电压满量程（电流环、观测器两种电压基准均检查） */
-    if (!(p->rsOhm > 0 && p->rsOhm * I_MAX / UDC_MAX < 0.9 && p->rsOhm * I_MAX / FLUX_V_BASE < 0.9)) bad |= 1u;
-    /* bit1 L：满量程电流下的电感磁链 L*I 须在观测器磁链量程内；表贴式（MOTOR_IPM = 0）要求 Ld = Lq */
-    if (!(p->lqH > 0 && p->ldH > 0 && p->lqH * I_MAX / psiN < 0.9 && p->ldH * I_MAX / psiN < 0.9)
-        || (!MOTOR_IPM && p->ldH != p->lqH)) bad |= 2u;
+    /* bit0 Rs：为正，且满量程电流下的电阻压降在观测器电压基准 Q15 量程内 */
+    if (!(p->rsOhm > 0 && p->rsOhm * I_MAX / FLUX_V_BASE < 0.99997)) bad |= 1u;
+    /* bit1 L：为正，且满量程电流下的电感磁链 L*I 在观测器磁链量程内 */
+    if (!(p->lqH > 0 && p->ldH > 0 && p->lqH * I_MAX / psiN < 0.9 && p->ldH * I_MAX / psiN < 0.9)) bad |= 2u;
     /* bit2 L(i)：拐点在电流量程内，斜率非负且 Q12 可容纳 */
     if (!(p->lsKneeA >= 0 && p->lsKneeA < I_MAX && p->lsPerA >= 0 && p->lsPerA * I_MAX < 7.0)) bad |= 4u;
-    /* bit3 psi：最大定子磁链 psi + L*I 在观测器量程内；满量程转速下的反电势不超过电压满量程；磁链基准积分步长和分辨率合理 */
-    if (!(p->psiWb > 0 && (p->psiWb + p->lqH * I_MAX) / psiN < 0.9 && p->psiWb / psiN >= 0.03 &&
-          W_EMAX_RAD_S * p->psiWb / UDC_MAX < 1.0 &&
+    /* bit3 psi：最大定子磁链 psi + L*I 在观测器积分器限幅内，磁链定点非零且积分步长在 Q15 内 */
+    if (!(p->psiWb > 0 && (p->psiWb + p->lqH * I_MAX) / psiN < 0.9 &&
+          FLUX_NOMINAL_Q15_AT(p->psiWb, psiN) >= 16 &&
           2.0 * MATH_PI * FLUX_WN_HZ_OF(p->psiWb, p->ldH, p->lqH) / PWM_FREQ < 0.99997)) bad |= 8u;
     else {
-        /* psi 过小时 NLFO 归一化系数（与 1/psi^2 成正比）会超出 int16 */
+        /* NLFO 归一化系数须非零且 ((ferr>>12)*norm) 不溢出 int32（norm < 8192） */
         int32_t n = FLUX_NLFO_NORM_Q8_OF(FLUX_NOMINAL_Q15_AT(p->psiWb, psiN));
-        if (n < 64 || n > 32767) bad |= 8u;
+        if (n < 1 || n >= 8192) bad |= 8u;
     }
-    /* bit4 加速度系数：为正，且计算出的速度环 Kp 未被截断为 0 */
-    if (!(p->accRpmSPerA > 0 && SPEED_KP_OF(p->accRpmSPerA) > 0)) bad |= 16u;
+    /* bit4 加速度系数：为正，且计算出的速度环 Kp、Ki 未被截断为 0 */
+    if (!(p->accRpmSPerA > 0 && SPEED_KP_OF(p->accRpmSPerA) >= 1 && SPEED_KI_OF(p->accRpmSPerA) >= 1)) bad |= 16u;
     /* bit5 死区：非负，且小于 PWM 周期的 10%（超出则判为测量错误） */
     if (!(p->dtEffS >= 0 && p->dtEffS * PWM_FREQ < 0.1)) bad |= 32u;
     return bad;
@@ -137,8 +136,9 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     if (SPEED_TO_THETA >= 32767) g->cfgWarn |= 4u;
     /* IPD 注入电压：电流三角波幅值 IPD_HF_A，按 Lq 计算 */
     g->ipdHfVQ15 = Q15(IPD_HF_V_OF(p->lqH) / UDC_MAX);
-    /* 飞车：阻抗角系数 w*Lq/Rs、短接暂态等待时间（L/R 的倍数）、门限电流与等待停稳 / 过期时间 */
+    /* 飞车：阻抗角系数 w*Lq/Rs（封顶 65535 防 32 位乘法溢出）、短接暂态等待时间（L/R 的倍数）、门限电流与等待停稳 / 过期时间 */
     g->flyWlrQ12 = FLY_WLR_Q12_OF(p->lqH, p->rsOhm);
+    if (g->flyWlrQ12 > 65535) g->flyWlrQ12 = 65535;
     g->flySettleBlocks = FLY_SETTLE_BLOCKS_OF(p->ldH, p->rsOhm);
     {
         double thPu = FLYCURRENT_TH_PU_OF(p->psiWb, p->rsOhm);
