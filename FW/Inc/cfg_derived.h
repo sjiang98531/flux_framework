@@ -96,7 +96,7 @@
  *       / SPEED_MAX / SLOWLOOP_FREQ * 2^31（rpm/s 换成 Q31 步长） */
 #define BUS_VDC_REF_Q15_OF(psi) ((int32_t)(BUS_VDC_REF_V_OF(psi) / UDC_MAX * 32768.0))
 #define BUS_VDC_REF_SQ_OF(psi)  (BUS_VDC_REF_Q15_OF(psi) * BUS_VDC_REF_Q15_OF(psi))
-#define BUS_VDC_K_Q8_OF(psi, acc) ((int64_t)(2.0 * MATH_PI * BUS_VDC_BW_HZ * 0.5 * BOARD_CBUS_UF * 1e-6 * UDC_MAX * UDC_MAX / 1073741824.0 \
+#define BUS_VDC_K_Q8_OF(psi, acc) ((int32_t)(2.0 * MATH_PI * BUS_VDC_BW_HZ * 0.5 * BOARD_CBUS_UF * 1e-6 * UDC_MAX * UDC_MAX / 1073741824.0 \
                                  * (acc) / MOTOR_KT_NM_A_OF(psi) * 32768.0 * 60.0 / (2.0 * MATH_PI * SPEED_MAX) \
                                  / SPEED_MAX / SLOWLOOP_FREQ * 2147483648.0 * 256.0 + 0.5))
 #define BUS_VDC_REF_Q15         BUS_VDC_REF_Q15_OF(MOTOR_PSI_F_WB)

@@ -50,7 +50,7 @@ typedef struct {
     int16_t busRegenIqMaxQ15;                          /* 母线回馈方向允许的最大 iq（Q15） */
     int32_t busRegenKQ12;                              /* 母线回馈兜底削顶斜率（Q12） */
     int32_t busVdcRefSq;                               /* 母线电压控制器调节点平方（Q30） */
-    int64_t busVdcKQ8;                                 /* 母线电压控制器增益（Q8） */
+    int32_t busVdcKQ8;                                 /* 母线电压控制器增益（Q8） */
     /* ---- dq 解耦前馈（foc_core.c）：反电势 w*psi（Q15）、交叉耦合 w*Lq*iq、w*Ld*id（Q12，系数可能 > 1） */
     int32_t decKEmfQ15, decKLqQ12, decKLdQ12;
     /* ---- 磁链观测器与锁相环（flux_obs.c） */

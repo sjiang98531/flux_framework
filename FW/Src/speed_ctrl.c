@@ -93,7 +93,7 @@ static void busVdcLimit(void)
             /* 不使用 64 位除法。N = e2*K（< 2^44），先用乘法判断是否受限（N >= nom*s*256 即不受限，
              * 多数情况走此分支），受限时 1/s 用一次 32 位除法（s >= SMIN，r = 2^30/s < 2^22），
              * step = (N >> 16) * r >> 22（乘积 < 2^49）。截断误差 < 1 LSB */
-            uint64_t n = (uint64_t)e2 * (uint64_t)gGain.busVdcKQ8;
+            uint64_t n = (uint64_t)(uint32_t)e2 * (uint32_t)gGain.busVdcKQ8;
             if (n >= ((uint64_t)(uint32_t)nom * (uint32_t)s) << 8) {
                 step = nom;
             } else {
