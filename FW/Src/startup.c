@@ -223,40 +223,61 @@ static void alignSwingSlow(void)
     if (++s_alignTicks <= ALIGN_SWING_SETTLE_TICKS) return;
     {   /* 转向取当前指令方向；检测途中指令反向时重新开始记录 */
         int8_t dir = OpenLoop_Reversal(1) ? -1 : 1;
-        if (dir != s_swingDir) { s_swingDir = dir; s_swingL1 = 0; s_swingL2 = 0x3FFF0000;
-                                s_swingNegL1 = 0; s_swingNegL2 = 0x3FFF0000; }
+        if (dir != s_swingDir) {
+            s_swingDir = dir;
+            s_swingL1 = 0;
+            s_swingL2 = 0x3FFF0000;
+            s_swingNegL1 = 0;
+            s_swingNegL2 = 0x3FFF0000;
+        }
     }
     e = s_swingDir * (s_emfFilt >> ALIGN_EMF_FILT_SH);
     vd = s_dtFilt >> ALIGN_EMF_FILT_SH;
     thr = ((int32_t)s_swingMinSpd * gGain.decKEmfQ15) >> 15;
     if (e >= thr || e <= -thr) s_swingMoved = 1;
     if (e == 0) {                                   /* 过零：两套记录都复位 */
-        s_swingL1 = 0; s_swingL2 = 0; s_swingVd2 = vd;
-        s_swingNegL1 = 0; s_swingNegL2 = 0; s_swingNegVd2 = vd;
+        s_swingL1 = 0;
+        s_swingL2 = 0;
+        s_swingVd2 = vd;
+        s_swingNegL1 = 0;
+        s_swingNegL2 = 0;
+        s_swingNegVd2 = vd;
     } else if (e < 0) {                             /* 逆向峰值：对称测量，接入后 I/F 从负转速加速过零 */
-        s_swingL1 = 0; s_swingL2 = 0; s_swingVd2 = vd;
+        s_swingL1 = 0;
+        s_swingL2 = 0;
+        s_swingVd2 = vd;
         e = -e;
         if (e >= s_swingNegL2 + (thr >> 2) + (s_swingNegL2 >> 4)) {
-            s_swingNegL1 = s_swingNegL2; s_swingNegVd1 = s_swingNegVd2;
-            s_swingNegL2 = e; s_swingNegVd2 = vd;
+            s_swingNegL1 = s_swingNegL2;
+            s_swingNegVd1 = s_swingNegVd2;
+            s_swingNegL2 = e;
+            s_swingNegVd2 = vd;
         } else if (s_swingNegL1 > 0 && s_swingNegL2 >= thr && e <= s_swingNegL1) {
             int32_t ed = (s_swingNegVd1 - vd) >> 1;
             if (ed < -(thr >> 2)) {
-                s_swingNegL1 = 0; s_swingNegL2 = 0x3FFF0000;   /* 假峰值 */
+                /* 假峰值 */
+                s_swingNegL1 = 0;
+                s_swingNegL2 = 0x3FFF0000;
             } else {
                 swingCatch(e, ed, (int8_t)(-s_swingDir));
                 return;
             }
         }
     } else {
-        s_swingNegL1 = 0; s_swingNegL2 = 0; s_swingNegVd2 = vd;
+        s_swingNegL1 = 0;
+        s_swingNegL2 = 0;
+        s_swingNegVd2 = vd;
         if (e >= s_swingL2 + (thr >> 2) + (s_swingL2 >> 4)) {         /* 升高一档 */
-            s_swingL1 = s_swingL2; s_swingVd1 = s_swingVd2;
-            s_swingL2 = e; s_swingVd2 = vd;
+            s_swingL1 = s_swingL2;
+            s_swingVd1 = s_swingVd2;
+            s_swingL2 = e;
+            s_swingVd2 = vd;
         } else if (s_swingL1 > 0 && s_swingL2 >= thr && e <= s_swingL1) {  /* 峰值已过，回落到上一个电平 */
             int32_t ed = (s_swingVd1 - vd) >> 1;
             if (ed < -(thr >> 2)) {
-                s_swingL1 = 0; s_swingL2 = 0x3FFF0000;      /* 假峰值：e 回到 0 之前不再记录 */
+                /* 假峰值：e 回到 0 之前不再记录 */
+                s_swingL1 = 0;
+                s_swingL2 = 0x3FFF0000;
             } else {
                 swingCatch(e, ed, s_swingDir);
                 return;
@@ -273,8 +294,18 @@ static void alignSwingSlow(void)
  *     达到最短时间且反电势持续低于门限（已停稳），或超过最长时间 -> 开始静止测量（Ident_Begin） */
 void Startup_AlignSlow(void)
 {
-    if (IDENT_TEST && Ident_Active()) { Ident_Slow(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
-    if (s_swing) { alignSwingSlow(); Meas_SlowFilter(); Meas_SpeedHoldZero(); return; }
+    if (IDENT_TEST && Ident_Active()) {
+        Ident_Slow();
+        Meas_SlowFilter();
+        Meas_SpeedHoldZero();
+        return;
+    }
+    if (s_swing) {
+        alignSwingSlow();
+        Meas_SlowFilter();
+        Meas_SpeedHoldZero();
+        return;
+    }
     if (s_ipd) {
         Ipd_Slow();
         if (gIpd.state == IPD_STATE_DONE) {
@@ -313,7 +344,11 @@ void Startup_AlignSlow(void)
         {   /* 参数辨识：满足最短时间后等待停稳 */
             int32_t e = (s_emfFilt - s_dtFilt) >> ALIGN_EMF_FILT_SH;
             if (e < 0) e = -e;
-            if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) { if (s_still < 0xFFFF) s_still++; } else s_still = 0;
+            if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) {
+                if (s_still < 0xFFFF) s_still++;
+            } else {
+                s_still = 0;
+            }
             if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
                 Ident_Begin();
             }

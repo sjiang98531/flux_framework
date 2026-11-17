@@ -86,37 +86,46 @@ uint8_t Ident_TakeRestart(void)
     s_restartReq = 0;
     return r;
 }
-static uint8_t s_olFluxSt;          /* 运行辨识的开环磁链测量：0 等待稳速，1 平均中，2 本次起动已测（见 Ident_OpenLoopFluxSlow） */
+/* 运行辨识开环磁链子状态（s_olFluxSt） */
+enum {
+    OLF_WAIT_STABLE = 0,            /* 等待开环稳速 OLFLUX_SETTLE_MS */
+    OLF_AVG         = 1,            /* 累加平均 dq 电压与电流 OLFLUX_AVG_MS */
+    OLF_DONE        = 2             /* 本次起动已测完开环磁链 */
+};
+static uint8_t s_olFluxSt;          /* 取值见 OLF_*（Ident_OpenLoopFluxSlow） */
 static uint16_t s_olFluxN;
 
 /* 开始一次静止测量（进入 Align 时）：从 R/L 粗测开始 */
 void Ident_Reset(void)
 {
-    gIdentTest.idx = 0; gIdentTest.cnt = 0;
+    gIdentTest.idx = 0;
+    gIdentTest.cnt = 0;
     gIdent.state = IDENT_RUNNING;
     rlStart();
-    gIdentTest.phase = 9;       /* 先测 R/L（电压模式，不使用电流环），测完再定位 */
+    gIdentTest.phase = IDENT_PH_RL; /* 先测 R/L（电压模式，不使用电流环），测完再回 IDENT_PH_NONE 正常定位 */
 }
 
 /* 置为非测量状态（不执行静止测量的起动时清除上一次静止测量遗留的状态） */
 void Ident_Idle(void)
 {
-    gIdentTest.phase = 0;
-    s_olFluxSt = 0; s_olFluxN = 0;
+    gIdentTest.phase = IDENT_PH_NONE;
+    s_olFluxSt = OLF_WAIT_STABLE;
+    s_olFluxN = 0;
 }
 
-/* 定位完成后开始死区阶梯（phase 1） */
+/* 定位完成后开始死区阶梯（IDENT_PH_DT_STEP） */
 void Ident_Begin(void)
 {
-    gIdentTest.idx = 0; gIdentTest.cnt = 0;
+    gIdentTest.idx = 0;
+    gIdentTest.cnt = 0;
     gIdentTest.sum[0] = gIdentTest.sum[1] = 0;
-    gIdentTest.phase = 1;
+    gIdentTest.phase = IDENT_PH_DT_STEP;
 }
 
 /* 静止测量是否正在进行（Align 慢环据此将控制交给 Ident_Slow） */
 uint8_t Ident_Active(void)
 {
-    return (uint8_t)(gIdentTest.phase != 0);
+    return (uint8_t)(gIdentTest.phase != IDENT_PH_NONE);
 }
 
 /* 死区阶梯结束：对 id >= 0.45 A 的各档拟合 vd = Rs*id + Vd0（误差电压在 0.4 A 以上已饱和为常值）。
@@ -130,7 +139,11 @@ static void dtFit(void)
     for (i = 0; i < IDENT_DT_N; i++) {
         float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0);
         if (x < 0.45f * (float)IDENT_I_SCALE) continue;
-        sx += x; sy += y; sxx += x * x; sxy += x * y; n += 1;
+        sx += x;
+        sy += y;
+        sxx += x * x;
+        sxy += x * y;
+        n += 1;
     }
     if (n < 2 || (n * sxx - sx * sx) <= 0) return;
     gIdent.rsOhm = (n * sxy - sx * sy) / (n * sxx - sx * sx);
@@ -159,7 +172,10 @@ static void ipdFit(void)
 #define AC_INT      8
 #define AC_V_DELAY  CTRL_INVPARK_ADVANCE
 /* 频率编号 3 = 12.5 Hz：仅用于 q 轴，与 25 Hz 配对测量转子摆动（见 acFit） */
-static const uint16_t s_acPer[AC_NF + 1] = { (uint16_t)(PWM_FREQ / 25), (uint16_t)(PWM_FREQ / 50), (uint16_t)(PWM_FREQ / 100), (uint16_t)(PWM_FREQ / 12.5) };  /* 拍 / 周期 */
+static const uint16_t s_acPer[AC_NF + 1] = {    /* 拍 / 周期 */
+    (uint16_t)(PWM_FREQ / 25), (uint16_t)(PWM_FREQ / 50),
+    (uint16_t)(PWM_FREQ / 100), (uint16_t)(PWM_FREQ / 12.5)
+};
 static const float    s_acHz[AC_NF + 1]  = { 25.0f, 50.0f, 100.0f, 12.5f };
 static const uint8_t  s_acSegQ[AC_NSEG]  = { 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };      /* 0 = d 轴，1 = q 轴 */
 static const uint8_t  s_acSegF[AC_NSEG]  = { 0, 1, 2, 0, 1, 2, 3, 0, 0, 0, 0, 3, 0, 0, 0, 0 };      /* 频率编号 */
@@ -200,14 +216,15 @@ static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等�
 static void acSegStart(uint16_t seg)    /* 慢环 */
 {
     uint16_t f = s_acSegF[seg];
-    s_acTheta = (int16_t)(gIpd.theta + (s_acSegQ[seg] ? 16384 : 0));
+    s_acTheta = (int16_t)(gIpd.theta + (s_acSegQ[seg] ? ANGLE_90_Q15 : 0));
     s_acAmp = s_acSegA[seg];
     s_acEnv = 0;
     s_acEnvStep = (int32_t)(32768L / (AC_RAMP * (int32_t)s_acPer[f])) + 1;
     s_acBias = (int16_t)-(s_acSegB[seg] * (gIdentCfg.biasX ? gIdentCfg.biasX : 1));     /* 注入坐标系旋转了 +90°，N 极位于其 -q 方向 */
     s_acInc = (uint32_t)(4294967296.0 / (double)s_acPer[f] + 0.5);
     s_acDly = (uint32_t)(AC_V_DELAY * (double)s_acInc + 0.5);
-    s_acPhi = 0; s_acT = 0;
+    s_acPhi = 0;
+    s_acT = 0;
     s_acVs = s_acVc = s_acIs = s_acIc = s_acEs = s_acEc = 0;
     s_acVph = (int16_t)(gIdent.deadVoltV * (float)(32768.0 / UDC_MAX));
     s_acDone = 0;
@@ -225,12 +242,12 @@ static void acFast(void)
         SinCos_TypeDef b = FocMath_SinCos((int16_t)((s_acPhi + s_acDly) >> 16));
         if (s_acT >= AC_SETTLE * per) {
             /* 死区电压沿注入方向的分量（按本拍电流，模型同 flux_obs.c dtComp）：仅用于将实部还原为 Rs 以作校核 */
-            int32_t ia = gMeas.iab.s16Alpha, ibs = ((int32_t)gMeas.iab.s16Beta * 28378) >> 15, xa, xb, xc, ea, eb, e;
+            int32_t ia = gMeas.iab.s16Alpha, ibs = ((int32_t)gMeas.iab.s16Beta * Q15_SQRT3_HALF) >> 15, xa, xb, xc, ea, eb, e;
             xa = QMath_Clamp((ia * AC_DT_KI_Q8) >> 8, 32767);
             xb = QMath_Clamp(((-ia / 2 + ibs) * AC_DT_KI_Q8) >> 8, 32767);
             xc = QMath_Clamp(((-ia / 2 - ibs) * AC_DT_KI_Q8) >> 8, 32767);
-            ea = ((2 * xa - xb - xc) * 10923) >> 15;
-            eb = ((xb - xc) * 18919) >> 15;
+            ea = ((2 * xa - xb - xc) * Q15_ONE_THIRD) >> 15;
+            eb = ((xb - xc) * Q15_INV_SQRT3) >> 15;
             {
                 SinCos_TypeDef d = FocMath_SinCos(s_acTheta);
                 e = (((ea * d.s16Cos + eb * d.s16Sin) >> 15) * s_acVph) >> 15;
@@ -245,7 +262,8 @@ static void acFast(void)
         if (s_acEnv < 32767) { s_acEnv += s_acEnvStep; if (s_acEnv > 32767) s_acEnv = 32767; }
         ref = (int16_t)(((((int32_t)s_acAmp * s_acEnv) >> 15) * a.s16Sin) >> 15);
         FocCore_SetIdqRef(ref, s_acBias);
-        gFoc.theta = s_acTheta; gFoc.thetaInv = s_acTheta;
+        gFoc.theta = s_acTheta;
+        gFoc.thetaInv = s_acTheta;
         FocCore_CurrentLoop();
         FocCore_Modulate(SEVENMODE);
         if (s_acT >= AC_SETTLE * per) {
@@ -256,7 +274,8 @@ static void acFast(void)
         return;
     }
     FocCore_SetIdqRef(0, 0);
-    gFoc.theta = s_acTheta; gFoc.thetaInv = s_acTheta;
+    gFoc.theta = s_acTheta;
+    gFoc.thetaInv = s_acTheta;
     FocCore_CurrentLoop();
     FocCore_Modulate(SEVENMODE);
 }
@@ -301,7 +320,9 @@ static void acFit(void)
     float k10 = (s_acZim[AC_S_Q10] / w25 - s_acZim[AC_S_Q10L] / w12) / dk;
     if (k04 < 0) k04 = 0;
     if (k10 < 0) k10 = 0;
-    gIdent.kSwing[0] = k04; gIdent.kSwing[1] = k10; gIdent.kSwingModel = acKmot();
+    gIdent.kSwing[0] = k04;
+    gIdent.kSwing[1] = k10;
+    gIdent.kSwingModel = acKmot();
     for (f = 0; f < AC_NF; f++) {
         float w = 2.0f * (float)MATH_PI * s_acHz[f];
         gIdent.acLdH[f] = s_acZim[f] / w;
@@ -324,13 +345,16 @@ static void acFit(void)
     gIdent.lqH = gIdent.acLqH[0];
 }
 
-/* ---- R/L（phase 9）---------------------------------------------------------------------------------
+/* ---- R/L（IDENT_PH_RL = 9，静止测量第 1 步）--------------------------------------------------------
  * 新电机没有可信的 L、R 初值，无法计算电流环增益。因此第一步不使用电流环：沿 alpha 轴直接施加 RL_HZ 正弦电压，
  * 幅值从 1 V 起按测得电流逐周期调整到 RL_I_A，稳定 2 个周期后积分 RL_AVG 个周期，Z = V / I（基波）。
  * 电流与"采样时刻起作用的电压相位"做相关（电压延迟 AC_V_DELAY 拍生效，同交流阻抗）。
  * 转子位置任意：测得的 L 介于 Ld、Lq 之间，且频率较高时比运行时偏小（涡流），R 中含死区电压（偏大）——
  * 仅用于计算电流环增益（误差几十 % 只影响带宽，不影响稳定），死区阶梯测得 Rs 后立即替换，交流阻抗测得 Lq 后最终替换。
- * 复用交流阻抗的变量（两段不同时进行）：s_acAmp = 电压幅值，s_acSeg = 状态，s_acEs = 平均周期数，s_acVs/Vc = 平均累加值。 */
+ *
+ * [8 KB SRAM 复用说明] R/L（IDENT_PH_RL）与交流阻抗（IDENT_PH_AC）在时间上严格互斥，故复用上方 s_ac* 静态变量：
+ *   s_acAmp  = 当前正弦电压幅值（Q15）       s_acSeg   = R/L 子阶段（0 调幅，1..2 稳定，3 积分）
+ *   s_acEs   = 已积分周期计数（0..RL_AVG）   s_acVs/Vc = 多周期基波电流正交累加和 */
 #define RL_HZ       200.0
 #define RL_PER      ((uint16_t)(PWM_FREQ / RL_HZ + 0.5))
 #define RL_AVG      16
@@ -342,9 +366,13 @@ static void rlStart(void)       /* 慢环 */
 {
     s_acInc = (uint32_t)(4294967296.0 / (double)RL_PER + 0.5);
     s_acDly = (uint32_t)(AC_V_DELAY * (double)s_acInc + 0.5);
-    s_acPhi = 0; s_acT = 0; s_acIs = s_acIc = 0;
+    s_acPhi = 0;
+    s_acT = 0;
+    s_acIs = s_acIc = 0;
     s_acAmp = RL_V0_Q15;
-    s_acSeg = 0; s_acEs = 0; s_acVs = s_acVc = 0;
+    s_acSeg = 0;
+    s_acEs = 0;
+    s_acVs = s_acVc = 0;
     s_acDone = 0;
 }
 
@@ -368,8 +396,10 @@ static uint8_t rlSlow(void)
 {
     float is, ic, i1, v;
     if (!s_acDone) return 0;
-    is = (float)s_acIs; ic = (float)s_acIc;
-    s_acIs = s_acIc = 0; s_acT = 0;
+    is = (float)s_acIs;
+    ic = (float)s_acIc;
+    s_acIs = s_acIc = 0;
+    s_acT = 0;
     s_acDone = 0;
     i1 = 2.0f * sqrtf(is * is + ic * ic) / (float)RL_PER;      /* 基波幅值（Q15 电流） */
     v = (float)s_acAmp;
@@ -384,7 +414,8 @@ static uint8_t rlSlow(void)
         return 0;
     }
     if (s_acSeg < 3) { s_acSeg++; return 0; }    /* 稳定 2 个周期 */
-    s_acVs += (int32_t)is; s_acVc += (int32_t)ic;
+    s_acVs += (int32_t)is;
+    s_acVc += (int32_t)ic;
     if (++s_acEs < RL_AVG) return 0;
     {
         float ss = (float)s_acVs, cc = (float)s_acVc, n = (float)(RL_AVG * RL_PER), d = ss * ss + cc * cc;
@@ -396,7 +427,9 @@ static uint8_t rlSlow(void)
         gIdent.rlL = x / (float)(2.0 * MATH_PI * RL_HZ);
         if (r > 0 && gIdent.rlL > 0) {   /* 电流环、IPD 注入电压立即按此计算 */
             MotorParam_TypeDef p = gParam;
-            p.rsOhm = r; p.lqH = gIdent.rlL; p.ldH = gIdent.rlL;
+            p.rsOhm = r;
+            p.lqH = gIdent.rlL;
+            p.ldH = gIdent.rlL;
             (void)Param_ApplyNow(&p);
         }
     }
@@ -416,11 +449,18 @@ static float s_dfBest, s_dfK, s_dfIk, s_dfL0;
 /* 开始 L(i) 网格拟合（初值：L0 = 0.4 A 时的电感，不饱和） */
 static void dfStart(void)
 {
-    s_dfI = 0; s_dfBest = 1e30f; s_dfK = 0; s_dfIk = 0; s_dfL0 = gIdent.lqAtH[0];
+    s_dfI = 0;
+    s_dfBest = 1e30f;
+    s_dfK = 0;
+    s_dfIk = 0;
+    s_dfL0 = gIdent.lqAtH[0];
 }
 
 /* sin((j + 0.5) * π/2 / 16) 查表：避免每个慢环周期近 1 万次调用 sinf */
-static const float s_dfSin[DF_NP] = { 0.0490677f, 0.1467305f, 0.2429802f, 0.3368899f, 0.4275551f, 0.5141027f, 0.5956993f, 0.6715590f, 0.7409511f, 0.8032075f, 0.8577286f, 0.9039893f, 0.9415441f, 0.9700313f, 0.9891765f, 0.9987955f };
+static const float s_dfSin[DF_NP] = {
+    0.0490677f, 0.1467305f, 0.2429802f, 0.3368899f, 0.4275551f, 0.5141027f, 0.5956993f, 0.6715590f,
+    0.7409511f, 0.8032075f, 0.8577286f, 0.9039893f, 0.9415441f, 0.9700313f, 0.9891765f, 0.9987955f
+};
 
 static uint8_t dfStep(void)     /* 1 = 完成 */
 {
@@ -438,15 +478,26 @@ static uint8_t dfStep(void)     /* 1 = 完成 */
                 r += m * s * s;
             }
             r *= 2.0f / (float)DF_NP;      /* (4/π) * (π/2)/NP */
-            slr += gIdent.lqAtH[i] * r; srr += r * r; sll += gIdent.lqAtH[i] * gIdent.lqAtH[i];
+            slr += gIdent.lqAtH[i] * r;
+            srr += r * r;
+            sll += gIdent.lqAtH[i] * gIdent.lqAtH[i];
         }
         if (srr <= 0) continue;
         l0 = slr / srr;
         e = (sll - l0 * slr) / (l0 * l0);
-        if (e < s_dfBest) { s_dfBest = e; s_dfK = k; s_dfIk = ik; s_dfL0 = l0; }
+        if (e < s_dfBest) {
+            s_dfBest = e;
+            s_dfK = k;
+            s_dfIk = ik;
+            s_dfL0 = l0;
+        }
     }
     if (++s_dfI <= 48) return 0;
-    if (s_dfK * (gIdent.lqAtA[4] - s_dfIk) < 0.03f) { s_dfK = 0; s_dfIk = 0; s_dfL0 = gIdent.lqAtH[0]; }  /* 最大幅值处下降仍不足 3%：判为无明显饱和 */
+    if (s_dfK * (gIdent.lqAtA[4] - s_dfIk) < 0.03f) {    /* 最大幅值处下降仍不足 3%：判为无明显饱和 */
+        s_dfK = 0;
+        s_dfIk = 0;
+        s_dfL0 = gIdent.lqAtH[0];
+    }
     gIdent.lsSatKneeA = s_dfIk;
     gIdent.lsSatPerA = s_dfK;
     gIdent.lqH = s_dfL0;
@@ -460,34 +511,48 @@ static void offerStill(void)
     MotorParam_TypeDef p = gParam;
     uint16_t m = 0;
     if (gIdent.rsOhm > 0) { p.rsOhm = gIdent.rsOhm; m |= 1u; }
-    if (gIdent.lqH > 0) { p.lqH = gIdent.lqH; p.ldH = MOTOR_IPM ? gIdent.ldH : gIdent.lqH; m |= 2u; }
-    if (gIdent.lqH > 0) { p.lsKneeA = gIdent.lsSatKneeA; p.lsPerA = gIdent.lsSatPerA; m |= 4u; }
+    if (gIdent.lqH > 0) {
+        p.lqH = gIdent.lqH;
+        p.ldH = MOTOR_IPM ? gIdent.ldH : gIdent.lqH;
+        m |= 2u;
+    }
+    if (gIdent.lqH > 0) {
+        p.lsKneeA = gIdent.lsSatKneeA;
+        p.lsPerA = gIdent.lsSatPerA;
+        m |= 4u;
+    }
     if (INVERTER_DT_COMP && gIdent.deadTimeS > 0) { p.dtEffS = gIdent.deadTimeS; m |= 32u; }
     Param_Offer(&p, m);
 }
 
-/* 慢环（1 kHz），在 Align 子状态中替代定位逻辑 */
+/* 慢环（1 kHz），在 Align 子状态中替代定位逻辑。
+ * 阶段转移顺序：IDENT_PH_RL(9) -> 定位(0) -> IDENT_PH_DT_STEP(1) -> IDENT_PH_DT_ZERO(2)
+ *              -> IDENT_PH_IPD(3) -> IDENT_PH_AC(6) -> IDENT_PH_SAT_FIT(7) -> IDENT_PH_DONE(4) */
 void Ident_Slow(void)
 {
     IdentTest_TypeDef *t = &gIdentTest;
     switch (t->phase) {
-    case 9:     /* R/L（快环输出电压）：完成后回到定位（phase 0 = 定位正常进行，定位用电流环已按 R/L 更新） */
+    case IDENT_PH_RL:       /* R/L（快环输出电压）：完成后回到定位（IDENT_PH_NONE = 定位正常进行，电流环已按 R/L 更新） */
         if (rlSlow()) {
             FocCore_PresetPI(0, 0);
-            t->phase = 0;
+            t->phase = IDENT_PH_NONE;
         }
         break;
-    case 1:     /* 死区阶梯 */
+    case IDENT_PH_DT_STEP:  /* 死区阶梯 */
         FocCore_SetIdqRef(s_dtLevel[t->idx], 0);
         if (++t->cnt > DT_SETTLE_MS) {
-            t->sum[0] += gFoc.idq.s16D; t->sum[1] += gFoc.vdq.s16D;
+            t->sum[0] += gFoc.idq.s16D;
+            t->sum[1] += gFoc.vdq.s16D;
         }
         if (t->cnt >= DT_SETTLE_MS + DT_AVG_MS) {
-            t->dtId[t->idx] = (int16_t)(t->sum[0] / DT_AVG_MS); t->dtVd[t->idx] = (int16_t)(t->sum[1] / DT_AVG_MS);
+            t->dtId[t->idx] = (int16_t)(t->sum[0] / DT_AVG_MS);
+            t->dtVd[t->idx] = (int16_t)(t->sum[1] / DT_AVG_MS);
             t->sum[0] = t->sum[1] = 0;
             t->cnt = 0;
             if (++t->idx >= IDENT_DT_N) {
-                t->idx = 0; t->phase = 2; dtFit();
+                t->idx = 0;
+                t->phase = IDENT_PH_DT_ZERO;
+                dtFit();
                 {   /* Rs、死区立即生效（电流环积分增益、观测器），供后续 IPD / 交流阻抗使用 */
                     MotorParam_TypeDef p = gParam;
                     if (gIdent.rsOhm > 0) p.rsOhm = gIdent.rsOhm;
@@ -497,21 +562,26 @@ void Ident_Slow(void)
             }
         }
         break;
-    case 2:     /* 电流回零，等待 ZERO_WAIT_MS 后交由快环施加脉冲 */
+    case IDENT_PH_DT_ZERO:  /* 电流回零，等待 ZERO_WAIT_MS 后交由快环执行 IPD */
         FocCore_SetIdqRef(0, 0);
-        if (++t->cnt >= ZERO_WAIT_MS) { t->cnt = 0; Ipd_Start(); t->phase = 3; }
+        if (++t->cnt >= ZERO_WAIT_MS) {
+            t->cnt = 0;
+            Ipd_Start();
+            t->phase = IDENT_PH_IPD;
+        }
         break;
-    case 3:     /* IPD 检测中（ipd.c），完成后复制结果 */
+    case IDENT_PH_IPD:      /* IPD 检测中（ipd.c），完成后复制结果 */
         Ipd_Slow();
         if (gIpd.state == IPD_STATE_DONE) {
             (void)Ipd_Evaluate();       /* 给出 gIpd.theta（交流阻抗的 d / q 方向）/ ratioQ8 */
             ipdFit();
             FocCore_PresetPI(0, 0);     /* IPD 结束，积分器从 0 开始 */
             acSegStart(0);
-            t->cnt = 0; t->phase = 6;
+            t->cnt = 0;
+            t->phase = IDENT_PH_AC;
         }
         break;
-    case 6:     /* 快环执行交流阻抗测量中 */
+    case IDENT_PH_AC:       /* 快环执行交流阻抗测量中 */
         if (s_acDone) {
             acSegFinish(s_acSeg);
             if (s_acSeg + 1 < AC_NSEG) acSegStart((uint16_t)(s_acSeg + 1));
@@ -519,11 +589,12 @@ void Ident_Slow(void)
                 s_acSeg = AC_NSEG;
                 acFit();
                 dfStart();
-                t->cnt = 0; t->phase = 7;
+                t->cnt = 0;
+                t->phase = IDENT_PH_SAT_FIT;
             }
         }
         break;
-    case 7:     /* 饱和拟合（分摊到多个慢环周期），快环保持零电流 */
+    case IDENT_PH_SAT_FIT:  /* 饱和拟合（分摊到多个慢环周期），快环保持零电流 */
         if (dfStep()) {
             offerStill();
             if (gIdentCfg.mode == IDENT_MODE_AUTO) {
@@ -532,10 +603,11 @@ void Ident_Slow(void)
             } else {
                 gIdent.state = IDENT_DONE;
             }
-            t->cnt = 0; t->phase = 4;
+            t->cnt = 0;
+            t->phase = IDENT_PH_DONE;
         }
         break;
-    case 4:     /* 完成（结果在 gIdent，已提交给 param.c） */
+    case IDENT_PH_DONE:     /* 完成（结果在 gIdent，已提交给 param.c） */
         break;
     default:
         break;
@@ -561,9 +633,18 @@ void Ident_Slow(void)
 /* 运行辨识的最低起始转速：滑行 RUN_COAST_MS 的掉速须保持在 TRACK_END_RPM / 回退转速以上，本电机取 315 rpm */
 #define RUN_MIN_BASE_RPM    (1.25 * (OPENLOOP_FALLBACK_RPM > TRACK_END_RPM ? OPENLOOP_FALLBACK_RPM : TRACK_END_RPM))
 #define RUN_MIN_RPM         (RUN_MIN_BASE_RPM < 0.7 * MOTOR_SPEED_RATED_RPM ? RUN_MIN_BASE_RPM : 0.7 * MOTOR_SPEED_RATED_RPM)
-static uint8_t  s_rnSt;             /* 0 等待稳速，1 滑行前平均，2 滑行（保持跟踪），3 本指令已完成 */
+/* 运行辨识闭环滑行子状态（s_rnSt） */
+enum {
+    RN_WAIT_STABLE = 0,             /* 等待闭环稳速 RUN_STABLE_MS */
+    RN_PRE_AVG     = 1,             /* 滑行前平均 iq / id / 转速 RUN_PRE_MS */
+    RN_COAST       = 2,             /* 零电流滑行跟踪中 RUN_COAST_MS */
+    RN_DONE        = 3              /* 本次转速指令的滑行测量已完成 */
+};
+static uint8_t  s_rnSt;             /* 取值见 RN_* */
 static uint16_t s_rnT;
 static int16_t  s_rnCmd;
+/* [8 KB SRAM 复用说明] 开环磁链（Ident_OpenLoopFluxSlow，在 OpenLoop 阶段）与闭环滑行（Ident_RunSlow，在 Spin 阶段）
+ * 在时间上严格互斥，故共用下方 s_rnId / s_rnIq / s_rnVd / s_rnVq 累加器 */
 static int32_t  s_rnIq, s_rnId, s_rnW;
 static float    s_rnVd, s_rnVq, s_rnS[7];  /* 二次拟合：n, Σx, Σx², Σx³, Σx⁴, Σy, Σxy；Σx²y 单独 */
 static float    s_rnX2y, s_rnWs;
@@ -583,7 +664,7 @@ int16_t Ident_SpeedCmd(int16_t cmd)
 /* 运行测量滑行阶段：要求零电流跟踪不提前结束（由 spin.c 查询） */
 uint8_t Ident_HoldTrack(void)
 {
-    return (uint8_t)(s_rnSt == 2);
+    return (uint8_t)(s_rnSt == RN_COAST);
 }
 
 /* 运行测量（Run 慢环每拍，Ident_RunActive 时）：闭环稳速 RUN_STABLE_MS -> 平均滑行前 iq、转速 RUN_PRE_MS
@@ -591,31 +672,65 @@ uint8_t Ident_HoldTrack(void)
 void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
 {
     int16_t w = (int16_t)(gEst.pll.s32Speed >> 16);
-    if (!Ident_RunActive() || !spin) { s_rnSt = 0; s_rnT = 0; return; }
-    if (cmd != s_rnCmd) { s_rnCmd = cmd; s_rnSt = 0; s_rnT = 0; }
+    if (!Ident_RunActive() || !spin) {
+        s_rnSt = RN_WAIT_STABLE;
+        s_rnT = 0;
+        return;
+    }
+    if (cmd != s_rnCmd) {
+        s_rnCmd = cmd;
+        s_rnSt = RN_WAIT_STABLE;
+        s_rnT = 0;
+    }
     switch (s_rnSt) {
-    case 0:
-        if (!tracking && ramp == cmd && abs(w) >= Q15(RUN_MIN_RPM / SPEED_MAX)) { if (++s_rnT >= RUN_STABLE_MS) { s_rnT = 0; s_rnIq = s_rnId = s_rnW = 0; s_rnSt = 1; } }
-        else s_rnT = 0;
+    case RN_WAIT_STABLE:
+        if (!tracking && ramp == cmd && abs(w) >= Q15(RUN_MIN_RPM / SPEED_MAX)) {
+            if (++s_rnT >= RUN_STABLE_MS) {
+                s_rnT = 0;
+                s_rnIq = s_rnId = s_rnW = 0;
+                s_rnSt = RN_PRE_AVG;
+            }
+        } else {
+            s_rnT = 0;
+        }
         break;
-    case 1:
-        if (tracking) { s_rnSt = 0; s_rnT = 0; break; }
-        s_rnIq += gFoc.idq.s16Q; s_rnId += gFoc.idq.s16D; s_rnW += w;
+    case RN_PRE_AVG:
+        if (tracking) {
+            s_rnSt = RN_WAIT_STABLE;
+            s_rnT = 0;
+            break;
+        }
+        s_rnIq += gFoc.idq.s16Q;
+        s_rnId += gFoc.idq.s16D;
+        s_rnW += w;
         if (++s_rnT >= RUN_PRE_MS) {
             uint16_t i;
             s_rnVd = s_rnVq = s_rnX2y = s_rnWs = 0;
             for (i = 0; i < 7; i++) s_rnS[i] = 0;
-            s_rnT = 0; s_rnSt = 2;
+            s_rnT = 0;
+            s_rnSt = RN_COAST;
             Spin_TrackBegin();
         }
         break;
-    case 2:
-        if (!tracking) { s_rnSt = 0; s_rnT = 0; break; }     /* 跟踪因其他原因结束（停机 / 故障） */
+    case RN_COAST:
+        if (!tracking) {    /* 跟踪因其他原因结束（停机 / 故障） */
+            s_rnSt = RN_WAIT_STABLE;
+            s_rnT = 0;
+            break;
+        }
         if (++s_rnT > RUN_SKIP_MS) {
             float x = (float)s_rnT * 0.001f, y = (float)w;
-            s_rnVd += gFoc.vdq.s16D; s_rnVq += gFoc.vdq.s16Q; s_rnWs += y;
-            s_rnS[0] += 1; s_rnS[1] += x; s_rnS[2] += x * x; s_rnS[3] += x * x * x; s_rnS[4] += x * x * x * x;
-            s_rnS[5] += y; s_rnS[6] += x * y; s_rnX2y += x * x * y;
+            s_rnVd += gFoc.vdq.s16D;
+            s_rnVq += gFoc.vdq.s16Q;
+            s_rnWs += y;
+            s_rnS[0] += 1;
+            s_rnS[1] += x;
+            s_rnS[2] += x * x;
+            s_rnS[3] += x * x * x;
+            s_rnS[4] += x * x * x * x;
+            s_rnS[5] += y;
+            s_rnS[6] += x * y;
+            s_rnX2y += x * x * y;
         }
         if (s_rnT >= RUN_SKIP_MS + RUN_COAST_MS) {
             /* 正规方程 [n Sx Sx2; Sx Sx2 Sx3; Sx2 Sx3 Sx4][a b c] = [Sy Sxy Sx2y]，取 b（x = 0 = 滑行开始） */
@@ -642,7 +757,7 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
                 if (!Param_ApplyNow(&p)) Param_Offer(&p, m);
             }
             gIdent.state = IDENT_DONE;
-            s_rnSt = 3;                     /* 释放跟踪：Spin_TrackSlow 在下一块结束时接回速度环 */
+            s_rnSt = RN_DONE;               /* 释放跟踪：Spin_TrackSlow 在下一块结束时接回速度环 */
         }
         break;
     default:
@@ -666,16 +781,24 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
  * 扣除 Rs*i、w*L*i 和死区电压得到反电势，psi = |e| / w。返回 1 = 测量中（I/F 暂不切闭环），0 = 已完成 / 不测量 */
 uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
 {
-    if (!Ident_RunActive() || s_olFluxSt == 2) return 0;
-    if (ol != tgt) { s_olFluxSt = 0; s_olFluxN = 0; return 1; }         /* 仍在加速：暂不切闭环 */
-    if (s_olFluxSt == 0) {
-        if (++s_olFluxN < OLFLUX_SETTLE_MS) return 1;
-        s_olFluxSt = 1; s_olFluxN = 0;
-        s_rnId = s_rnIq = 0; s_rnVd = s_rnVq = 0;
+    if (!Ident_RunActive() || s_olFluxSt == OLF_DONE) return 0;
+    if (ol != tgt) {    /* 仍在加速：暂不切闭环 */
+        s_olFluxSt = OLF_WAIT_STABLE;
+        s_olFluxN = 0;
         return 1;
     }
-    s_rnId += gFoc.idq.s16D; s_rnIq += gFoc.idq.s16Q;
-    s_rnVd += gFoc.vdq.s16D; s_rnVq += gFoc.vdq.s16Q;
+    if (s_olFluxSt == OLF_WAIT_STABLE) {
+        if (++s_olFluxN < OLFLUX_SETTLE_MS) return 1;
+        s_olFluxSt = OLF_AVG;
+        s_olFluxN = 0;
+        s_rnId = s_rnIq = 0;
+        s_rnVd = s_rnVq = 0;
+        return 1;
+    }
+    s_rnId += gFoc.idq.s16D;
+    s_rnIq += gFoc.idq.s16Q;
+    s_rnVd += gFoc.vdq.s16D;
+    s_rnVq += gFoc.vdq.s16Q;
     if (++s_olFluxN < OLFLUX_AVG_MS) return 1;
     {
         const float ki = (float)(I_MAX / 32768.0) / OLFLUX_AVG_MS, kv = (float)(UDC_MAX / 32768.0) / OLFLUX_AVG_MS;
@@ -704,16 +827,18 @@ uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
             (void)Param_ApplyNow(&p);
         }
     }
-    s_olFluxSt = 2;
+    s_olFluxSt = OLF_DONE;
     return 0;
 }
 
-/* 快环：phase 3、4 由 IPD 模块输出电压（完成后持续输出零电压）；其余时间返回 0（照常运行电流环） */
+/* 快环：IDENT_PH_IPD(3)、IDENT_PH_DONE(4) 由 IPD 模块输出电压（完成后持续输出零电压）；
+ *       IDENT_PH_AC(6)、IDENT_PH_SAT_FIT(7) 由 acFast 输出（SAT_FIT 期间保持零电流）；
+ *       IDENT_PH_RL(9) 由 rlFast 输出；其余阶段（0 定位 / 1 死区阶梯 / 2 回零）返回 0，照常运行电流环 */
 uint8_t Ident_Fast(void)
 {
-    if (gIdentTest.phase < 3) return 0;
-    if (gIdentTest.phase == 6 || gIdentTest.phase == 7) acFast();
-    else if (gIdentTest.phase == 9) rlFast();
+    if (gIdentTest.phase < IDENT_PH_IPD) return 0;
+    if (gIdentTest.phase == IDENT_PH_AC || gIdentTest.phase == IDENT_PH_SAT_FIT) acFast();
+    else if (gIdentTest.phase == IDENT_PH_RL) rlFast();
     else Ipd_Fast();
     return 1;
 }

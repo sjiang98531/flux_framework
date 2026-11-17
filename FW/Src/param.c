@@ -87,8 +87,10 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->cfgWarn = 0;
     /* 电流环：Kp = 2*pi*CURRENT_BW_HZ*L，Ki = 2*pi*CURRENT_BW_HZ*R/PWM_FREQ（Kp/Ki = L/R，PI 零点对消电机极点，
      * 闭环为一阶、带宽 CURRENT_BW_HZ）。d、q 轴各用各自的电感（44842 / 475） */
-    g->curKpD = CURRENT_KP_OF(p->ldH);  g->curKiD = CURRENT_KI_OF(p->rsOhm);
-    g->curKpQ = CURRENT_KP_OF(p->lqH);  g->curKiQ = CURRENT_KI_OF(p->rsOhm);
+    g->curKpD = CURRENT_KP_OF(p->ldH);
+    g->curKiD = CURRENT_KI_OF(p->rsOhm);
+    g->curKpQ = CURRENT_KP_OF(p->lqH);
+    g->curKiQ = CURRENT_KI_OF(p->rsOhm);
     /* Pi_Run32 的增益为 16 位无符号，超出时封顶（闭环带宽低于设计值），并置告警 bit1 */
     if (g->curKpD > 65535 || g->curKpQ > 65535 || g->curKiD > 65535 || g->curKiQ > 65535) g->cfgWarn |= 2u;
     if (g->curKpD > 65535) g->curKpD = 65535;
@@ -154,7 +156,9 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
         uint32_t t = QMath_Isqrt64(ALIGN_T2_TICKS2_OF(p->psiWb, p->accRpmSPerA));
         g->alignPeriodTicks = (uint16_t)(t > 65535u ? 65535u : t);
         g->alignSwingMinSpd = (int16_t)(ALIGN_SWING_MIN_SPD_T / (double)(t ? t : 1) + 0.5);
-        g->alignDampQ8 = (int32_t)(ALIGN_C1_OF(p->psiWb) * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM_OF(p->psiWb) * ALIGN_J_OF(p->psiWb, p->accRpmSPerA) * 1099511627776.0)) / 1048576.0);
+        g->alignDampQ8 = (int32_t)(ALIGN_C1_OF(p->psiWb)
+            * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM_OF(p->psiWb) * ALIGN_J_OF(p->psiWb, p->accRpmSPerA) * 1099511627776.0))
+            / 1048576.0);
         g->swingLagAngQ12 = ALIGN_SWING_LAG_ANG_Q12_OF(p->lqH, p->rsOhm);
     }
     g->openLoopAccStepQ31 = OPENLOOP_ACC_STEP_Q31_OF(p->accRpmSPerA);

@@ -83,8 +83,10 @@ uint8_t Protect_PhaseSlow(int16_t speedQ15)
         if (n >= PHASELESS_N_MAX) Protect_PhaseReset();     /* 转速过低，窗口作废 */
         return 0;
     }
-    mx = a > b ? a : b; if (c > mx) mx = c;
-    mn = a < b ? a : b; if (c < mn) mn = c;
+    mx = a > b ? a : b;
+    if (c > mx) mx = c;
+    mn = a < b ? a : b;
+    if (c < mn) mn = c;
     /* 电流门限：最大相平均 |i| >= PHASELESS_RATIO * 噪声峰值（码 -> Q15 每码 16） */
     floor = (uint32_t)PHASELESS_RATIO * 16u * (uint32_t)gHal.adcNoisePk;
     if (n > 0 && mx >= floor * n) {

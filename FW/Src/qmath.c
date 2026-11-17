@@ -47,7 +47,11 @@ void QMath_NormQ15(int32_t a, int32_t b, int16_t *na, int16_t *nb)
     uint32_t x = (uint32_t)(a * a) + (uint32_t)(b * b), y, t, u;
     int32_t e = 0, sh, ra, rb;
     int i;
-    if (x == 0) { *na = 32767; *nb = 0; return; }
+    if (x == 0) {
+        *na = 32767;
+        *nb = 0;
+        return;
+    }
     /* 归一化到 [2^28, 2^30)，移位量取偶数（开方后为整数位） */
     if (x < (1UL << 14)) { x <<= 16; e += 16; }
     if (x < (1UL << 22)) { x <<= 8;  e += 8; }
@@ -84,13 +88,30 @@ uint32_t QMath_Atan2(int32_t y, int32_t x)
     if (x == 0 && y == 0) return 0;
     /* 归一化到 2^28 <= max(|x|,|y|) <= 2^29：上限为 CORDIC 增益 1.65 留出余量（并避免 -2^31 取负溢出），
      * 下限保证小输入也有足够的有效位 */
-    while (x > (1L << 29) || x < -(1L << 29) || y > (1L << 29) || y < -(1L << 29)) { x >>= 1; y >>= 1; }
-    while (x < (1L << 28) && x > -(1L << 28) && y < (1L << 28) && y > -(1L << 28)) { x <<= 1; y <<= 1; }
-    if (x < 0) { x = -x; y = -y; ang = 0x80000000UL; }      /* 旋转 180°，落入右半平面 */
+    while (x > (1L << 29) || x < -(1L << 29) || y > (1L << 29) || y < -(1L << 29)) {
+        x >>= 1;
+        y >>= 1;
+    }
+    while (x < (1L << 28) && x > -(1L << 28) && y < (1L << 28) && y > -(1L << 28)) {
+        x <<= 1;
+        y <<= 1;
+    }
+    if (x < 0) {    /* 旋转 180°，落入右半平面 */
+        x = -x;
+        y = -y;
+        ang = 0x80000000UL;
+    }
     for (i = 0; i < 16; i++) {
         int32_t xs = x >> i, ys = y >> i;
-        if (y > 0) { x += ys; y -= xs; ang += s_atanTab[i]; }
-        else       { x -= ys; y += xs; ang -= s_atanTab[i]; }
+        if (y > 0) {
+            x += ys;
+            y -= xs;
+            ang += s_atanTab[i];
+        } else {
+            x -= ys;
+            y += xs;
+            ang -= s_atanTab[i];
+        }
     }
     return ang;
 }

@@ -25,8 +25,8 @@
 FluxObs_TypeDef gFluxObs;
 
 /* FMAX：积分状态（磁链 << 16）限幅 = 0.9 满量程；PSI_LIMIT：转子磁链分量限幅 = 32768 / sqrt(2)（两分量平方和不溢出） */
-#define FMAX ((int32_t)29491L * 65536L)
-#define PSI_LIMIT 23170
+#define FMAX ((int32_t)Q15_0P9 * 65536L)
+#define PSI_LIMIT Q15_INV_SQRT2
 /* psi_f（磁链 LSB）及 |psi_f|^2：运行时参数（param.c gGain） */
 #define FLUX_NOM    gGain.fluxNomQ15
 #define FLUX_NOM2   gGain.fluxNom2
@@ -34,7 +34,7 @@ FluxObs_TypeDef gFluxObs;
 /* 反电势输入限幅到 ±0.9 满量程 */
 FORCE_INLINE int16_t inputClamp(int32_t x)
 {
-    return (int16_t)QMath_Clamp(x, 29491);
+    return (int16_t)QMath_Clamp(x, Q15_0P9);
 }
 /* 磁链积分一步（饱和） */
 FORCE_INLINE int32_t addFlux(int32_t x, int32_t dx)
@@ -70,13 +70,13 @@ FORCE_INLINE void dtComp(int16_t ia, int16_t ib, int16_t *va, int16_t *vb)
 {
     int32_t vdt = s_vdt, xa, xb, xc, ibs;               /* 每相误差幅值（Q15 电压） */
     if (vdt <= 0) return;
-    ibs = ((int32_t)ib * 28378) >> 15;                   /* (sqrt3/2) * i_beta */
+    ibs = ((int32_t)ib * Q15_SQRT3_HALF) >> 15;                   /* (sqrt3/2) * i_beta */
     xa = dtPhase(ia);
     xb = dtPhase((-(int32_t)ia >> 1) + ibs);     /* 有符号数除以 2 写成移位：/ 2 需额外两条指令修正负数取整方向 */
     xc = dtPhase((-(int32_t)ia >> 1) - ibs);
     /* e_alpha = (2xa - xb - xc)/3 * vdt，e_beta = (xb - xc)/sqrt3 * vdt */
-    *va = (int16_t)(*va - ((((2 * xa - xb - xc) * 10923) >> 15) * vdt >> 15));
-    *vb = (int16_t)(*vb - ((((xb - xc) * 18919) >> 15) * vdt >> 15));
+    *va = (int16_t)(*va - ((((2 * xa - xb - xc) * Q15_ONE_THIRD) >> 15) * vdt >> 15));
+    *vb = (int16_t)(*vb - ((((xb - xc) * Q15_INV_SQRT3) >> 15) * vdt >> 15));
 }
 
 /* 同一误差模型变换到角 a 的 dq 坐标（Q15 电压，指令 = 实际 + 误差）。参数辨识定位判停稳（慢环）与死区拟合（identify.c）使用 */
@@ -93,10 +93,14 @@ Dq_TypeDef FluxObs_DtErr(AlphaBeta_TypeDef iab, SinCos_TypeDef a)
 /* 清除全部观测器状态（磁链、去直流滤波器、输出），非 Run 状态时每拍调用 */
 void FluxObs_Reset(void)
 {
-    gFluxObs.s32PsiAlF = 0; gFluxObs.s32PsiBeF = 0;
-    gFluxObs.sEalAvgMA.s32Acc = 0; gFluxObs.sEbeAvgMA.s32Acc = 0;
-    gFluxObs.s16PsiAl = 0; gFluxObs.s16PsiBe = 0;
-    gFluxObs.s16PsiRAl = 0; gFluxObs.s16PsiRBe = 0;
+    gFluxObs.s32PsiAlF = 0;
+    gFluxObs.s32PsiBeF = 0;
+    gFluxObs.sEalAvgMA.s32Acc = 0;
+    gFluxObs.sEbeAvgMA.s32Acc = 0;
+    gFluxObs.s16PsiAl = 0;
+    gFluxObs.s16PsiBe = 0;
+    gFluxObs.s16PsiRAl = 0;
+    gFluxObs.s16PsiRBe = 0;
     gFluxObs.haveCurrent = 0;
 }
 
@@ -125,7 +129,8 @@ void FluxObs_Init(void)
 {
     gFluxObs.s16KTs = gGain.fluxKtsQ15;
     FluxObs_LoadModel();
-    gFluxObs.sEalAvgMA.u16Sh = FLUX_HPF_SH; gFluxObs.sEbeAvgMA.u16Sh = FLUX_HPF_SH;
+    gFluxObs.sEalAvgMA.u16Sh = FLUX_HPF_SH;
+    gFluxObs.sEbeAvgMA.u16Sh = FLUX_HPF_SH;
     FluxObs_Reset();
 }
 
@@ -145,7 +150,11 @@ void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg)
     int32_t wc = HPF_WC_Q15SPD, w0 = HPF_COMP_W0_Q15SPD;
     int16_t c, s;
     s_vdt = (gGain.dtKtQ15 > 0 && busAvg > 0) ? (int16_t)(((int32_t)busAvg * gGain.dtKtQ15) >> 15) : 0;
-    if (w <= w0) { s_compCos = 32767; s_compSin = 0; return; }
+    if (w <= w0) {
+        s_compCos = 32767;
+        s_compSin = 0;
+        return;
+    }
     if (w < 2 * w0) wc = ((w - w0) * HPF_WC_OVER_W0_Q16) >> 16;
     QMath_NormQ15(w, wc, &c, &s);
     s_compCos = c;
@@ -229,18 +238,21 @@ RAMFUNC void FluxObs_Run(void)
      * 电流环将 |V| 限制在 vmax（SVPWM 线性区），故指令即为该拍实际输出的平均电压（死区另行补偿），
      * 七段式 / 五段式只差共模分量，αβ 相同。占空比在上一拍确定，乘以本拍采样的母线电压（母线波动时即为实际电压）。
      * 观测器只在 OpenLoop / Spin 中运行，这两个状态下 PWM 必定在输出；PWM 关闭时状态机在同拍或下一拍离开 Run，
-     * 观测器随之复位（Ctrl_FastTick）。18919 = 1/√3（Q15）。 */
-    va = (int16_t)(((((int32_t)gSvpwm.Alpha * bus) >> 15) * 18919) >> 15);
-    vb = (int16_t)(((((int32_t)gSvpwm.Beta * bus) >> 15) * 18919) >> 15);
+     * 观测器随之复位（Ctrl_FastTick）。Q15_INV_SQRT3 = 1/√3。 */
+    va = (int16_t)(((((int32_t)gSvpwm.Alpha * bus) >> 15) * Q15_INV_SQRT3) >> 15);
+    vb = (int16_t)(((((int32_t)gSvpwm.Beta * bus) >> 15) * Q15_INV_SQRT3) >> 15);
 
     /* 电阻压降使用区间平均电流（时间积分量）；Ls*i 使用本拍瞬时值（状态量） */
-    ia = current.s16Alpha; ib = current.s16Beta;
+    ia = current.s16Alpha;
+    ib = current.s16Beta;
     if (gFluxObs.haveCurrent) {
         ia = ((int32_t)ia + gFluxObs.previousIa) >> 1;  /* 向下取整，与 / 2 相差不足 1 LSB */
         ib = ((int32_t)ib + gFluxObs.previousIb) >> 1;
     }
     dtComp(ia, ib, &va, &vb);
-    gFluxObs.previousIa = current.s16Alpha; gFluxObs.previousIb = current.s16Beta; gFluxObs.haveCurrent = 1;
+    gFluxObs.previousIa = current.s16Alpha;
+    gFluxObs.previousIb = current.s16Beta;
+    gFluxObs.haveCurrent = 1;
 
     ea = inputClamp((int32_t)va - QMath_MulQ15(gFluxObs.s16KRs, ia));
     eb = inputClamp((int32_t)vb - QMath_MulQ15(gFluxObs.s16KRs, ib));
@@ -256,7 +268,8 @@ RAMFUNC void FluxObs_Run(void)
      *   fq   = ferr/|psi_f|^2 (Q15) = ((ferr>>12)*FLUX_NLFO_NORM_Q8)>>8   限幅 ±32768
      *   corr = (psi_r*fq) >> FLUX_NLFO_SH      与 e*KTs 同一刻度
      * 使用上一拍的 psi_s（前向欧拉：在旧状态上求导数）。 */
-    x = (gFluxObs.s32PsiAlF + 32768) >> 16; y = (gFluxObs.s32PsiBeF + 32768) >> 16;
+    x = (gFluxObs.s32PsiAlF + 32768) >> 16;
+    y = (gFluxObs.s32PsiBeF + 32768) >> 16;
     {
         int32_t g0 = (int32_t)x - lia;
         int32_t g1 = (int32_t)y - lib;
@@ -281,7 +294,8 @@ RAMFUNC void FluxObs_Run(void)
     }
     gFluxObs.s32PsiAlF = addFlux(gFluxObs.s32PsiAlF, 2 * ((int32_t)ea * gFluxObs.s16KTs + corrA));
     gFluxObs.s32PsiBeF = addFlux(gFluxObs.s32PsiBeF, 2 * ((int32_t)eb * gFluxObs.s16KTs + corrB));
-    gFluxObs.s16PsiAl = (gFluxObs.s32PsiAlF + 32768) >> 16; gFluxObs.s16PsiBe = (gFluxObs.s32PsiBeF + 32768) >> 16;
+    gFluxObs.s16PsiAl = (gFluxObs.s32PsiAlF + 32768) >> 16;
+    gFluxObs.s16PsiBe = (gFluxObs.s32PsiBeF + 32768) >> 16;
 
     /* 输出：由积分后的 psi_s 计算本拍 psi_r */
     {   /* 先补偿去直流引入的相位超前（只修改输出，不修改积分状态） */
@@ -290,7 +304,8 @@ RAMFUNC void FluxObs_Run(void)
         x = ((ps * c + pb * s) >> 15) - lia;
         y = ((pb * c - ps * s) >> 15) - lib;
     }
-    gFluxObs.s16PsiRAl = (int16_t)QMath_Clamp(x, PSI_LIMIT); gFluxObs.s16PsiRBe = (int16_t)QMath_Clamp(y, PSI_LIMIT);
+    gFluxObs.s16PsiRAl = (int16_t)QMath_Clamp(x, PSI_LIMIT);
+    gFluxObs.s16PsiRBe = (int16_t)QMath_Clamp(y, PSI_LIMIT);
 }
 
 /* ============================================================================
@@ -354,6 +369,9 @@ RAMFUNC int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p)
 
 Est_TypeDef gEst;
 
+/* 观测器 + PLL 跟踪一拍（I/F 开环期间直接调用，闭环由 Est_SpinTick 调用）：
+ *   [读] gMeas.iab/vbus, gSvpwm.Alpha/Beta（上一拍指令）
+ *   [写] gFluxObs.s16PsiRAl/Be, gEst.pll（推进到 k+1 时刻）, gEst.thetaPll；返回 k 时刻估计角 thK */
 RAMFUNC int16_t Est_TrackTick(void)
 {
     int16_t thK = (int16_t)(gEst.pll.s32Theta >> 16), err;
@@ -363,6 +381,9 @@ RAMFUNC int16_t Est_TrackTick(void)
     return thK;
 }
 
+/* Spin 闭环角度与转速估计一拍（快环）：
+ *   [读] gMeas.iab/vbus, gSvpwm.Alpha/Beta（上一拍指令）
+ *   [写] gFoc.theta（本拍 Park 角 = thK）, gFoc.thetaInv（反 Park 超前补偿角）, Meas_SpeedSource（PLL 转速） */
 RAMFUNC void Est_SpinTick(void)
 {
     int16_t thK = Est_TrackTick();
@@ -374,7 +395,8 @@ RAMFUNC void Est_SpinTick(void)
 void Est_OnEnterOpenLoopCold(void)
 {
     gEst.pll.s32Theta = gFoc.theta << 16;
-    gEst.pll.s32Speed = 0; gEst.pll.s32I_1 = 0;
+    gEst.pll.s32Speed = 0;
+    gEst.pll.s32I_1 = 0;
     Meas_SpeedReset();
     FluxObs_BeginOpenLoop();
 }

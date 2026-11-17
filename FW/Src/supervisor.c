@@ -60,7 +60,12 @@ static void faultDetect(void);
 static const StateFn_t s_mainFast[4] = {faultFast, initFast, stopFast, runFast};
 static const StateFn_t s_mainSlow[4] = {faultSlow, initSlow, stopSlow, runSlow};
 
-/* Run 子状态表，顺序 = RunState_TypeDef */
+/* Run 子状态分发表，下标 = gSup.runState（RunState_TypeDef）：
+ *   [0] RunState_Charge    : Startup_ChargeFast / Slow   (startup.c)   自举电容预充
+ *   [1] RunState_FlyCheck  : Startup_FlyCheckFast / Slow (startup.c)   飞车检测（调 flystart.c）
+ *   [2] RunState_Align     : Startup_AlignFast / Slow    (startup.c)   IPD / 摆动起动 / 辨识定位
+ *   [3] RunState_OpenLoop  : OpenLoop_Fast / Slow        (openloop.c)  I/F 开环拖动与切闭环判定
+ *   [4] RunState_Spin      : Spin_Fast / Slow            (spin.c)      闭环运行、零电流跟踪与回退判定 */
 static const StateFn_t s_runFast[5] = {
     Startup_ChargeFast, Startup_FlyCheckFast, Startup_AlignFast,
     OpenLoop_Fast, Spin_Fast
@@ -121,7 +126,15 @@ void Ctrl_ResetRunVariables(void)
 }
 
 /* 快环入口：在 ADC 中断中每个 PWM 周期调用一次（16 kHz，62.5 us），此时采样已完成（gMeas.iabc / vbus）。
- * 按主状态分发到 faultFast / initFast / stopFast / runFast；非 Run 状态下观测器保持复位 */
+ * 按主状态分发到 faultFast / initFast / stopFast / runFast；非 Run 状态下观测器保持复位。
+ *
+ * Spin 闭环典型快环调用链与全局变量数据流：
+ *   Ctrl_FastTick -> s_mainFast[Run] (runFast) -> s_runFast[Spin] (Spin_Fast, spin.c)：
+ *     1. FocCore_Clarke       [读] gMeas.iabc                     [写] gMeas.iab
+ *     2. Est_SpinTick         [读] gMeas.iab/vbus, gSvpwm(上拍)   [写] gFluxObs, gEst, gFoc.theta/thetaInv, gMeas(转速源)
+ *     3. FocCore_CurrentLoop  [读] gMeas.iab/vbusAvg/kvbus, gFoc.theta/thetaInv/idqRef [写] gFoc.idq/vdq/vab/vabMod
+ *     4. Protect_PhaseFast    [读] gMeas.iabc                     [写] 缺相三相电流绝对值累加器
+ *     5. FocCore_Modulate     [读] gFoc.vabMod                    [写] gSvpwm.Alpha/Beta/Comp*, EPWM 占空比寄存器 */
 RAMFUNC void Ctrl_FastTick(void)
 {
     s_mainFast[gSup.mainState]();
@@ -139,7 +152,17 @@ static int16_t compSpeed(void)
 }
 
 /* 慢环入口：在 PendSV 中断中调用，由快环每 16 拍挂起一次（1 kHz），优先级低于快环（可被快环打断）。
- * 按主状态分发到 faultSlow / initSlow / stopSlow / runSlow，然后更新观测器慢变量与母线过欠压判定。 */
+ * 按主状态分发到 faultSlow / initSlow / stopSlow / runSlow，然后更新观测器慢变量与母线过欠压判定。
+ *
+ * Spin 闭环典型慢环调用链与全局变量数据流：
+ *   Ctrl_SlowTick -> s_mainSlow[Run] (runSlow) -> s_runSlow[Spin] (Spin_Slow, spin.c)：
+ *     1. SpeedCtrl_SpinSlow   [读] gSpd.cmd, gMeas.speed/vbusAvg  [写] gSpd.speedRampSt, gSpd.idqCmd.s16Q
+ *     2. IdRef_Slow           [读] gSpd.idqCmd.s16Q, gFoc.vdq/vmax [写] gSpd.idqCmd.s16D/s16Q（MTPA/弱磁）
+ *     3. SpeedCtrl_BlendSlow  [读] gSpd.blend*                    [写] gSpd.idqCmd（叠加 I/F 切换淡出分量）
+ *     4. FocCore_SetIdqRef    [读] gSpd.idqCmd                    [写] gFoc.idqRef（32 位原子发布给快环）
+ *     5. Meas_SlowFilter      [读] gMeas.vbus/ibus/转速源         [写] gMeas.vbusAvg/kvbus/ibusAvg/speed
+ *     6. FluxObs_SlowTick     [读] compSpeed(), gMeas.vbusAvg     [写] s_vdt（死区幅值）, s_compCos/Sin（高通相补）
+ *     7. Protect_BusSlow      [读] gMeas.vbusAvg                  [写] 母线过欠压标志（由快环 faultDetect 读取） */
 void Ctrl_SlowTick(void)
 {
     gSup.ms++;                          /* 1 kHz 毫秒时基（Stop 状态也在走）：飞车检测判断停机时长 */

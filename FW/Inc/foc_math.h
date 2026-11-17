@@ -55,7 +55,7 @@ FORCE_INLINE int16_t FocMath_SqrtQ15(int32_t x)
  * alpha = a，beta = (b - c) / sqrt3，beta 饱和到 Q15 */
 FORCE_INLINE void FocMath_ClarkeSat(const Abc_TypeDef *in, AlphaBeta_TypeDef *out)
 {
-    int32_t b = (((int32_t)in->s16B - in->s16C) * 18919) >> 15;     /* 18919 = 32768 / sqrt3 */
+    int32_t b = (((int32_t)in->s16B - in->s16C) * Q15_INV_SQRT3) >> 15;
     out->s16Alpha = in->s16A;
     if (b > 32767) b = 32767;
     if (b < -32768) b = -32768;

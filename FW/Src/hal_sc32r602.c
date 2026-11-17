@@ -70,7 +70,9 @@ FORCE_INLINE uint8_t acquireSamples(void)
             uint16_t na = (uint16_t)((s_adcMax[0] - s_adcMin[0] + 1) >> 1), nb = (uint16_t)((s_adcMax[1] - s_adcMin[1] + 1) >> 1);
             gHal.adcNoisePk = (uint16_t)((na > nb ? na : nb) + 1);
         }
-        s_u32IaSum = 0; s_u32IbSum = 0; s_u32IbusSum = 0;
+        s_u32IaSum = 0;
+        s_u32IbSum = 0;
+        s_u32IbusSum = 0;
         return 0;
     }
     s_u16Cnt = OFFSET_END + 1;

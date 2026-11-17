@@ -110,7 +110,8 @@ void Spin_TrackBegin(void)
 {
     s_track = 1;
     s_trackN = 0;
-    s_syncSum = 0; s_syncN = 0;
+    s_syncSum = 0;
+    s_syncN = 0;
     FocCore_SetIdqRef(0, 0);
     SpeedCtrl_BlendStop();      /* 跟踪期间电流为 0，未完成的 I/F 切换融合作废，否则跟踪结束闭环时会重新叠加 */
 }
@@ -139,7 +140,8 @@ void Spin_TrackSlow(void)
     if (n < 0xFFFF) s_trackN = n + 1;
     if (n < first) return;              /* PLL 仍在收敛 */
     if (((uint16_t)(n - first) % half) == 0) { s_syncSum = 0; s_syncN = 0; }    /* 新的一块开始 */
-    s_syncSum += w; s_syncN++;
+    s_syncSum += w;
+    s_syncN++;
     if (s_syncN < half) return;
     w = (int16_t)(s_syncSum / s_syncN);
     if (want) {
@@ -159,7 +161,9 @@ void Spin_TrackSlow(void)
  * Spin（闭环运行）
  * =========================================================================*/
 /* 闭环快环一拍：Clarke -> 估计（观测器 + PLL）-> 电流环 -> 缺相累加 -> 调制。
- * 零电流跟踪时同样走此路径（电流指令为 0） */
+ * 零电流跟踪时同样走此路径（电流指令为 0）。
+ *   [读] gMeas.iabc/vbus/vbusAvg/kvbus/speed, gFoc.idqRef, gSvpwm（上一拍指令供观测器）
+ *   [写] gMeas.iab/ibusRec, gFluxObs, gEst, gFoc.theta/thetaInv/idq/vdq/vab/vabMod, gSvpwm, EPWM 占空比 */
 RAMFUNC void Spin_Fast(void)
 {
     FocCore_Clarke();

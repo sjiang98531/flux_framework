@@ -152,7 +152,8 @@ static int32_t rampSCurve(int32_t tgt)
         int32_t sgn = (e > 0) ? 1 : -1, as = a * sgn, cu;
         int32_t amax = (int32_t)((e > 0) ? p->s32RampUp : p->s32RampDown);
         int64_t ae = e < 0 ? -e : e;
-        cu = as + j; if (cu > amax) cu = amax;
+        cu = as + j;
+        if (cu > amax) cu = amax;
         if (needDist(cu) <= ae) as = cu;                            /* 增加（或已在 a_max 上保持） */
         else if (as <= amax && needDist(as) <= ae) { /* 保持 */ }
         else as -= j;                                               /* 减小 */

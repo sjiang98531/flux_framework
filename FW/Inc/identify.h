@@ -92,6 +92,19 @@ extern IdentResult_TypeDef gIdent;
 #define IDENT_MODE_STATIC   1       /* 仅静止测量 */
 #define IDENT_MODE_RUN      2       /* 仅运行测量（每个新指令一次） */
 
+/* 静止测量阶段编号（gIdentTest.phase 取值，按执行顺序排列；保留原编号以兼容 J-Scope 观测配置）：
+ *   执行顺序：RL(9) -> 定位(0) -> DT_STEP(1) -> DT_ZERO(2) -> IPD(3) -> AC(6) -> SAT_FIT(7) -> DONE(4) */
+typedef enum {
+    IDENT_PH_NONE     = 0,          /* 未开始，或 R/L 粗测完成后正在正常定位 */
+    IDENT_PH_RL       = 9,          /* 第 1 步：200 Hz 电压注入粗测 R/L（定位前，不使用电流环） */
+    IDENT_PH_DT_STEP  = 1,          /* 第 2 步：定位完成后，d 轴 11 档直流电流阶梯测 Rs 与死区 */
+    IDENT_PH_DT_ZERO  = 2,          /* 第 3 步：死区阶梯后电流回零等待 */
+    IDENT_PH_IPD      = 3,          /* 第 4 步：IPD 高频注入 + 直流偏置测 N 极角度与极性对比度 */
+    IDENT_PH_AC       = 6,          /* 第 5 步：d/q 轴多频多幅值交流阻抗测量 */
+    IDENT_PH_SAT_FIT  = 7,          /* 第 6 步：q 轴电感饱和 L(i) 网格拟合（分摊到慢环） */
+    IDENT_PH_DONE     = 4           /* 第 7 步：静止测量全部完成，结果已提交 param.c */
+} IdentPhase_TypeDef;
+
 typedef struct {
     int16_t  alignDeg;      /* 定位角（电角度，度），下一次起动生效。IPD 参数见 cfg_internal.h IPD_* */
     uint8_t  mode;          /* IDENT_MODE_AUTO（默认）/ STATIC / RUN，见上；下一次起动生效 */
@@ -99,7 +112,7 @@ typedef struct {
 } IdentCfg_TypeDef;
 
 typedef struct {
-    volatile uint16_t phase;    /* 0 未开始，1 死区阶梯，2 回零，3 IPD（快环），6 交流阻抗（快环），7 饱和拟合，9 R/L（定位前），4 完成 */
+    volatile uint16_t phase;    /* 当前静止测量阶段，取值见 IdentPhase_TypeDef */
     uint16_t idx;               /* 死区档 */
     uint16_t cnt;               /* 慢环计数 */
     int32_t  sum[2];            /* 死区平均：id, vd */

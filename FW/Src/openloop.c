@@ -50,7 +50,7 @@ static int32_t openLoopTarget(void)
 /* asin(x)，x 为 Q15（限 ±0.95），返回 Q15 角度（65536 = 360°）。基于正弦表二分查找，慢环使用 */
 static int16_t asinQ15(int32_t x)
 {
-    int32_t lo = -16384, hi = 16384, mid;
+    int32_t lo = -ANGLE_90_Q15, hi = ANGLE_90_Q15, mid;
     int i;
     if (x > 31130) x = 31130;
     if (x < -31130) x = -31130;
@@ -185,7 +185,8 @@ void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e)
     s_accStep = e->accStep;
     FocCore_SetIdqRef((int16_t)e->olCur, 0);
     s_pllFilt = gEst.pll.s32Speed;
-    s_agree = 0; s_hold = 0;
+    s_agree = 0;
+    s_hold = 0;
 }
 
 /* 飞车接管进入 I/F（快环中执行）：接管时闭环电流 iq = 0（Sup_SwitchFlyCheckOpenLoop 先清零），入口参数除起始转速外
@@ -269,7 +270,9 @@ void OpenLoop_Init(void)
 /* ---------------------------------------------------------------------------
  * OpenLoop（I/F）：电流矢量开环旋转（角度 = 开环积分），观测器 + PLL 只跟踪；转速一致后切换到 Spin。
  * -------------------------------------------------------------------------*/
-/* I/F 快环：观测器 + PLL 只跟踪；开环转速按加速度步长趋近目标，开环角积分；电流环按开环角运行 */
+/* I/F 快环：观测器 + PLL 只跟踪；开环转速按加速度步长趋近目标，开环角积分；电流环按开环角运行。
+ *   [读] gMeas.iabc/vbus/vbusAvg/kvbus, gFoc.idqRef（开环 d 轴电流）, s_olSpeed/s_olTarget/s_olTheta
+ *   [写] gMeas.iab/ibusRec, gFluxObs/gEst（仅后台跟踪）, gFoc.theta/thetaInv（开环角）, gSvpwm, EPWM 占空比 */
 void OpenLoop_Fast(void)
 {
     int32_t sp = s_olSpeed, tgt = s_olTarget, step;

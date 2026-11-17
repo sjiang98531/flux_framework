@@ -44,7 +44,9 @@
 #define MEAS_IBUS_FILT_SH       SH_FOR_TICKS(MEAS_IBUS_FILT_TAU_S * SLOWLOOP_FREQ)    /* 母线电流慢环滤波的移位位数 */
 #define OPENLOOP_PLL_FILT_SH          SH_FOR_TICKS(OPENLOOP_PLL_FILT_TAU_S * SLOWLOOP_FREQ)    /* I/F 期间 PLL 转速滤波（判断能不能切闭环）的移位位数 */
 #define ALIGN_EMF_FILT_SH    SH_FOR_TICKS(ALIGN_EMF_FILT_TAU_S * SLOWLOOP_FREQ)    /* 定位判静止用的反电势滤波移位位数 */
-#define SPIN_CHECK_TICKS        ((uint16_t)(SPIN_CHECK_S * SLOWLOOP_FREQ + 0.5) < 1 ? 1 : (uint16_t)(SPIN_CHECK_S * SLOWLOOP_FREQ + 0.5))    /* Spin 里失锁判断要持续的慢环拍数（至少 1） */
+/* Spin 里失锁判断要持续的慢环拍数（至少 1） */
+#define SPIN_CHECK_TICKS        ((uint16_t)(SPIN_CHECK_S * SLOWLOOP_FREQ + 0.5) < 1 ? 1 : \
+                                 (uint16_t)(SPIN_CHECK_S * SLOWLOOP_FREQ + 0.5))
 #define MOTOR_KT_NM_A_OF(psi)       (1.5 * MOTOR_POLE_PAIRS * (psi))    /* 转矩常数 N·m/A = 1.5 * 极对数 * psi_f（本电机 1.06） */
 #define MOTOR_KT_NM_A               MOTOR_KT_NM_A_OF(MOTOR_PSI_F_WB)
 #define BUS_DELAY_S                 ((double)((1 << MEAS_VBUS_FILT_SH) + 1) / SLOWLOOP_FREQ)    /* 母线电压测量延迟 Td s（滤波窗口 + 1 拍）：控制器"看到"电压升高之前已经过去的时间 */
@@ -52,9 +54,10 @@
 /* 单档最大允许压升：保证三档之下的 BUS_VDC_REF_V 始终高于空载母线上限 BUS_IDLE_MAX_V（留 10% 裕量）。
  * 大功率电机在 SPD_PI_LIMIT 下的回馈压升超出此值时，自动按比例下调回馈方向的 iq 上限 BUS_REGEN_IQ_MAX_A */
 #define BUS_DV_MAX_V                (0.9 * (BOARD_DCBUS_OVP_V - BUS_IDLE_MAX_V) / 3.0)
-#define BUS_REGEN_P_MAX_W_OF(psi)   (MOTOR_KT_NM_A_OF(psi) * SPD_PI_LIMIT * MOTOR_SPEED_RATED_RPM * 2.0 * MATH_PI / 60.0)    /* 最大回馈功率 W = 最大转矩 * 额定转速（最坏情况的估计） */
+/* 最大回馈功率 W = 最大转矩 * 额定转速（最坏情况的估计）；测量延迟 Td 内最大回馈功率把母线推高的电压 */
+#define BUS_REGEN_P_MAX_W_OF(psi)   (MOTOR_KT_NM_A_OF(psi) * SPD_PI_LIMIT * MOTOR_SPEED_RATED_RPM * 2.0 * MATH_PI / 60.0)
 #define BUS_REGEN_P_MAX_W           BUS_REGEN_P_MAX_W_OF(MOTOR_PSI_F_WB)
-#define BUS_DV_RAW_V_OF(psi)        (BUS_REGEN_P_MAX_W_OF(psi) * BUS_DELAY_S / (BOARD_CBUS_UF * 1e-6 * BOARD_DCBUS_OVP_V))    /* 测量延迟 Td 内最大回馈功率把母线推高的电压 */
+#define BUS_DV_RAW_V_OF(psi)        (BUS_REGEN_P_MAX_W_OF(psi) * BUS_DELAY_S / (BOARD_CBUS_UF * 1e-6 * BOARD_DCBUS_OVP_V))
 #define BUS_DV_DELAY_V_OF(psi)      (BUS_DV_RAW_V_OF(psi) < BUS_DV_MAX_V ? BUS_DV_RAW_V_OF(psi) : BUS_DV_MAX_V)    /* 门限之间至少隔这么多 */
 #define BUS_DV_DELAY_V              BUS_DV_DELAY_V_OF(MOTOR_PSI_F_WB)
 #define BUS_REGEN_IQ_MAX_A_OF(psi)  (BUS_DV_RAW_V_OF(psi) > BUS_DV_MAX_V ? SPD_PI_LIMIT * (BUS_DV_MAX_V / BUS_DV_RAW_V_OF(psi)) : SPD_PI_LIMIT)
@@ -81,7 +84,8 @@
 /* 兜底的回馈 iq 削顶（speed_ctrl.c）：母线 Q15（UDC_MAX 基准）和斜率 Q12（每 Q15 母线电压超出对应多少 Q15 iq 上限） */
 #define BUS_REGEN_START_Q15_OF(psi) ((int16_t)(BUS_REGEN_START_V_OF(psi) / UDC_MAX * 32768.0))
 #define BUS_REGEN_FULL_Q15_OF(psi)  ((int16_t)(BUS_REGEN_FULL_V_OF(psi) / UDC_MAX * 32768.0))
-#define BUS_REGEN_K_Q12_OF(psi)     ((int32_t)((BUS_REGEN_IQ_MAX_A_OF(psi) / I_MAX * 32768.0) / (BUS_REGEN_FULL_Q15_OF(psi) - BUS_REGEN_START_Q15_OF(psi)) * 4096.0 + 0.5))
+#define BUS_REGEN_K_Q12_OF(psi)     ((int32_t)((BUS_REGEN_IQ_MAX_A_OF(psi) / I_MAX * 32768.0) / \
+                                     (BUS_REGEN_FULL_Q15_OF(psi) - BUS_REGEN_START_Q15_OF(psi)) * 4096.0 + 0.5))
 #define BUS_REGEN_START_Q15     BUS_REGEN_START_Q15_OF(MOTOR_PSI_F_WB)
 #define BUS_REGEN_FULL_Q15      BUS_REGEN_FULL_Q15_OF(MOTOR_PSI_F_WB)
 #define BUS_REGEN_K_Q12         BUS_REGEN_K_Q12_OF(MOTOR_PSI_F_WB)
@@ -229,7 +233,8 @@
 #define FLUX_HPF_TICKS_         (FLUX_HPF_TAU_S * PWM_FREQ)    /* 去直流时间常数换成快环拍数 */
 #define FLUX_HPF_SH             ((FLUX_HPF_TICKS_) < 1448.0 ? 10 : (FLUX_HPF_TICKS_) < 2896.0 ? 11 : (FLUX_HPF_TICKS_) < 5793.0 ? 12 : \
                                  (FLUX_HPF_TICKS_) < 11585.0 ? 13 : 14)
-#define HPF_WC_Q15SPD           ((int32_t)((double)PWM_FREQ / (double)(1L << FLUX_HPF_SH) / W_EMAX_RAD_S * 32768.0 + 0.5))    /* 去直流截止角频率，用 Q15 转速表示（相位补偿 atan(wc/w) 里用） */
+/* 去直流截止角频率，用 Q15 转速表示（相位补偿 atan(wc/w) 里用） */
+#define HPF_WC_Q15SPD           ((int32_t)((double)PWM_FREQ / (double)(1L << FLUX_HPF_SH) / W_EMAX_RAD_S * 32768.0 + 0.5))
 /* NLFO（flux_obs.c）：corr = psi * fq >> SH，fq = ((ferr >> 12) * FLUX_NLFO_NORM_Q8) >> 8。
  * fq = ferr / |psi_f|^2（Q15）时径向误差每拍衰减 2 / 2^SH，即 tau = 2^(SH-1) / fs。SH 取 2 * tau * fs 最接近的 2 的幂，
  * 余下的比例 2^(SH-1) / (tau * fs) 乘进归一化，tau 可以连续取值 */

@@ -12,9 +12,12 @@ Meas_TypeDef gMeas;
 void Meas_Init(void)
 {
     /* 母线电压、母线电流、转速三个滤波器：窗口见 cfg_internal.h MEAS_*_FILT / SPEED_FB_FILT_HZ */
-    gMeas.speedFilt.u16Sh = SPEED_FB_FILT_SH; gMeas.speedFilt.s32Acc = 0;
-    gMeas.vbusFilt.u16Sh = MEAS_VBUS_FILT_SH;  gMeas.vbusFilt.s32Acc = 0;
-    gMeas.ibusFilt.u16Sh = MEAS_IBUS_FILT_SH;  gMeas.ibusFilt.s32Acc = 0;
+    gMeas.speedFilt.u16Sh = SPEED_FB_FILT_SH;
+    gMeas.speedFilt.s32Acc = 0;
+    gMeas.vbusFilt.u16Sh = MEAS_VBUS_FILT_SH;
+    gMeas.vbusFilt.s32Acc = 0;
+    gMeas.ibusFilt.u16Sh = MEAS_IBUS_FILT_SH;
+    gMeas.ibusFilt.s32Acc = 0;
     /* 母线归一化系数初值：按额定母线，与运行时公式相同（第一个慢环起按 vbusAvg 更新） */
     gMeas.kvbus = (int16_t)(MEAS_KVBUS_NUM / Q15(UDC_RATE / UDC_MAX));
 }

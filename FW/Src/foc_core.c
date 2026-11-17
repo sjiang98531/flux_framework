@@ -43,15 +43,18 @@ void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod)
 
 RAMFUNC void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibusRec)
 {
-    int32_t r3 = (u->Alpha * 28378) >> 15;
+    int32_t r3 = (u->Alpha * Q15_SQRT3_HALF) >> 15;
     int32_t xyz[3], tt[3], i3[3];
     int32_t half, vb, vc, t1, t2, P, a1, a2, t0;
     const SvSector *k;
     uint8_t n = 0;
 
-    xyz[0] = u->Beta; half = xyz[0] >> 1;
-    xyz[1] = half + r3; xyz[2] = half - r3;
-    vb = r3 - half; vc = -(r3 + half);
+    xyz[0] = u->Beta;
+    half = xyz[0] >> 1;
+    xyz[1] = half + r3;
+    xyz[2] = half - r3;
+    vb = r3 - half;
+    vc = -(r3 + half);
     P = u->N_halfPeriod;
 
     if (xyz[0] >= 0) n = 1;
@@ -83,8 +86,12 @@ RAMFUNC void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibus
         u->CompA = u->CompB = u->CompC = (int16_t)(P >> 1);
         return;
     }
-    u->CompA = (int16_t)tt[k->c[0]]; u->CompB = (int16_t)tt[k->c[1]]; u->CompC = (int16_t)tt[k->c[2]];
-    i3[0] = iabc->s16A; i3[1] = iabc->s16B; i3[2] = iabc->s16C;
+    u->CompA = (int16_t)tt[k->c[0]];
+    u->CompB = (int16_t)tt[k->c[1]];
+    u->CompC = (int16_t)tt[k->c[2]];
+    i3[0] = iabc->s16A;
+    i3[1] = iabc->s16B;
+    i3[2] = iabc->s16C;
     *ibusRec = (int16_t)((i3[k->p1] * t1 - i3[k->p2] * t2) >> 15);
 }
 
@@ -111,8 +118,10 @@ void FocCore_Init(void)
 /* 从 gGain 装载两个电流 PI 的 Kp / Ki（上电及参数更新时） */
 void FocCore_LoadGains(void)
 {
-    gFoc.piD.qKp = gGain.curKpD; gFoc.piD.qKi = gGain.curKiD;
-    gFoc.piQ.qKp = gGain.curKpQ; gFoc.piQ.qKi = gGain.curKiQ;
+    gFoc.piD.qKp = gGain.curKpD;
+    gFoc.piD.qKi = gGain.curKiD;
+    gFoc.piQ.qKp = gGain.curKpQ;
+    gFoc.piQ.qKi = gGain.curKiQ;
 }
 
 /* 停机 / 重新起动前：清零积分器、电压、电流指令、角度，复位解耦开关 */
@@ -145,7 +154,9 @@ void FocCore_PresetPIForSpeed(int16_t spdQ15)
  *   2. 电压圆半径 vmax = MAX_DUTY * 母线 * 2/3（SVPWM 线性区可输出的最大相电压幅值，Q15 电压）；
  *   3. dqPI：d、q 两个 PI 加解耦前馈，得到 dq 电压；
  *   4. 反 Park（使用 gFoc.thetaInv，可超前于 theta，补偿 PWM 延迟一拍生效期间的转角）-> αβ 电压；
- *   5. 母线归一化：按实际母线电压换算为调制器单位（母线升高时占空比自动减小）。 */
+ *   5. 母线归一化：按实际母线电压换算为调制器单位（母线升高时占空比自动减小）。
+ *   [读] gMeas.iab/vbusAvg/kvbus, gFoc.theta/thetaInv/idqRef, gEst.pll.s32Speed（解耦前馈）
+ *   [写] gFoc.ang/idq/vmax/piD/piQ/vdq/angInv/vab/vabMod */
 RAMFUNC void FocCore_CurrentLoop(void)
 {
     int16_t s16Temp;

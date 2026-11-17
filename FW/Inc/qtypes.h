@@ -16,6 +16,17 @@
 #define Q15(x) ((int16_t)((x) < 0.999969482421875 ? ((x) >= -1 ? (x)*0x8000 : 0x8000) : 0x7FFF))
 #define Q31(x) ((int32_t)((x) < 1 ? ((x) >= -1 ? (x)*0x80000000 : 0x80000000) : 0x7FFFFFFF))
 
+/* 常用无理数 / 分数的 Q15 值（整型字面量，用法：(x * Q15_INV_SQRT3) >> 15） */
+#define Q15_INV_SQRT3       18919   /* 1/√3 = 0.57735 */
+#define Q15_SQRT3_HALF      28378   /* √3/2 = 0.86603 */
+#define Q15_INV_SQRT2       23170   /* 1/√2 = 0.70711 */
+#define Q15_ONE_THIRD       10923   /* 1/3 */
+#define Q15_0P9             29491   /* 0.9（常用作 90% 满量程限幅） */
+
+/* Q15 电角度（int16 回绕，65536 = 一圈） */
+#define ANGLE_90_Q15        16384
+#define ANGLE_180_Q15       32768
+
 /* 三相 / 静止两相 / 旋转两相，Q15 */
 typedef struct { int16_t s16A, s16B, s16C; } Abc_TypeDef;
 typedef struct { int16_t s16Alpha, s16Beta; } AlphaBeta_TypeDef;

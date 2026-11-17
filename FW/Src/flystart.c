@@ -68,9 +68,15 @@ static int32_t  s_pIth2;                          /* 脉冲电流门限的平方
 
 static void pulseBegin(void)
 {
-    s_pState = P_ON; s_pIdx = 0; s_pBad = 0; s_pNeedDphi = 0;
-    s_pTick = 0; s_pSince = 0; s_pSum = 0;
-    gFly.pulseLen = 0; gFly.pulseResult = FLY_PR_NONE;
+    s_pState = P_ON;
+    s_pIdx = 0;
+    s_pBad = 0;
+    s_pNeedDphi = 0;
+    s_pTick = 0;
+    s_pSince = 0;
+    s_pSum = 0;
+    gFly.pulseLen = 0;
+    gFly.pulseResult = FLY_PR_NONE;
     {   /* 门限 = 噪声峰值 * 每码门限（单次矢量角度误差 <= FLY_SEED_ANGLE_DEG） */
         int32_t n = gHal.adcNoisePk, ith;
         if (n < (int32_t)BOARD_ADC_NOISE_CODES) n = (int32_t)BOARD_ADC_NOISE_CODES;
@@ -105,8 +111,10 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
             gFly.pulseLen = s_pTick;
             if (m2 < s_pIth2) return pulseFallback(FLY_PR_TOO_SLOW);     /* 最长脉冲也达不到精度要求的电流：转速太低（或静止） */
         }
-        s_pPrevA = s_pA; s_pPrevB = s_pB;
-        s_pA = a >> 1; s_pB = b >> 1;
+        s_pPrevA = s_pA;
+        s_pPrevB = s_pB;
+        s_pA = a >> 1;
+        s_pB = b >> 1;
         s_pNeedDphi = (s_pIdx > 0);
         s_pIdx++;
         s_pSince = 0;
@@ -114,7 +122,8 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
         return FLY_BUSY;
     }
     case P_GAP:
-        s_pTick++; s_pSince++;
+        s_pTick++;
+        s_pSince++;
         if (s_pNeedDphi) {
             /* 夹角：atan2(叉积, 点积)，有符号 */
             int32_t d = (int32_t)QMath_Atan2(s_pPrevA * s_pB - s_pPrevB * s_pA, s_pPrevA * s_pA + s_pPrevB * s_pB);
@@ -165,8 +174,9 @@ static FlyVerdict_t pulseFast(int16_t cmdSign)
         int32_t w = s_pSpd < 0 ? -(int32_t)s_pSpd : s_pSpd;
         uint32_t adv;
         s_pSince++;
-        /* adv = 平均每拍转角 × (pulseLen/2 + s_pSince) = sum(2^28) * 16 * n / (2 * BASE)，n = pulseLen + 2*s_pSince */
-        adv = (uint32_t)(int32_t)(((int64_t)s_pSum * (int32_t)((gFly.pulseLen + 2 * s_pSince) * FLY_PULSE_ADV_K)) >> 16);  /* 后两项之积 < 2^31（FLY_PULSE_ADV_FITS） */
+        /* adv = 平均每拍转角 × (pulseLen/2 + s_pSince) = sum(2^28) * 16 * n / (2 * BASE)，n = pulseLen + 2*s_pSince；
+         * 后两项之积 < 2^31（FLY_PULSE_ADV_FITS） */
+        adv = (uint32_t)(int32_t)(((int64_t)s_pSum * (int32_t)((gFly.pulseLen + 2 * s_pSince) * FLY_PULSE_ADV_K)) >> 16);
         s_pAng += (s_pSpd > 0 ? 0x40000000UL : 0xC0000000UL) + adv;
         gFly.thetaCatch = (int16_t)(s_pAng >> 16);
         gFly.speedCatch = s_pSpd;
@@ -200,13 +210,27 @@ void FlyStart_Init(void)
 void FlyStart_Begin(void)
 {
     pulseBegin();
-    s_sumA = 0; s_sumB = 0; s_tick = 0; s_blocks = 0;
+    s_sumA = 0;
+    s_sumB = 0;
+    s_tick = 0;
+    s_blocks = 0;
     /* 停机已超过 flyMayMoveExpireMs：短接制动的转子早已低于残余转速，不必按最坏情况空等。
      * 间隔更短（真滑行中再起动）仍按"可能在转"保守处理。gSup.ms 在快环读不会被打断（PendSV 低于 ADC 中断）。 */
     if (s_mayMove && (uint32_t)(gSup.ms - s_runEndMs) >= gGain.flyMayMoveExpireMs) s_mayMove = 0;
-    s_havePrev = 0; s_haveCD = 0; s_sawSpin = s_mayMove; s_prevSpd = 0; s_stillDone = 0; s_catchStep = 0;
-    s_spinSeen = 0; s_quiet = 0;
-    gFly.stage = FLY_STAGE_SETTLE; gFly.ampM2 = 0; gFly.speed = 0; gFly.stable = 0; gFly.still = 0; gFly.brakeMs = 0;
+    s_havePrev = 0;
+    s_haveCD = 0;
+    s_sawSpin = s_mayMove;
+    s_prevSpd = 0;
+    s_stillDone = 0;
+    s_catchStep = 0;
+    s_spinSeen = 0;
+    s_quiet = 0;
+    gFly.stage = FLY_STAGE_SETTLE;
+    gFly.ampM2 = 0;
+    gFly.speed = 0;
+    gFly.stable = 0;
+    gFly.still = 0;
+    gFly.brakeMs = 0;
 }
 
 /* 转子角 = 电流方向 + sgn(w) * (90° + atan(|w|Lq/Rs))。分两拍计算：
@@ -245,7 +269,11 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     /* 静止在上一块末尾判出，下一拍才切换（冷起动约 FLY_COLD_STILL_TIME 后进入 Align） */
     if (s_stillDone) { gFly.stage = FLY_STAGE_STILL; return FLY_STILL; }
     /* 接管：判定之后第 1 拍计算阻抗角，第 2 拍用当拍电流计算转子角并切换 */
-    if (s_catchStep == 1) { s_catchOff = impedanceOffset(gFly.speedCatch); s_catchStep = 2; return FLY_BUSY; }
+    if (s_catchStep == 1) {
+        s_catchOff = impedanceOffset(gFly.speedCatch);
+        s_catchStep = 2;
+        return FLY_BUSY;
+    }
     if (s_catchStep == 2) {
         int32_t w = gFly.speedCatch < 0 ? -(int32_t)gFly.speedCatch : gFly.speedCatch;
         s_catchStep = 0;
@@ -261,7 +289,8 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     s_tick = 0;
     a = s_sumA / (2 * FLY_BLOCK_TICKS);                 /* 平均电流的一半：|a|,|b| <= 16384 */
     b = s_sumB / (2 * FLY_BLOCK_TICKS);
-    s_sumA = 0; s_sumB = 0;
+    s_sumA = 0;
+    s_sumB = 0;
     gFly.brakeMs++;
     /* 快环不开方：判据 2*floor(sqrt(m)) <= th 等价于 m < (floor(th/2) + 1)^2（整数意义上精确） */
     gFly.ampM2 = (uint32_t)(a * a + b * b);
@@ -269,8 +298,11 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
         gFly.ampM2 < (uint32_t)(((gFly.s16BemfAmpTh >> 1) + 1) * ((gFly.s16BemfAmpTh >> 1) + 1))) {
         /* 电流过小，转速无法准确测量：视为未转动（本电机约 30 rpm 以下）。
          * 静止计时从进入 FlyCheck 即开始（静止时无暂态需等待） */
-        s_havePrev = 0; s_haveCD = 0; s_prevSpd = 0;
-        gFly.speed = 0; gFly.stable = 0;
+        s_havePrev = 0;
+        s_haveCD = 0;
+        s_prevSpd = 0;
+        gFly.speed = 0;
+        gFly.stable = 0;
         if (gFly.ampM2 < (uint32_t)(((gFly.s16EndAmpTh >> 1) + 1) * ((gFly.s16EndAmpTh >> 1) + 1))) s_quiet++;
         else s_quiet = 0;
         /* 冷起动无制动暂态，短确认即可；上次运行后可能在滑行：电流已低于残余转速对应值则同样短确认；测到过转动则等待停稳 */
@@ -283,10 +315,14 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
     } else if (s_blocks < gGain.flySettleBlocks) {
         s_blocks++;                                     /* 正在转动：等待短接暂态衰减后再测转速 */
         gFly.still = 0;
-        s_sawSpin = 1; s_spinSeen = 1; s_quiet = 0;
+        s_sawSpin = 1;
+        s_spinSeen = 1;
+        s_quiet = 0;
     } else {
         gFly.stage = FLY_STAGE_MEASURE;
-        s_sawSpin = 1; s_spinSeen = 1; s_quiet = 0;
+        s_sawSpin = 1;
+        s_spinSeen = 1;
+        s_quiet = 0;
         gFly.still = 0;
         if (s_havePrev) {
             /* 相邻两块的夹角 = 1 ms 内转过的电角度。|c|,|d| <= 5.4e8，低通采用先移位再相减以防溢出 */
@@ -294,8 +330,11 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
             int32_t d = s_prevA * a + s_prevB * b;
             int32_t w, dv;
             int16_t spd;
-            if (!s_haveCD) { s_C = c; s_D = d; s_haveCD = 1; }
-            else { s_C += (c >> 2) - (s_C >> 2); s_D += (d >> 2) - (s_D >> 2); }
+            if (!s_haveCD) {
+                s_C = c;
+                s_D = d;
+                s_haveCD = 1;
+            } else { s_C += (c >> 2) - (s_C >> 2); s_D += (d >> 2) - (s_D >> 2); }
             spd = QMath_Sat16((int32_t)(((int64_t)(int32_t)QMath_Atan2(s_C, s_D) * FLY_DPHI_K) >> 32));
             gFly.speed = spd;
             w = spd < 0 ? -(int32_t)spd : spd;
@@ -317,7 +356,8 @@ FlyVerdict_t FlyStart_DetectFast(int16_t cmdSign)
         }
         s_havePrev = 1;
     }
-    s_prevA = a; s_prevB = b;
+    s_prevA = a;
+    s_prevB = b;
     if (gFly.brakeMs > FLY_TIMEOUT_BLOCKS) { gFly.stage = FLY_STAGE_TIMEOUT; return FLY_TIMEOUT; }
     return FLY_BUSY;
 }
