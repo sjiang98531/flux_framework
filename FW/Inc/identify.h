@@ -32,6 +32,7 @@ typedef enum {
 #define IDENT_WARN_AUTO_BLOCKED (1u << 4)   /* IDENT_MODE_AUTO 静止结果未通过合理性检查，已阻止自动重起动 */
 #define IDENT_WARN_LOW_SNR      (1u << 5)   /* 交流注入感抗压降相对死区等效电压不足（ωL·I / Vdt < 1.0） */
 #define IDENT_WARN_AC_FAIL      (1u << 6)   /* 交流阻抗分段电流积分为零，测量无效 */
+#define IDENT_WARN_AMP_FAIL     (1u << 7)   /* 交流注入幅值标定 3 次内未进入目标 ±25% */
 
 typedef struct {
     float rlR, rlL;     /* 第一步 R/L（200 Hz 电压注入，不使用电流环）：仅用于先整定电流环（R 含死区偏大，L 偏小）；-1 = 未测得 */

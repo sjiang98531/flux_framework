@@ -213,8 +213,11 @@ static int16_t  s_acVph;            /* 每相死区电压（Q15，死区阶梯�
 static float    s_acZre[AC_NF], s_acZim[AC_NSEG];     /* 实部只用 d 轴三段（acRohm）；电流幅值直接写入 gIdent.lqAtA */
 static float    s_zCmdR[AC_NF], s_zCmdI[AC_NF], s_zDtR[AC_NF], s_zDtI[AC_NF];  /* d 轴三频点指令电压/死区电压相对电流的复阻抗，用于延迟残差估算 */
 static float    s_acDlyShift, s_acI04L, s_acI10L; /* 三频点估算的延迟残差（PWM 拍）、0.5*f0 0.4 A / 1.0 A 实际电流幅值 */
-static float    s_acGain[AC_NSEG];      /* 各段指令幅值缩放（用于 0.5*f0 与 f0 等幅对齐） */
-static uint8_t  s_acRetry[AC_NSEG];     /* 各段等幅重测次数 */
+static float    s_acGain[AC_NSEG];      /* 各段指令幅值缩放（仿射/割线幅值标定及 0.5*f0 等幅对齐） */
+static uint8_t  s_acRetry[AC_NSEG];     /* 各段重测次数 */
+static uint8_t  s_tryHasLo, s_tryHasHi, s_tryHasCap, s_tryCapped;
+static float    s_tryG1, s_tryGPrev, s_tryIPrev;
+static float    s_tryGLo, s_tryILo, s_tryGHi, s_tryIHi, s_tryHiCap;
 static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等待慢环读取 */
 
 static void acSetFreq(uint16_t idx, float hz)
@@ -360,6 +363,11 @@ static void acSegStart(uint16_t seg)    /* 慢环 */
     uint16_t f = s_acSegF[seg];
     double dlyTicks = (double)AC_V_DELAY - (double)s_acDlyShift;
     if (dlyTicks < 0.0) dlyTicks = 0.0;
+    if (s_acRetry[seg] == 0u) {
+        s_tryHasLo = s_tryHasHi = s_tryHasCap = s_tryCapped = 0;
+        s_tryG1 = s_tryGPrev = s_tryIPrev = 0.0f;
+        s_tryGLo = s_tryILo = s_tryGHi = s_tryIHi = s_tryHiCap = 0.0f;
+    }
     s_acTheta = (int16_t)((gIpd.ok ? gIpd.theta : Ident_AlignTheta()) + (s_acSegQ[seg] ? ANGLE_90_Q15 : 0));
     {
         int32_t bx = gIdentCfg.biasX ? (int32_t)gIdentCfg.biasX : 1;
@@ -369,6 +377,7 @@ static void acSegStart(uint16_t seg)    /* 慢环 */
         int32_t amp = QMath_Clamp(ampRaw, lim);
         int64_t b = -(int64_t)s_acSegB[seg] * bx;   /* 注入坐标系旋转了 +90°，N 极位于其 -q 方向 */
         int32_t maxB = (int32_t)sqrtf((float)((double)lim * lim - (double)amp * amp));
+        s_tryCapped = (ampRaw > lim) ? 1u : 0u;
         if (b > maxB) b = maxB;
         if (b < -maxB) b = -maxB;
         s_acAmp = (int16_t)amp;
@@ -436,9 +445,84 @@ static void acFast(void)
     FocCore_Modulate(SEVENMODE);
 }
 
+/* 单段幅值标定（仿射首步 + 两点割线/二分 + 超调封顶）：返回 1 = 需重测本段；0 = 完成 */
+static uint8_t acRetryGain(uint16_t seg, float ref, float accTol, float failTol, uint8_t maxRetry,
+                           float iAmp, float vAmp, float vLim, uint8_t checkVLim)
+{
+    float g = s_acGain[seg], gNext;
+    if (ref <= 0.0f || iAmp <= 0.0f) return 0;
+    if (checkVLim && iAmp < (1.0f - accTol) * ref && vAmp > vLim) {
+        gIdent.warn |= IDENT_WARN_LOW_SNR;
+        return 0;
+    }
+    if (iAmp > 1.3f * ref && (!s_tryHasCap || g < s_tryHiCap)) {
+        s_tryHasCap = 1;
+        s_tryHiCap = g;
+    }
+    if (iAmp <= ref && (!s_tryHasLo || iAmp > s_tryILo || (iAmp == s_tryILo && g > s_tryGLo))) {
+        s_tryHasLo = 1;
+        s_tryGLo = g;
+        s_tryILo = iAmp;
+    }
+    if (iAmp >= ref && (!s_tryHasHi || iAmp < s_tryIHi || (iAmp == s_tryIHi && g < s_tryGHi))) {
+        s_tryHasHi = 1;
+        s_tryGHi = g;
+        s_tryIHi = iAmp;
+    }
+    if (fabsf(iAmp - ref) <= accTol * ref) return 0;
+    if (s_acRetry[seg] >= maxRetry) {
+        if (failTol > 0.0f && fabsf(iAmp - ref) > failTol * ref)
+            gIdent.warn |= IDENT_WARN_AMP_FAIL;
+        return 0;
+    }
+    if (s_acRetry[seg] == 0u) {
+        gNext = g + (ref - iAmp) / ref;
+        if (s_tryHasCap && gNext > s_tryHiCap) gNext = 0.7f * s_tryHiCap;
+        if (gNext < 0.25f * g) gNext = 0.25f * g;
+        s_tryG1 = gNext;
+    } else {
+        if (s_tryHasLo && s_tryHasHi && s_tryGHi > s_tryGLo + 1e-4f) {
+            if (s_tryIHi > s_tryILo + 1e-4f * ref) {
+                gNext = s_tryGLo + (ref - s_tryILo) * (s_tryGHi - s_tryGLo) / (s_tryIHi - s_tryILo);
+            } else {
+                gNext = 0.5f * (s_tryGLo + s_tryGHi);
+            }
+            if (!(gNext > s_tryGLo + 0.05f * (s_tryGHi - s_tryGLo) &&
+                  gNext < s_tryGHi - 0.05f * (s_tryGHi - s_tryGLo))) {
+                gNext = 0.5f * (s_tryGLo + s_tryGHi);
+            }
+        } else {
+            float dg = g - s_tryGPrev, di = iAmp - s_tryIPrev;
+            if (dg * di > 0.0f && fabsf(di) > 1e-3f * ref) {
+                gNext = s_tryGPrev + (ref - s_tryIPrev) * dg / di;
+            } else if (iAmp < ref) {
+                gNext = g + (ref - iAmp) / ref;
+            } else {
+                gNext = 0.7f * g;
+            }
+        }
+        if (gNext < 0.5f * s_tryG1) gNext = 0.5f * s_tryG1;
+        if (gNext > 2.0f * s_tryG1) gNext = 2.0f * s_tryG1;
+        if (s_tryHasCap && gNext >= s_tryHiCap) {
+            gNext = s_tryHasLo ? 0.5f * (s_tryGLo + s_tryHiCap) : 0.7f * s_tryHiCap;
+            if (gNext < 0.5f * s_tryG1) gNext = 0.5f * s_tryG1;
+        }
+    }
+    if (s_tryCapped && gNext >= g) {
+        if (failTol > 0.0f && fabsf(iAmp - ref) > failTol * ref)
+            gIdent.warn |= IDENT_WARN_AMP_FAIL;
+        return 0;
+    }
+    s_tryGPrev = g;
+    s_tryIPrev = iAmp;
+    s_acGain[seg] = gNext;
+    s_acRetry[seg]++;
+    return 1;
+}
+
 /* 慢环：读取一段积分，Z = V/I（复数，以 sin 为实轴）。电压先扣除死区电压（与电流同时刻，无需延时对齐）：
  * 扣除后的实部应接近 Rs（用于校核死区模型）；死区与电流同相，是否扣除均不影响虚部（电感）。
- * 返回 1 = 0.5*f0 配对段与 f0 实测电流幅值偏差 > 5%，已调整 s_acGain 需重测本段；0 = 完成 */
+ * 返回 1 = 需调整 s_acGain 并重测本段；0 = 完成 */
 static uint8_t acSegFinish(uint16_t seg)
 {
     float vr = (float)(s_acVs - s_acEs), vi = (float)(s_acVc - s_acEc), ir = (float)s_acIs, ii = (float)s_acIc, d = ir * ir + ii * ii;
@@ -453,16 +537,16 @@ static uint8_t acSegFinish(uint16_t seg)
         return 0;
     }
     iAmp = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
-    if (seg == AC_S_Q04L || seg == AC_S_Q10L) {
+    if (seg < 6u) {
+        float ref = (float)s_acSegA[seg] * ki;
+        float cr = (float)s_acVs, ci = (float)s_acVc;
+        float vAmp = 2.0f * sqrtf(cr * cr + ci * ci) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * kv;
+        float vdc = (gMeas.vbusAvg > 0) ? (float)gMeas.vbusAvg * kv : (float)UDC_RATE;
+        float vLim = 0.85f * (0.90f * vdc / 1.7320508f);
+        if (acRetryGain(seg, ref, 0.15f, 0.25f, 3u, iAmp, vAmp, vLim, 1u)) return 1;
+    } else if (seg == AC_S_Q04L || seg == AC_S_Q10L) {
         float ref = (seg == AC_S_Q04L) ? gIdent.lqAtA[0] : gIdent.lqAtA[1];
-        if (ref > 0.0f && iAmp > 0.0f && fabsf(iAmp - ref) > 0.05f * ref && s_acRetry[seg] < 2u) {
-            float g = s_acGain[seg] * (ref / iAmp);
-            if (g < 0.3f) g = 0.3f;
-            if (g > 3.0f) g = 3.0f;
-            s_acGain[seg] = g;
-            s_acRetry[seg]++;
-            return 1;
-        }
+        if (acRetryGain(seg, ref, 0.05f, 0.0f, 3u, iAmp, 0.0f, 0.0f, 0u)) return 1;
     }
     if (seg < AC_NF) {
         float cr = (float)s_acVs, ci = (float)s_acVc, er = (float)s_acEs, ei = (float)s_acEc;
@@ -854,7 +938,8 @@ void Ident_Slow(void)
                                            (!MOTOR_IPM || gIdent.ldH > 0.0f) &&
                                            gIdent.acLdH[0] > 0.0f && gIdent.acRohm[0] > 0.0f &&
                                            gIdent.rlR > 0.0f && gIdent.rlL > 0.0f &&
-                                           !(gIdent.warn & (IDENT_WARN_AC_DRIFT | IDENT_WARN_LOW_SNR | IDENT_WARN_AC_FAIL)));
+                                           !(gIdent.warn & (IDENT_WARN_AC_DRIFT | IDENT_WARN_LOW_SNR | IDENT_WARN_AC_FAIL |
+                                                            IDENT_WARN_AMP_FAIL)));
             offerStill(trustedPre);
             if (!trustedPre) gIdent.warn |= IDENT_WARN_AUTO_BLOCKED;
             if (gIdentCfg.mode == IDENT_MODE_AUTO) {
