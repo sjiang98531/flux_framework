@@ -35,9 +35,9 @@ volatile IdentCfg_TypeDef gIdentCfg = { 0 };
 IdentTest_TypeDef gIdentTest;
 
 /* 辨识电流按 MOTOR_I_RATED_A 缩放（本电机 0.75 A 时 IDENT_I_SCALE = 1.0，与原值逐位相同）；
- * 最大测试电流（2.5 * SCALE）不超过 SPD_PI_LIMIT 与 0.8 * I_MAX */
+ * 最大测试电流（2.5 * SCALE 与大幅值正交偏置合成）不超过 SPD_PI_LIMIT，并保留余量防三相静止坐标系 int16 溢出 */
 #define IDENT_I_SCALE_RAW   (MOTOR_I_RATED_A / 0.75)
-#define IDENT_I_SCALE_MAX   ((SPD_PI_LIMIT < 0.8 * I_MAX ? SPD_PI_LIMIT : 0.8 * I_MAX) / 2.5)
+#define IDENT_I_SCALE_MAX   ((SPD_PI_LIMIT < 0.72 * I_MAX ? SPD_PI_LIMIT : 0.72 * I_MAX) / 2.5)
 #define IDENT_I_SCALE       (IDENT_I_SCALE_RAW < IDENT_I_SCALE_MAX ? IDENT_I_SCALE_RAW : IDENT_I_SCALE_MAX)
 #define IDENT_Q15_I(a)      Q15((a) * IDENT_I_SCALE / I_MAX)
 
@@ -101,6 +101,7 @@ void Ident_Reset(void)
     gIdentTest.idx = 0;
     gIdentTest.cnt = 0;
     gIdent.state = IDENT_RUNNING;
+    FocCore_LoadGains();
     rlStart();
     gIdentTest.phase = IDENT_PH_RL; /* 先测 R/L（电压模式，不使用电流环），测完再回 IDENT_PH_NONE 正常定位 */
 }
@@ -111,6 +112,7 @@ void Ident_Idle(void)
     gIdentTest.phase = IDENT_PH_NONE;
     s_olFluxSt = OLF_WAIT_STABLE;
     s_olFluxN = 0;
+    FocCore_LoadGains();
 }
 
 /* 定位完成后开始死区阶梯（IDENT_PH_DT_STEP） */
@@ -216,7 +218,7 @@ static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等�
 static void acSegStart(uint16_t seg)    /* 慢环 */
 {
     uint16_t f = s_acSegF[seg];
-    s_acTheta = (int16_t)(gIpd.theta + (s_acSegQ[seg] ? ANGLE_90_Q15 : 0));
+    s_acTheta = (int16_t)((gIpd.ok ? gIpd.theta : Ident_AlignTheta()) + (s_acSegQ[seg] ? ANGLE_90_Q15 : 0));
     s_acAmp = s_acSegA[seg];
     s_acEnv = 0;
     s_acEnvStep = (int32_t)(32768L / (AC_RAMP * (int32_t)s_acPer[f])) + 1;
@@ -238,8 +240,9 @@ static void acFast(void)
     uint16_t seg = s_acSeg, per = s_acPer[s_acSegF[seg < AC_NSEG ? seg : 0]];
     int16_t ref = 0;
     if (seg < AC_NSEG && !s_acDone) {
-        SinCos_TypeDef a = FocMath_SinCos((int16_t)(s_acPhi >> 16));
+        SinCos_TypeDef aOld = FocMath_SinCos((int16_t)(s_acPhi >> 16));
         SinCos_TypeDef b = FocMath_SinCos((int16_t)((s_acPhi + s_acDly) >> 16));
+        SinCos_TypeDef a;
         if (s_acT >= AC_SETTLE * per) {
             /* 死区电压沿注入方向的分量（按本拍电流，模型同 flux_obs.c dtComp）：仅用于将实部还原为 Rs 以作校核 */
             int32_t ia = gMeas.iab.s16Alpha, ibs = ((int32_t)gMeas.iab.s16Beta * Q15_SQRT3_HALF) >> 15, xa, xb, xc, ea, eb, e;
@@ -252,10 +255,8 @@ static void acFast(void)
                 SinCos_TypeDef d = FocMath_SinCos(s_acTheta);
                 e = (((ea * d.s16Cos + eb * d.s16Sin) >> 15) * s_acVph) >> 15;
             }
-            s_acIs += ((int32_t)gFoc.idq.s16D * a.s16Sin) >> 15;
-            s_acIc += ((int32_t)gFoc.idq.s16D * a.s16Cos) >> 15;
-            s_acEs += (e * a.s16Sin) >> 15;
-            s_acEc += (e * a.s16Cos) >> 15;
+            s_acEs += (e * aOld.s16Sin) >> 15;
+            s_acEc += (e * aOld.s16Cos) >> 15;
         }
         s_acPhi += s_acInc;
         a = FocMath_SinCos((int16_t)(s_acPhi >> 16));
@@ -267,6 +268,8 @@ static void acFast(void)
         FocCore_CurrentLoop();
         FocCore_Modulate(SEVENMODE);
         if (s_acT >= AC_SETTLE * per) {
+            s_acIs += ((int32_t)gFoc.idq.s16D * aOld.s16Sin) >> 15;
+            s_acIc += ((int32_t)gFoc.idq.s16D * aOld.s16Cos) >> 15;
             s_acVs += ((int32_t)gFoc.vdq.s16D * b.s16Sin) >> 15;
             s_acVc += ((int32_t)gFoc.vdq.s16D * b.s16Cos) >> 15;
         }
@@ -588,6 +591,7 @@ void Ident_Slow(void)
             else {
                 s_acSeg = AC_NSEG;
                 acFit();
+                FocCore_LoadGains();    /* 恢复标称带宽电流环增益，供后续流程使用 */
                 dfStart();
                 t->cnt = 0;
                 t->phase = IDENT_PH_SAT_FIT;

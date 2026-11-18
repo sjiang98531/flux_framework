@@ -124,9 +124,10 @@ void FocCore_LoadGains(void)
     gFoc.piQ.qKi = gGain.curKiQ;
 }
 
-/* 停机 / 重新起动前：清零积分器、电压、电流指令、角度，复位解耦开关 */
+/* 停机 / 重新起动前：清零积分器、电压、电流指令、角度，恢复标称电流环增益并复位解耦开关 */
 void FocCore_ResetRun(void)
 {
+    FocCore_LoadGains();
     gFoc.piD.qdSum = 0;
     gFoc.piQ.qdSum = 0;
     gFoc.vdq.s16Q = 0;
