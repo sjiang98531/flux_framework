@@ -4,12 +4,12 @@
  *
  * 自动方式（默认）：静止测量 -> 停机后重新起动 -> 运行测量，见 identify.h。
  * 静止测量（给指令后电机不旋转）：Ident_Reset 从 phase 9 开始，Align 子状态的快环 / 慢环交由本模块处理：
- *   phase 9  R/L 粗测：alpha 轴注入 200 Hz 电压，不使用电流环（rlStart / rlFast / rlSlow），测得后立即更新电流环增益
+ *   phase 9  R/L 粗测：alpha 轴注入 200 Hz 电压，不使用电流环（rlStart / rlFast / rlSlow），测得后立即更新电流环增益；若失败直接终止于 phase 4
  *   定位（正常进行）-> phase 1/2 死区阶梯：d 轴电流 11 档，拟合 vd = Rs*id + 死区电压（dtFit）
  *   phase 3  IPD 对比度（ipdFit）
- *   phase 6  交流阻抗：d / q 轴多频率、多幅值注入（acSegStart / acFast / acSegFinish / acFit）
+ *   phase 6  交流阻抗：d / q 轴多频率、多幅值注入（acSegStart / acFast / acSegFinish / acFit），0.5*f0 段按实测电流等幅重测
  *   phase 7  电感饱和 L(i) 拟合（dfStart / dfStep，分摊到多个慢环周期）
- *   phase 4  完成：结果提交给 param.c（offerStill），回到 Stop 后生效
+ *   phase 4  完成：经门控校验后提交给 param.c（offerStill，不可信时仅提交 Rs / 死区且阻止 AUTO 重起动），回到 Stop 后生效
  * 运行测量（正常起动）：I/F 中测量开环磁链（Ident_OpenLoopFluxSlow），闭环稳速后零电流滑行测量
  *   psi_f 与加速度系数（Ident_RunSlow）。
  * 辨识模式的慢环允许使用浮点（仅在辨识时运行）。
@@ -212,7 +212,9 @@ static int16_t  s_acVph;            /* 每相死区电压（Q15，死区阶梯�
 #define AC_DT_KI_Q8 ((int32_t)(256.0 * I_MAX / INVERTER_DT_I0_A + 0.5))
 static float    s_acZre[AC_NF], s_acZim[AC_NSEG];     /* 实部只用 d 轴三段（acRohm）；电流幅值直接写入 gIdent.lqAtA */
 static float    s_zCmdR[AC_NF], s_zCmdI[AC_NF], s_zDtR[AC_NF], s_zDtI[AC_NF];  /* d 轴三频点指令电压/死区电压相对电流的复阻抗，用于延迟残差估算 */
-static float    s_acDlyShift, s_acI10L; /* 三频点估算的延迟残差（PWM 拍）、0.5*f0 1.0 A 实际电流幅值 */
+static float    s_acDlyShift, s_acI04L, s_acI10L; /* 三频点估算的延迟残差（PWM 拍）、0.5*f0 0.4 A / 1.0 A 实际电流幅值 */
+static float    s_acGain[AC_NSEG];      /* 各段指令幅值缩放（用于 0.5*f0 与 f0 等幅对齐） */
+static uint8_t  s_acRetry[AC_NSEG];     /* 各段等幅重测次数 */
 static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等待慢环读取 */
 
 static void acSetFreq(uint16_t idx, float hz)
@@ -275,7 +277,9 @@ static void acInitFreqs(void)
     acSetFreq(2, f2);
     acSetFreq(3, 0.5f * f0);
     for (f = 0; f <= AC_NF; f++) gIdent.acHz[f] = s_acHz[f];
+    for (f = 0; f < AC_NSEG; f++) { s_acGain[f] = 1.0f; s_acRetry[f] = 0; }
     s_acDlyShift = 0.0f;
+    s_acI04L = 0.0f;
     s_acI10L = 0.0f;
     gIdent.snrMin = 1e9f;
     acSetCurBw(l, l, r, (float)PWM_FREQ / 30.0f);
@@ -360,7 +364,9 @@ static void acSegStart(uint16_t seg)    /* 慢环 */
     {
         int32_t bx = gIdentCfg.biasX ? (int32_t)gIdentCfg.biasX : 1;
         int32_t lim = (int32_t)(0.85 * 32768.0 + 0.5);
-        int32_t amp = QMath_Clamp((int32_t)s_acSegA[seg], lim);
+        int32_t ampRaw = (s_acGain[seg] == 1.0f) ? (int32_t)s_acSegA[seg]
+                       : (int32_t)((float)s_acSegA[seg] * s_acGain[seg] + 0.5f);
+        int32_t amp = QMath_Clamp(ampRaw, lim);
         int64_t b = -(int64_t)s_acSegB[seg] * bx;   /* 注入坐标系旋转了 +90°，N 极位于其 -q 方向 */
         int32_t maxB = (int32_t)sqrtf((float)((double)lim * lim - (double)amp * amp));
         if (b > maxB) b = maxB;
@@ -431,18 +437,32 @@ static void acFast(void)
 }
 
 /* 慢环：读取一段积分，Z = V/I（复数，以 sin 为实轴）。电压先扣除死区电压（与电流同时刻，无需延时对齐）：
- * 扣除后的实部应接近 Rs（用于校核死区模型）；死区与电流同相，是否扣除均不影响虚部（电感）。 */
-static void acSegFinish(uint16_t seg)
+ * 扣除后的实部应接近 Rs（用于校核死区模型）；死区与电流同相，是否扣除均不影响虚部（电感）。
+ * 返回 1 = 0.5*f0 配对段与 f0 实测电流幅值偏差 > 5%，已调整 s_acGain 需重测本段；0 = 完成 */
+static uint8_t acSegFinish(uint16_t seg)
 {
     float vr = (float)(s_acVs - s_acEs), vi = (float)(s_acVc - s_acEc), ir = (float)s_acIs, ii = (float)s_acIc, d = ir * ir + ii * ii;
     float kv = (float)(UDC_MAX / 32768.0), ki = (float)(I_MAX / 32768.0), kvi = kv / ki;
+    float iAmp;
     if (d <= 0.0f) {
         s_acZim[seg] = 0.0f;
         if (seg < AC_NF) {
             s_zCmdR[seg] = s_zCmdI[seg] = s_zDtR[seg] = s_zDtI[seg] = s_acZre[seg] = 0.0f;
         }
         gIdent.warn |= IDENT_WARN_AC_FAIL;
-        return;
+        return 0;
+    }
+    iAmp = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
+    if (seg == AC_S_Q04L || seg == AC_S_Q10L) {
+        float ref = (seg == AC_S_Q04L) ? gIdent.lqAtA[0] : gIdent.lqAtA[1];
+        if (ref > 0.0f && iAmp > 0.0f && fabsf(iAmp - ref) > 0.05f * ref && s_acRetry[seg] < 2u) {
+            float g = s_acGain[seg] * (ref / iAmp);
+            if (g < 0.3f) g = 0.3f;
+            if (g > 3.0f) g = 3.0f;
+            s_acGain[seg] = g;
+            s_acRetry[seg]++;
+            return 1;
+        }
     }
     if (seg < AC_NF) {
         float cr = (float)s_acVs, ci = (float)s_acVc, er = (float)s_acEs, ei = (float)s_acEc;
@@ -454,8 +474,7 @@ static void acSegFinish(uint16_t seg)
     }
     s_acZim[seg] = (vi * ir - vr * ii) / d * kvi;
     if (seg == 0 || seg == AC_S_Q04) {
-        float iAmp = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
-        float snr  = (gIdent.deadVoltV > 0.0f) ? fabsf(s_acZim[seg]) * iAmp / gIdent.deadVoltV : 1e9f;
+        float snr = (gIdent.deadVoltV > 0.0f) ? fabsf(s_acZim[seg]) * iAmp / gIdent.deadVoltV : 1e9f;
         if (snr < gIdent.snrMin) gIdent.snrMin = snr;
         if (snr < AC_SNR_MIN) gIdent.warn |= IDENT_WARN_LOW_SNR;
     }
@@ -465,11 +484,13 @@ static void acSegFinish(uint16_t seg)
         float r = gIdent.rsOhm > 0.0f ? gIdent.rsOhm : (float)gParam.rsOhm;
         float bwMax = (s_acDlyShift < -0.25f) ? (float)PWM_FREQ / 45.0f : (float)PWM_FREQ / 30.0f;
         acSetCurBw(s_acZim[0] / w0, s_acZim[AC_S_Q04] / w0, r, bwMax);
+        s_acI04L = iAmp;
     }
     if (seg == AC_S_Q10L)
-        s_acI10L = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
+        s_acI10L = iAmp;
     if (seg == AC_S_Q04 || (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4))     /* q 轴 f0 五档的电流幅值（Σ i sin = A N / 2） */
-        gIdent.lqAtA[seg == AC_S_Q04 ? 0 : seg - AC_S_Q10 + 1] = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
+        gIdent.lqAtA[seg == AC_S_Q04 ? 0 : seg - AC_S_Q10 + 1] = iAmp;
+    return 0;
 }
 
 /* q 轴注入的转子摆动修正系数（理论值）Kmot = 1.5 p^2 psi^2 / J = p * psi * acc * 2π/60（acc = 加速度 / 转矩电流）。
@@ -499,17 +520,26 @@ static void acFit(void)
     float k10 = (s_acZim[AC_S_Q10] / w25 - s_acZim[AC_S_Q10L] / w12) / dk;
     {
         float km = acKmot();
+        float l0 = (w25 > 0.0f) ? s_acZim[AC_S_Q04] / w25 : 0.0f;
         gIdent.kSwingModel = km;
-        if (k04 < 0) k04 = 0;
-        if (k10 < 0) k10 = 0;
-        /* 若 1.0 A 档在 f0 与 0.5*f0 下实际电流相差 > 10%，饱和电机中 L(i) 差异会混入摆动估计；回退用 k04 并置告警 */
-        if (gIdent.lqAtA[1] > 0.0f && fabsf(s_acI10L - gIdent.lqAtA[1]) > 0.10f * gIdent.lqAtA[1]) {
-            k10 = k04;
-            gIdent.warn |= IDENT_WARN_SWING_CLAMP;
-        }
-        if (km > 0.0f) {
-            if (k04 > 4.0f * km) { k04 = 4.0f * km; gIdent.warn |= IDENT_WARN_SWING_CLAMP; }
-            if (k10 > 4.0f * km) { k10 = 4.0f * km; gIdent.warn |= IDENT_WARN_SWING_CLAMP; }
+        if (km > 0.0f && l0 > 0.0f && 10.0f * km / (w25 * w25 * l0) < 0.01f) {
+            k04 = 0.0f;
+            k10 = 0.0f;
+        } else {
+            if (k04 < 0) k04 = 0;
+            if (k10 < 0) k10 = 0;
+            if (gIdent.lqAtA[0] > 0.0f && fabsf(s_acI04L - gIdent.lqAtA[0]) > 0.15f * gIdent.lqAtA[0]) {
+                k04 = 0.0f;
+                gIdent.warn |= IDENT_WARN_SWING_CLAMP;
+            }
+            if (gIdent.lqAtA[1] > 0.0f && fabsf(s_acI10L - gIdent.lqAtA[1]) > 0.15f * gIdent.lqAtA[1]) {
+                k10 = k04;
+                gIdent.warn |= IDENT_WARN_SWING_CLAMP;
+            }
+            if (km > 0.0f) {
+                if (k04 > 4.0f * km) { k04 = 4.0f * km; gIdent.warn |= IDENT_WARN_SWING_CLAMP; }
+                if (k10 > 4.0f * km) { k10 = 4.0f * km; gIdent.warn |= IDENT_WARN_SWING_CLAMP; }
+            }
         }
     }
     gIdent.kSwing[0] = k04;
@@ -806,8 +836,8 @@ void Ident_Slow(void)
         break;
     case IDENT_PH_AC:       /* 快环执行交流阻抗测量中 */
         if (s_acDone) {
-            acSegFinish(s_acSeg);
-            if (s_acSeg + 1 < AC_NSEG) acSegStart((uint16_t)(s_acSeg + 1));
+            if (acSegFinish(s_acSeg)) acSegStart(s_acSeg);
+            else if (s_acSeg + 1 < AC_NSEG) acSegStart((uint16_t)(s_acSeg + 1));
             else {
                 s_acSeg = AC_NSEG;
                 acFit();

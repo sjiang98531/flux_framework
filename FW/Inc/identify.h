@@ -84,6 +84,7 @@ extern IdentResult_TypeDef gIdent;
  * 静止测量各步（phase 为 gIdentTest.phase 的取值）：
  *
  * 1. R/L（phase 9）：进入 Align 时首先执行，200 Hz 电压注入、不使用电流环，得到粗略 R、L 并立即更新电流环增益；
+ *    若超时放弃且未测出有效 R/L 则直接终止于 phase 4 并置 RL_TIMEOUT | AUTO_BLOCKED，不进入后续大电流阶段；
  *    死区阶梯测完后 Rs / 死区也立即生效。因此静止测量不依赖配置中的 R、L 初值（R/L -> Rs 顺序）。
  * 2. 死区阶梯（phase 1）：转子停在定位角，d 轴电流逐档保持（每档先稳定 300 ms，再平均 200 ms），
  *    记录稳态 vd / id。静止时 vd = Rs*id + 电压误差（死区 + 管压降），高电流段拟合直线：
@@ -92,11 +93,11 @@ extern IdentResult_TypeDef gIdent;
  * 3. IPD（phase 3）：高频注入测凸极轴向、直流偏置判极性（ipd.h），测得的 N 极应落在 alignDeg 上。
  * 4. 交流阻抗（phase 6）：电流环正常闭环，角度固定在 N（d 轴）/ N+90°（q 轴），电流指令为 0.4 A 正弦（随额定电流缩放），
  *    自适应频率 f0 / f1 / f2（f0 按 R/(2πL) 与死区信噪比确定，>= 25 Hz、<= PWM_FREQ/20，f2 <= PWM_FREQ/10），
- *    各 4 个周期稳定 + 8 个周期同步积分电压与电流基波，Z = V/I，L = Im(Z)/ω。
+ *    各 4 个周期稳定 + 8 个周期同步积分电压与电流基波，Z = V/I，L = Im(Z)/ω；并校核感抗信噪比 snrMin 与板级延迟 acDlyTicks。
  *    死区误差与电流同相，主要进入实部、减小对 L 的干扰；q 轴注入产生交变转矩，转子几乎不动。
- * 5. q 轴饱和（phase 6 后段 + 7）：q 轴 f0 再测 1.0 / 1.5 / 2.0 / 2.5 A（缩放档），并配 0.5*f0 两段测转子摆动系数；
+ * 5. q 轴饱和（phase 6 后段 + 7）：q 轴 f0 再测 1.0 / 1.5 / 2.0 / 2.5 A（缩放档），并配 0.5*f0 两段等幅重测（偏差 >5% 自动重标指令）测转子摆动系数；
  *    五档基波电感按观测器 L(i) 模型拟合（正弦电流下的基波 = 模型在一个周期上的加权平均，见 identify.c dfStep），
- *    给出 MOTOR_LQ_H / LS_SAT_KNEE_A / PER_A。
+ *    给出 MOTOR_LQ_H / LS_SAT_KNEE_A / PER_A。静止结果需通过可信度门控才向 Param_Offer 提交 L / L(i) 并允许 AUTO 自动重起动，否则仅提交 Rs / 死区并置 AUTO_BLOCKED。
  * 6. 运行辨识：正常起动；I/F 开环拖到目标转速时先测磁链（Ident_OpenLoopFluxSlow），
  *    生效后再切闭环；闭环稳速后零电流滑行 420 ms，给出 psi_f 与 MOTOR_ACC_RPM_S_PER_A。
  * 结果见 gIdent（调试器查看）；IPD 结果见 gIpd。
