@@ -28,6 +28,10 @@
 /* 电流 Q15 满量程 = 5/2/3.139/0.1 = 7.964 A。gMeas.iabc、gFoc.idq / idqRef 均采用此基准。 */
 #define I_MAX                   (ADC_REFV / 2 / CURRENT_OPA_GAIN / R_SHUNT)
 #define IBUS_RECONSTRUCTED      1                          /* 1 = 母线电流使用 SVPWM 重构值 */
+/* 硬件过流比较器（CMP3）DAC 门限电压及对应电流（母线采样与相电流共用 R_SHUNT 与 CURRENT_OPA_GAIN，
+ * 零点为 ADC_REFV / 2，满量程摆幅 ADC_REFV / 2 对应 I_MAX，见 hal_sc32r602.c acquireSamples） */
+#define IBUS_HOCP_Value         (4.3278)                   /* V（Hardware_config.h 据此计算 DAC 装载值 IBUS_HOCP_DACValue） */
+#define BOARD_HOCP_A            ((IBUS_HOCP_Value - 0.5 * ADC_REFV) / (0.5 * ADC_REFV) * I_MAX)
 
 /* 电流采样噪声峰值下限（ADC 码，1 码 = 量化误差）。实际值在上电零点校准时测得（gHal.adcNoisePk，
  * 取两者较大值），飞车测速脉冲的电流下限据此计算（flystart.c）。 */

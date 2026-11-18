@@ -363,7 +363,7 @@ static void acSegStart(uint16_t seg)    /* 慢环 */
     s_acTheta = (int16_t)((gIpd.ok ? gIpd.theta : Ident_AlignTheta()) + (s_acSegQ[seg] ? ANGLE_90_Q15 : 0));
     {
         int32_t bx = gIdentCfg.biasX ? (int32_t)gIdentCfg.biasX : 1;
-        int32_t lim = (int32_t)(0.85 * 32768.0 + 0.5);
+        int32_t lim = (int32_t)(IDENT_VEC_MAX_A / I_MAX * 32768.0 + 16.5);
         int32_t ampRaw = (s_acGain[seg] == 1.0f) ? (int32_t)s_acSegA[seg]
                        : (int32_t)((float)s_acSegA[seg] * s_acGain[seg] + 0.5f);
         int32_t amp = QMath_Clamp(ampRaw, lim);

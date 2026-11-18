@@ -28,7 +28,7 @@ extern "C" {
 #define MCU_FREQUENCY                ((int32_t)SYSCLK_HSI_72MHz)      /* Hz 系统时钟（取自 cfg_board.h，转为整数：死区 / 定时器装载值的整数除法依赖它） */
 #define EPWM_FREQUENCY               (PWM_FREQ)         /* Hz 赫兹 电机驱动载波EPWM频率  		*/
 #define ADC_Vref                     (ADC_REFV)      /* V  ADC 基准电压（取自 cfg_board.h） */
-#define IBUS_HOCP_Value              (4.3278)         /* V  伏 母线电流硬件母线电阻电压值  	*/
+/* IBUS_HOCP_Value 统一定义在 cfg_board.h */
 
 /*------------------------系统定时器参数相关定义------------------------*/
 #define EPWM_PRIOD_LOAD              (u16)(MCU_FREQUENCY/(2*EPWM_FREQUENCY) - 1)     /* EPWM 电机驱动载波EPWM周期装载值 中心对齐计数模式 */

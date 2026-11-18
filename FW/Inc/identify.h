@@ -105,11 +105,14 @@ extern IdentResult_TypeDef gIdent;
 #define IDENT_DT_N      11
 
 /* 辨识电流按 MOTOR_I_RATED_A 缩放（本电机 0.75 A 时 IDENT_I_SCALE = 1.0，与原值逐位相同）；
- * 最大测试电流（2.5 * SCALE）不超过 SPD_PI_LIMIT，且 seg 15 合成矢量峰值（2.5 A 档 + 2 倍 0.625 A 偏置）不超过 0.80 * I_MAX */
+ * 最大测试电流（2.5 * SCALE）不超过 SPD_PI_LIMIT，且 seg 15 合成矢量峰值（2.5 A 档 + 2 倍 0.625 A 偏置）
+ * 不超过 IDENT_VEC_MAX_A = min(0.80 * I_MAX, 0.9 * BOARD_HOCP_A / 1.15)（预留 15% 电流环超调与 10% 硬件比较器裕量） */
 #define IDENT_VEC_PEAK_K    2.795085    /* sqrt(2.5^2 + 1.25^2)：seg 15 幅值与 2 倍偏置的合成 */
+#define IDENT_HOCP_LIM_A    (0.90 * BOARD_HOCP_A / 1.15)
+#define IDENT_VEC_MAX_A     ((0.80 * I_MAX) < IDENT_HOCP_LIM_A ? (0.80 * I_MAX) : IDENT_HOCP_LIM_A)
 #define IDENT_I_SCALE_RAW   (MOTOR_I_RATED_A / 0.75)
-#define IDENT_I_SCALE_MAX   ((SPD_PI_LIMIT / 2.5) < (0.80 * I_MAX / IDENT_VEC_PEAK_K) ? \
-                             (SPD_PI_LIMIT / 2.5) : (0.80 * I_MAX / IDENT_VEC_PEAK_K))
+#define IDENT_I_SCALE_MAX   ((SPD_PI_LIMIT / 2.5) < (IDENT_VEC_MAX_A / IDENT_VEC_PEAK_K) ? \
+                             (SPD_PI_LIMIT / 2.5) : (IDENT_VEC_MAX_A / IDENT_VEC_PEAK_K))
 #define IDENT_I_SCALE       (IDENT_I_SCALE_RAW < IDENT_I_SCALE_MAX ? IDENT_I_SCALE_RAW : IDENT_I_SCALE_MAX)
 #define IDENT_Q15_I(a)      Q15((a) * IDENT_I_SCALE / I_MAX)
 
