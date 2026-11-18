@@ -102,6 +102,7 @@ void Ident_Reset(void)
     gIdentTest.cnt = 0;
     gIdent.state = IDENT_RUNNING;
     gIdent.warn = 0;
+    gIdent.acDlyShift = 0.0f;
     FocCore_LoadGains();
     rlStart();
     gIdentTest.phase = IDENT_PH_RL; /* 先测 R/L（电压模式，不使用电流环），测完再回 IDENT_PH_NONE 正常定位 */
@@ -164,7 +165,8 @@ static void ipdFit(void)
 }
 
 /* ---- 交流阻抗（phase 6）-----------------------------------------------------------------
- * 序列：方向 d（N 极）、q（N + 90°）× 频率 25 / 50 / 100 Hz（0.4 A），再 q 轴 25 Hz 增大幅值 1.0 / 1.5 / 2.0 / 2.5 A（饱和）。
+ * 序列：方向 d（N 极）、q（N + 90°）× 自适应频率 f0 / f1 / f2（0.4 A 缩放档），再 q 轴 f0 增大幅值 1.0 / 1.5 / 2.0 / 2.5 A（饱和）。
+ * f0 = max(25 Hz, R/(2πL), 2*Vdt/(2πL*I_inj))（不超 PWM_FREQ/20），f1/f2 最高至 PWM_FREQ/10，摆动配对 f3 = 0.5*f0。
  * 每段 AC_SETTLE 个周期稳定、AC_INT 个周期积分。
  * 快环：电流环闭环、角度固定，id 指令 = A sin(phi)，phi 用 Q32 相位累加；积分 Σv·sin、Σv·cos、Σi·sin、Σi·cos（整数）。
  * 本拍计算的电压延迟 CTRL_INVPARK_ADVANCE（1.5）个 PWM 周期才作用（下一周期生效、作用区间中点），与反 Park 角度补偿
@@ -174,20 +176,19 @@ static void ipdFit(void)
 #define AC_SETTLE   4
 #define AC_INT      8
 #define AC_V_DELAY  CTRL_INVPARK_ADVANCE
-/* 频率编号 3 = 12.5 Hz：仅用于 q 轴，与 25 Hz 配对测量转子摆动（见 acFit） */
-static const uint16_t s_acPer[AC_NF + 1] = {    /* 拍 / 周期 */
-    (uint16_t)(PWM_FREQ / 25), (uint16_t)(PWM_FREQ / 50),
-    (uint16_t)(PWM_FREQ / 100), (uint16_t)(PWM_FREQ / 12.5)
-};
-static const float    s_acHz[AC_NF + 1]  = { 25.0f, 50.0f, 100.0f, 12.5f };
+#define AC_F_MIN_HZ 25.0f
+#define AC_DT_SNR   2.0f        /* 目标 ωL·I_inj >= AC_DT_SNR * V_dt */
+/* 频率编号 3 = 0.5*f0：仅用于 q 轴，与 f0 配对测量转子摆动（见 acFit） */
+static uint16_t s_acPer[AC_NF + 1];     /* 拍 / 周期（acInitFreqs 计算） */
+static float    s_acHz[AC_NF + 1];      /* 实际注入频率（Hz） */
 static const uint8_t  s_acSegQ[AC_NSEG]  = { 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };      /* 0 = d 轴，1 = q 轴 */
 static const uint8_t  s_acSegF[AC_NSEG]  = { 0, 1, 2, 0, 1, 2, 3, 0, 0, 0, 0, 3, 0, 0, 0, 0 };      /* 频率编号 */
-/* 12.5 Hz 0.4 A（段 6）紧跟 0.4 A 各段、位于大幅值段之前：大幅值段撤除偏置后转子会摆动一段时间，此时测小幅值不准确 */
-#define AC_S_Q04    3       /* q 25 Hz 0.4 A */
-#define AC_S_Q04L   6       /* q 12.5 Hz 0.4 A */
-#define AC_S_Q10    7       /* q 25 Hz 1.0 A（大幅值第一段，后面依次 1.5 / 2.0 / 2.5） */
-#define AC_S_Q10L   11      /* q 12.5 Hz 1.0 A */
-#define AC_S_Q10B2  12      /* q 25 Hz 1.0 / 1.5 / 2.0 / 2.5 A，偏置 2 倍 */
+/* 0.5*f0 0.4 A（段 6）紧跟 0.4 A 各段、位于大幅值段之前：大幅值段撤除偏置后转子会摆动一段时间，此时测小幅值不准确 */
+#define AC_S_Q04    3       /* q f0 0.4 A */
+#define AC_S_Q04L   6       /* q 0.5*f0 0.4 A */
+#define AC_S_Q10    7       /* q f0 1.0 A（大幅值第一段，后面依次 1.5 / 2.0 / 2.5） */
+#define AC_S_Q10L   11      /* q 0.5*f0 1.0 A */
+#define AC_S_Q10B2  12      /* q f0 1.0 / 1.5 / 2.0 / 2.5 A，偏置 2 倍 */
 static const int16_t  s_acSegA[AC_NSEG]  = {
     IDENT_Q15_I(0.4), IDENT_Q15_I(0.4), IDENT_Q15_I(0.4), IDENT_Q15_I(0.4), IDENT_Q15_I(0.4), IDENT_Q15_I(0.4),
     IDENT_Q15_I(0.4), IDENT_Q15_I(1.0), IDENT_Q15_I(1.5), IDENT_Q15_I(2.0), IDENT_Q15_I(2.5), IDENT_Q15_I(1.0),
@@ -214,18 +215,155 @@ static int32_t  s_acVs, s_acVc, s_acIs, s_acIc, s_acEs, s_acEc;
 static int16_t  s_acVph;            /* 每相死区电压（Q15，死区阶梯测得的值） */
 #define AC_DT_KI_Q8 ((int32_t)(256.0 * I_MAX / INVERTER_DT_I0_A + 0.5))
 static float    s_acZre[AC_NF], s_acZim[AC_NSEG];     /* 实部只用 d 轴三段（acRohm）；电流幅值直接写入 gIdent.lqAtA */
+static float    s_zCmdR[AC_NF], s_zCmdI[AC_NF], s_zDtR[AC_NF], s_zDtI[AC_NF];  /* d 轴三频点指令电压/死区电压相对电流的复阻抗，用于延迟残差估算 */
+static float    s_acDlyShift;           /* 三频点估算的延迟残差（PWM 拍） */
 static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等待慢环读取 */
+
+static void acSetFreq(uint16_t idx, float hz)
+{
+    uint32_t per = (hz > 0.0f) ? (uint32_t)((float)PWM_FREQ / hz + 0.5f) : 65535u;
+    uint32_t maxPer = 65535u / (uint32_t)(AC_SETTLE + AC_INT);   /* 保证 s_acT (uint16_t) 与 s_acIs/Vs (int32_t) 不溢出 */
+    if (per < 10u) per = 10u;
+    if (per > maxPer) per = maxPer;
+    s_acPer[idx] = (uint16_t)per;
+    s_acHz[idx] = (float)PWM_FREQ / (float)per;
+}
+
+/* 按给定 Ld/Lq/R 整定交流注入期间电流环 PI 带宽（不低于 CURRENT_BW_HZ，最高 bwMax）；完成后由 FocCore_LoadGains 恢复 */
+static void acSetCurBw(float lD, float lQ, float r, float bwMax)
+{
+    float bw = 2.5f * s_acHz[0];
+    if (bw < (float)CURRENT_BW_HZ) bw = (float)CURRENT_BW_HZ;
+    if (bw > bwMax) bw = bwMax;
+    if (lD > 0.0f && lQ > 0.0f && r > 0.0f) {
+        int32_t kpD = (int32_t)(2.0f * (float)MATH_PI * bw * lD * (float)CUR_GAIN_SCALE + 0.5f);
+        int32_t kpQ = (int32_t)(2.0f * (float)MATH_PI * bw * lQ * (float)CUR_GAIN_SCALE + 0.5f);
+        int32_t ki  = (int32_t)(2.0f * (float)MATH_PI * bw * r  * (float)CUR_GAIN_SCALE / (float)PWM_FREQ + 0.5f);
+        if (ki < 1) ki = 1;
+        gFoc.piD.qKp = kpD > 65535 ? 65535 : kpD;
+        gFoc.piQ.qKp = kpQ > 65535 ? 65535 : kpQ;
+        gFoc.piD.qKi = ki  > 65535 ? 65535 : ki;
+        gFoc.piQ.qKi = gFoc.piD.qKi;
+    }
+}
+
+/* 基于 Rs/RL 与死区电压确定自适应注入频率 f0 / f1 / f2 / 0.5*f0，并提高小电感电机的测量期电流环带宽 */
+static void acInitFreqs(void)
+{
+    float r = gIdent.rsOhm > 0.0f ? gIdent.rsOhm : (gIdent.rlR > 0.0f ? gIdent.rlR : (float)gParam.rsOhm);
+    float l = gIdent.rlL > 0.0f ? gIdent.rlL : (float)gParam.lqH;
+    float iInj = (float)s_acSegA[0] * (float)(I_MAX / 32768.0);
+    float iMax = (float)s_acSegA[AC_S_Q10 + 3] * (float)(I_MAX / 32768.0);
+    float vDt = gIdent.deadVoltV > 0.0f ? gIdent.deadVoltV : 0.0f;
+    float vbus = (gMeas.vbusAvg > 0) ? (float)gMeas.vbusAvg * (float)(UDC_MAX / 32768.0) : (float)UDC_RATE;
+    float f0 = (l > 0.0f) ? r / (2.0f * (float)MATH_PI * l) : AC_F_MIN_HZ;
+    float fDt = (l > 0.0f && iInj > 0.0f) ? (AC_DT_SNR * vDt) / (2.0f * (float)MATH_PI * l * iInj) : 0.0f;
+    float fMax0 = (float)PWM_FREQ / 20.0f;
+    float fMaxHi = (float)PWM_FREQ / 10.0f;
+    float f2, f1;
+    uint16_t f;
+    if (fDt > f0) f0 = fDt;
+    if (l > 0.0f && iMax > 0.0f) {      /* 大幅值段电抗压降留出母线电压裕量（90% SVPWM 线电压半径） */
+        float fV = (0.90f * (vbus > 1.0f ? vbus : (float)UDC_RATE) / 1.7320508f)
+                 / (2.0f * (float)MATH_PI * l * iMax);
+        if (f0 > fV) f0 = fV;
+    }
+    if (f0 < AC_F_MIN_HZ) f0 = AC_F_MIN_HZ;
+    if (f0 > fMax0) f0 = fMax0;
+    acSetFreq(0, f0);
+    f0 = s_acHz[0];                     /* 反算整数周期对应的实际基频 */
+    f2 = (4.0f * f0 <= fMaxHi) ? 4.0f * f0 : fMaxHi;
+    f1 = 2.0f * f0;
+    if (f1 > 0.5f * (f0 + f2)) f1 = sqrtf(f0 * f2);
+    acSetFreq(1, f1);
+    acSetFreq(2, f2);
+    acSetFreq(3, 0.5f * f0);
+    for (f = 0; f <= AC_NF; f++) gIdent.acHz[f] = s_acHz[f];
+    s_acDlyShift = 0.0f;
+    acSetCurBw(l, l, r, (float)PWM_FREQ / 30.0f);
+}
+
+static void acEvalDlyPoint(uint16_t f, float sh, float *zrOut, float *ziOut)
+{
+    float ph = sh * (2.0f * (float)MATH_PI * s_acHz[f] / (float)PWM_FREQ);
+    float c = cosf(ph), s = sinf(ph);
+    *zrOut = c * s_zCmdR[f] - s * s_zCmdI[f] - s_zDtR[f];
+    *ziOut = s * s_zCmdR[f] + c * s_zCmdI[f] - s_zDtI[f];
+}
+
+/* 计算候选延迟修正 sh（PWM 拍）下三频点实部一致性代价；不物理（感抗<=0 或实部严重为负）返回负数 */
+static float acDlyCost(float sh, float rRef)
+{
+    float zr[AC_NF], zi[AC_NF], rAvg = 0.0f, cost = 0.0f;
+    uint16_t f;
+    for (f = 0; f < AC_NF; f++) {
+        acEvalDlyPoint(f, sh, &zr[f], &zi[f]);
+        if (zi[f] <= 0.0f || zr[f] <= -0.2f * rRef) return -1.0f;
+        rAvg += zr[f];
+    }
+    rAvg /= (float)AC_NF;
+    for (f = 0; f < AC_NF; f++) {
+        float dv = zr[f] - rAvg;
+        float dr = zr[f] - rRef;
+        cost += dv * dv + 0.15f * dr * dr;
+    }
+    return cost;
+}
+
+/* 利用 d 轴三频点实部一致性（并微弱锚定直流 rsOhm）估算电压-电流总延迟相对于 AC_V_DELAY 的残差（PWM 拍）。
+ * 回填修正后的 s_acZre/s_acZim[0..2] 及与延迟无关的幅值法电感 acLdMagH[0..2]。 */
+static void acCalDelay(void)
+{
+    float rRef = (gIdent.rsOhm > 0.0f) ? gIdent.rsOhm : (gIdent.rlR > 0.0f ? gIdent.rlR : (float)gParam.rsOhm);
+    float baseCost = acDlyCost(0.0f, rRef), bestCost = 1e30f, bestSh = 0.0f;
+    int16_t i;
+    uint16_t f;
+    for (i = -30; i <= 30; i++) {
+        float sh = 0.05f * (float)i, c = acDlyCost(sh, rRef);
+        if (c >= 0.0f && c < bestCost) { bestCost = c; bestSh = sh; }
+    }
+    if (bestCost < 1e29f) {
+        float c0 = bestSh;
+        for (i = -10; i <= 10; i++) {
+            float sh = c0 + 0.005f * (float)i, c;
+            if (sh < -1.5f || sh > 1.5f) continue;
+            c = acDlyCost(sh, rRef);
+            if (c >= 0.0f && c < bestCost) { bestCost = c; bestSh = sh; }
+        }
+    }
+    if (bestCost >= 1e29f) bestSh = 0.0f;
+    gIdent.acDlyShift = bestSh;
+    /* 仅在默认延迟导致非物理解（baseCost < 0）或三频点实部漂移超过 0.3*Rs 且拟合后离散度降为 <20% 时才修正延迟，避免噪声过拟合 */
+    if (bestCost < 1e29f && (baseCost < 0.0f ||
+        (fabsf(bestSh) > 0.30f && baseCost > 0.27f * rRef * rRef && bestCost < 0.20f * baseCost))) {
+        s_acDlyShift = bestSh;
+        gIdent.warn |= IDENT_WARN_DLY_MISMATCH;
+    } else {
+        s_acDlyShift = 0.0f;
+    }
+    for (f = 0; f < AC_NF; f++) {
+        float zr, zi, w = 2.0f * (float)MATH_PI * s_acHz[f], z2, rUse;
+        acEvalDlyPoint(f, s_acDlyShift, &zr, &zi);
+        s_acZre[f] = zr;
+        s_acZim[f] = zi;
+        z2 = zr * zr + zi * zi;
+        rUse = (gIdent.rsOhm > 0.0f) ? gIdent.rsOhm : zr;
+        gIdent.acLdMagH[f] = (z2 > rUse * rUse && w > 0.0f) ? sqrtf(z2 - rUse * rUse) / w : 0.0f;
+    }
+}
 
 static void acSegStart(uint16_t seg)    /* 慢环 */
 {
     uint16_t f = s_acSegF[seg];
+    double dlyTicks = (double)AC_V_DELAY - (double)s_acDlyShift;
+    if (dlyTicks < 0.0) dlyTicks = 0.0;
     s_acTheta = (int16_t)((gIpd.ok ? gIpd.theta : Ident_AlignTheta()) + (s_acSegQ[seg] ? ANGLE_90_Q15 : 0));
     s_acAmp = s_acSegA[seg];
     s_acEnv = 0;
     s_acEnvStep = (int32_t)(32768L / (AC_RAMP * (int32_t)s_acPer[f])) + 1;
     s_acBias = (int16_t)-(s_acSegB[seg] * (gIdentCfg.biasX ? gIdentCfg.biasX : 1));     /* 注入坐标系旋转了 +90°，N 极位于其 -q 方向 */
     s_acInc = (uint32_t)(4294967296.0 / (double)s_acPer[f] + 0.5);
-    s_acDly = (uint32_t)(AC_V_DELAY * (double)s_acInc + 0.5);
+    s_acDly = (uint32_t)(dlyTicks * (double)s_acInc + 0.5);
     s_acPhi = 0;
     s_acT = 0;
     s_acVs = s_acVc = s_acIs = s_acIc = s_acEs = s_acEc = 0;
@@ -289,16 +427,30 @@ static void acFast(void)
 static void acSegFinish(uint16_t seg)
 {
     float vr = (float)(s_acVs - s_acEs), vi = (float)(s_acVc - s_acEc), ir = (float)s_acIs, ii = (float)s_acIc, d = ir * ir + ii * ii;
-    float kv = (float)(UDC_MAX / 32768.0), ki = (float)(I_MAX / 32768.0);
+    float kv = (float)(UDC_MAX / 32768.0), ki = (float)(I_MAX / 32768.0), kvi = kv / ki;
     if (d <= 0) return;
-    if (seg < AC_NF) s_acZre[seg] = (vr * ir + vi * ii) / d * kv / ki;
-    s_acZim[seg] = (vi * ir - vr * ii) / d * kv / ki;
-    if (seg == AC_S_Q04 || (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4))     /* q 轴 25 Hz 五档的电流幅值（Σ i sin = A N / 2） */
+    if (seg < AC_NF) {
+        float cr = (float)s_acVs, ci = (float)s_acVc, er = (float)s_acEs, ei = (float)s_acEc;
+        s_zCmdR[seg] = (cr * ir + ci * ii) / d * kvi;
+        s_zCmdI[seg] = (ci * ir - cr * ii) / d * kvi;
+        s_zDtR[seg]  = (er * ir + ei * ii) / d * kvi;
+        s_zDtI[seg]  = (ei * ir - er * ii) / d * kvi;
+        s_acZre[seg] = (vr * ir + vi * ii) / d * kvi;
+    }
+    s_acZim[seg] = (vi * ir - vr * ii) / d * kvi;
+    if (seg == AC_NF - 1) acCalDelay();     /* d 轴三频点测完：拟合延迟偏差并更新 s_acZre/s_acZim[0..2] */
+    if (seg == AC_S_Q04L) {     /* 小幅值段测完：用实测小信号 Ld / Lq 重算电流环增益后再测大幅值饱和段（额外延迟时按延迟下调带宽上限） */
+        float w0 = 2.0f * (float)MATH_PI * s_acHz[0];
+        float r = gIdent.rsOhm > 0.0f ? gIdent.rsOhm : (float)gParam.rsOhm;
+        float bwMax = (s_acDlyShift < -0.25f) ? (float)PWM_FREQ / 45.0f : (float)PWM_FREQ / 30.0f;
+        acSetCurBw(s_acZim[0] / w0, s_acZim[AC_S_Q04] / w0, r, bwMax);
+    }
+    if (seg == AC_S_Q04 || (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4))     /* q 轴 f0 五档的电流幅值（Σ i sin = A N / 2） */
         gIdent.lqAtA[seg == AC_S_Q04 ? 0 : seg - AC_S_Q10 + 1] = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
 }
 
 /* q 轴注入的转子摆动修正系数（理论值）Kmot = 1.5 p^2 psi^2 / J = p * psi * acc * 2π/60（acc = 加速度 / 转矩电流）。
- * 若运行辨识已测得（gIdent.psiWb、accRpmSPerA 非 0）则使用测得值，否则使用 cfg_motor.h。仅作对照：修正使用 12.5 / 25 Hz 实测值 */
+ * 若运行辨识已测得（gIdent.psiWb、accRpmSPerA 非 0）则使用测得值，否则使用 cfg_motor.h。仅作对照：修正使用 0.5*f0 / f0 实测值 */
 static float acKmot(void)
 {
     float psi = gIdent.psiWb > 0 ? gIdent.psiWb : (float)gParam.psiWb;
@@ -596,6 +748,7 @@ void Ident_Slow(void)
             (void)Ipd_Evaluate();       /* 给出 gIpd.theta（交流阻抗的 d / q 方向）/ ratioQ8 */
             ipdFit();
             FocCore_PresetPI(0, 0);     /* IPD 结束，积分器从 0 开始 */
+            acInitFreqs();
             acSegStart(0);
             t->cnt = 0;
             t->phase = IDENT_PH_AC;
