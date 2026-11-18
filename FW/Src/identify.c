@@ -101,6 +101,7 @@ void Ident_Reset(void)
     gIdentTest.idx = 0;
     gIdentTest.cnt = 0;
     gIdent.state = IDENT_RUNNING;
+    gIdent.warn = 0;
     FocCore_LoadGains();
     rlStart();
     gIdentTest.phase = IDENT_PH_RL; /* 先测 R/L（电压模式，不使用电流环），测完再回 IDENT_PH_NONE 正常定位 */
@@ -377,6 +378,8 @@ static void rlStart(void)       /* 慢环 */
     s_acEs = 0;
     s_acVs = s_acVc = 0;
     s_acDone = 0;
+    gIdent.rlR = -1.0f;
+    gIdent.rlL = -1.0f;
 }
 
 /* R/L 快环：alpha 轴输出正弦电压（不使用电流环），对 alpha 电流按"电压生效时刻"的相位做正交积分，每个周期置一次完成 */
@@ -406,14 +409,28 @@ static uint8_t rlSlow(void)
     s_acDone = 0;
     i1 = 2.0f * sqrtf(is * is + ic * ic) / (float)RL_PER;      /* 基波幅值（Q15 电流） */
     v = (float)s_acAmp;
-    if (s_acSeg == 0) {             /* 调整幅值 */
+    if (s_acSeg == 0) {             /* 调整幅值（加半步长阻尼与上限保护，防低电感死区拐点附近振荡不收敛） */
         float k = (i1 > 1.0f) ? (float)RL_I_Q15 / i1 : 2.0f;
-        if (k > 0.85f && k < 1.15f) { s_acSeg = 1; return 0; }
+        int16_t nv;
+        if (k > 0.85f && k < 1.15f) { s_acSeg = 1; s_acEs = 0; return 0; }
         if (k > 2.0f) k = 2.0f;
-        if (v >= (float)RL_VMAX_Q15 && k > 1.0f) { gIdent.rlR = -1; return 1; }   /* 电压已达上限电流仍不足：放弃，保留原参数 */
-        v *= k;
+        if (k < 0.5f) k = 0.5f;
+        if (v >= (float)RL_VMAX_Q15 && k > 1.0f) { gIdent.rlR = -1; gIdent.warn |= IDENT_WARN_RL_TIMEOUT; return 1; }   /* 电压已达上限电流仍不足：放弃，保留原参数 */
+        if (++s_acEs >= 200) {
+            gIdent.warn |= IDENT_WARN_RL_TIMEOUT;
+            if (i1 > 0.25f * (float)RL_I_Q15) { s_acSeg = 1; s_acEs = 0; return 0; }
+            gIdent.rlR = -1;
+            return 1;
+        }
+        v *= 0.5f + 0.5f * k;
         if (v > (float)RL_VMAX_Q15) v = (float)RL_VMAX_Q15;
-        s_acAmp = (int16_t)v;
+        nv = (int16_t)(v + 0.5f);
+        if (nv < 1) nv = 1;
+        if (nv == s_acAmp) {
+            if (k > 1.0f && nv < (int16_t)RL_VMAX_Q15) nv++;
+            else if (k < 1.0f && nv > 1) nv--;
+        }
+        s_acAmp = nv;
         return 0;
     }
     if (s_acSeg < 3) { s_acSeg++; return 0; }    /* 稳定 2 个周期 */
@@ -423,7 +440,7 @@ static uint8_t rlSlow(void)
     {
         float ss = (float)s_acVs, cc = (float)s_acVc, n = (float)(RL_AVG * RL_PER), d = ss * ss + cc * cc;
         float r, x;
-        if (d <= 0) { gIdent.rlR = -1; return 1; }
+        if (d <= 0) { gIdent.rlR = -1; gIdent.warn |= IDENT_WARN_RL_TIMEOUT; return 1; }
         r = v * ss * n / (2.0f * d) * (float)(UDC_MAX / I_MAX);
         x = -v * cc * n / (2.0f * d) * (float)(UDC_MAX / I_MAX);
         gIdent.rlR = r;

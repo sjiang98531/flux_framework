@@ -24,6 +24,9 @@ typedef enum {
     IDENT_DONE
 } IdentState_TypeDef;
 
+/* gIdent.warn 诊断告警位（0 = 全项正常；非 0 表示存在保护限幅、延迟偏差或未通过自动重起动校验） */
+#define IDENT_WARN_RL_TIMEOUT   (1u << 0)   /* R/L 粗测未在 200 周期内收敛或因电流不足放弃 */
+
 typedef struct {
     float rlR, rlL;     /* 第一步 R/L（200 Hz 电压注入，不使用电流环）：仅用于先整定电流环（R 含死区偏大，L 偏小）；-1 = 未测得 */
     float rsOhm;        /* 相电阻（死区阶梯高电流段斜率）-> cfg_motor.h MOTOR_RS_OHM */
@@ -47,6 +50,7 @@ typedef struct {
     float deadTimeS;    /* 等效死区时间 = deadVoltV / (PWM_FREQ * Vbus) -> cfg_board.h INVERTER_DT_EFF_S */
     float ipdRatio;     /* IPD 极性对比度：两侧 d 轴响应之比（> IPD_MIN_RATIO 才能使用 IPD 起动） */
     IdentState_TypeDef state;
+    uint16_t warn;      /* 诊断告警位，见 IDENT_WARN_* */
 } IdentResult_TypeDef;
 
 extern IdentResult_TypeDef gIdent;
