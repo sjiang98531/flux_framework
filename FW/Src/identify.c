@@ -216,7 +216,7 @@ static int16_t  s_acVph;            /* 每相死区电压（Q15，死区阶梯�
 #define AC_DT_KI_Q8 ((int32_t)(256.0 * I_MAX / INVERTER_DT_I0_A + 0.5))
 static float    s_acZre[AC_NF], s_acZim[AC_NSEG];     /* 实部只用 d 轴三段（acRohm）；电流幅值直接写入 gIdent.lqAtA */
 static float    s_zCmdR[AC_NF], s_zCmdI[AC_NF], s_zDtR[AC_NF], s_zDtI[AC_NF];  /* d 轴三频点指令电压/死区电压相对电流的复阻抗，用于延迟残差估算 */
-static float    s_acDlyShift;           /* 三频点估算的延迟残差（PWM 拍） */
+static float    s_acDlyShift, s_acI10L; /* 三频点估算的延迟残差（PWM 拍）、0.5*f0 1.0 A 实际电流幅值 */
 static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等待慢环读取 */
 
 static void acSetFreq(uint16_t idx, float hz)
@@ -280,6 +280,7 @@ static void acInitFreqs(void)
     acSetFreq(3, 0.5f * f0);
     for (f = 0; f <= AC_NF; f++) gIdent.acHz[f] = s_acHz[f];
     s_acDlyShift = 0.0f;
+    s_acI10L = 0.0f;
     acSetCurBw(l, l, r, (float)PWM_FREQ / 30.0f);
 }
 
@@ -445,6 +446,8 @@ static void acSegFinish(uint16_t seg)
         float bwMax = (s_acDlyShift < -0.25f) ? (float)PWM_FREQ / 45.0f : (float)PWM_FREQ / 30.0f;
         acSetCurBw(s_acZim[0] / w0, s_acZim[AC_S_Q04] / w0, r, bwMax);
     }
+    if (seg == AC_S_Q10L)
+        s_acI10L = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
     if (seg == AC_S_Q04 || (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4))     /* q 轴 f0 五档的电流幅值（Σ i sin = A N / 2） */
         gIdent.lqAtA[seg == AC_S_Q04 ? 0 : seg - AC_S_Q10 + 1] = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
 }
@@ -458,34 +461,46 @@ static float acKmot(void)
     return (float)MOTOR_POLE_PAIRS * psi * acc * (float)(2.0 * MATH_PI / 60.0);
 }
 
-/* 交流阻抗汇总：q 轴扣除转子摆动影响（12.5 / 25 Hz 成对测出摆动系数），得到各频率的 Ld、Lq 及各幅值的 Lq，
- * 大幅值段由 1 倍 / 2 倍 N 极偏置外推到 0 偏置；最后取 25 Hz 的值作为 Ld / Lq */
+/* 交流阻抗汇总：q 轴扣除转子摆动影响（0.5*f0 / f0 成对测出摆动系数），得到各频率的 Ld、Lq 及各幅值的 Lq，
+ * 大幅值段由 1 倍 / 2 倍 N 极偏置外推到 0 偏置；最后取基频 f0 的值作为 Ld / Lq */
 static void acFit(void)
 {
     uint16_t f;
     /* q 轴注入产生交变转矩，转子随之微幅摆动，摆动反电势使 q 轴阻抗多出一项 Kmot / (jω)（容性，表观电感减小 Kmot/ω^2，
-     * 见 acKmot）。本电机 25 Hz 减小约 1.5 mH（3.6%）、50 Hz 0.4 mH、100 Hz 0.1 mH，需加回；d 轴无转矩，无需修正。
-     * 摆动与电流成正比，大幅值段同样修正（2.5 A 时摆幅约 2° 电角度，仍属小角度） */
-    /* 摆动系数实测：同一幅值下 12.5 / 25 Hz 两段，Im(Z)/ω = L - K/ω^2，假设 L 在 25 Hz 以下不随频率变化
-     * （涡流影响：12.5 -> 25 Hz 约 0.4%），解出 K。
-     * 理论上 K = Kmot（转子自由摆动）；转子被静摩擦 / 齿槽卡住时 K -> 0，此时按理论值修正会过补偿。
+     * 见 acKmot）。25 Hz 常见约数%偏小，需加回；d 轴无转矩，无需修正。
+     * 摆动与电流成正比，大幅值段同样修正 */
+    /* 摆动系数实测：同一幅值下 0.5*f0 / f0 两段，Im(Z)/ω = L - K/ω^2，假设 L 在 f0 以下不随频率变化，解出 K。
+     * 理论上 K = Kmot（转子自由摆动）；转子被静摩擦 / 齿槽卡住时 K -> 0，此时按理论值修正会过补偿；
+     * 高基频（f0 高、1/w^2 小）下噪声可能被放大，故对非零理论值作 4*Kmot 上限保护。
      * 0.4 A 各段使用 0.4 A 测得的 K，大幅值段使用 1.0 A 测得的 K（幅值越大转子越自由） */
     const float w12 = 2.0f * (float)MATH_PI * s_acHz[3], w25 = 2.0f * (float)MATH_PI * s_acHz[0];
     const float dk = 1.0f / (w12 * w12) - 1.0f / (w25 * w25);
     float k04 = (s_acZim[AC_S_Q04] / w25 - s_acZim[AC_S_Q04L] / w12) / dk;
     float k10 = (s_acZim[AC_S_Q10] / w25 - s_acZim[AC_S_Q10L] / w12) / dk;
-    if (k04 < 0) k04 = 0;
-    if (k10 < 0) k10 = 0;
+    {
+        float km = acKmot();
+        gIdent.kSwingModel = km;
+        if (k04 < 0) k04 = 0;
+        if (k10 < 0) k10 = 0;
+        /* 若 1.0 A 档在 f0 与 0.5*f0 下实际电流相差 > 10%，饱和电机中 L(i) 差异会混入摆动估计；回退用 k04 并置告警 */
+        if (gIdent.lqAtA[1] > 0.0f && fabsf(s_acI10L - gIdent.lqAtA[1]) > 0.10f * gIdent.lqAtA[1]) {
+            k10 = k04;
+            gIdent.warn |= IDENT_WARN_SWING_CLAMP;
+        }
+        if (km > 0.0f) {
+            if (k04 > 4.0f * km) { k04 = 4.0f * km; gIdent.warn |= IDENT_WARN_SWING_CLAMP; }
+            if (k10 > 4.0f * km) { k10 = 4.0f * km; gIdent.warn |= IDENT_WARN_SWING_CLAMP; }
+        }
+    }
     gIdent.kSwing[0] = k04;
     gIdent.kSwing[1] = k10;
-    gIdent.kSwingModel = acKmot();
     for (f = 0; f < AC_NF; f++) {
         float w = 2.0f * (float)MATH_PI * s_acHz[f];
         gIdent.acLdH[f] = s_acZim[f] / w;
         gIdent.acLqH[f] = s_acZim[AC_NF + f] / w + k04 / (w * w);
         gIdent.acRohm[f] = s_acZre[f];
     }
-    for (f = 0; f < 5; f++) {   /* q 轴 25 Hz 五档幅值：[0] = 0.4 A 段，[1..4] = 大幅值段 */
+    for (f = 0; f < 5; f++) {   /* q 轴 f0 五档幅值：[0] = 0.4 A 档，[1..4] = 大幅值档 */
         uint16_t s = (uint16_t)(f == 0 ? AC_S_Q04 : AC_S_Q10 + f - 1);
         gIdent.lqAtH[f] = s_acZim[s] / w25 + (f == 0 ? k04 : k10) / (w25 * w25);
         if (f > 0) {    /* 偏置 1 倍 / 2 倍外推到 0 偏置 */
@@ -496,9 +511,15 @@ static void acFit(void)
         }
     }
     /* 观测器需要的是转子坐标系中的低频电感（稳态运行时转子所见磁场恒定，转子内无涡流）。
-     * 注入频率越低越接近该值，故取最低的 25 Hz（涡流效应在 50~100 Hz 之间开始明显）。 */
+     * 注入频率在满足信噪比与转折频率的前提下越低越好，故取基频 f0（s_acHz[0]）。 */
     gIdent.ldH = gIdent.acLdH[0];
     gIdent.lqH = gIdent.acLqH[0];
+    if (gIdent.acLdH[0] <= 0.0f || gIdent.acLdH[1] <= 0.0f || gIdent.acLdH[2] <= 0.0f ||
+        gIdent.acRohm[0] <= 0.0f || gIdent.acLqH[0] <= 0.0f ||
+        gIdent.acLdH[2] < 0.65f * gIdent.acLdH[0] || gIdent.acLdH[2] > 1.35f * gIdent.acLdH[0] ||
+        fabsf(gIdent.acLdMagH[0] - gIdent.acLdH[0]) > 0.25f * gIdent.acLdH[0]) {
+        gIdent.warn |= IDENT_WARN_AC_DRIFT;
+    }
 }
 
 /* ---- R/L（IDENT_PH_RL = 9，静止测量第 1 步）--------------------------------------------------------
@@ -772,8 +793,18 @@ void Ident_Slow(void)
         if (dfStep()) {
             offerStill();
             if (gIdentCfg.mode == IDENT_MODE_AUTO) {
-                s_autoStage = 1;            /* 停机（参数在 Stop 中装入）后重新起动，执行运行测量；state 保持 RUNNING */
-                s_restartReq = 1;
+                uint8_t ok = (uint8_t)(gIdent.rsOhm > 0.0f && gIdent.lqH > 0.0f &&
+                                       (!MOTOR_IPM || gIdent.ldH > 0.0f) &&
+                                       gIdent.acLdH[0] > 0.0f && gIdent.acRohm[0] > 0.0f &&
+                                       !(gParamStat.rejectMask & 39u) && gParamStat.pending &&
+                                       !(gIdent.warn & IDENT_WARN_AC_DRIFT));
+                if (ok) {
+                    s_autoStage = 1;            /* 停机（参数在 Stop 中装入）后重新起动，执行运行测量；state 保持 RUNNING */
+                    s_restartReq = 1;
+                } else {
+                    gIdent.warn |= IDENT_WARN_AUTO_BLOCKED;
+                    gIdent.state = IDENT_DONE;
+                }
             } else {
                 gIdent.state = IDENT_DONE;
             }
