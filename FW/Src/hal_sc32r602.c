@@ -13,6 +13,7 @@
 #include "meas.h"
 #include "protect.h"
 #include "supervisor.h"
+#include "qmath.h"
 #include "SC_it.h"
 #include "compiler.h"
 
@@ -85,7 +86,7 @@ FORCE_INLINE uint8_t acquireSamples(void)
     gMeas.iabc.s16B = (gMeas.iabcOffset.s16A - ia) << 1;
     gMeas.iabc.s16A = (gMeas.iabcOffset.s16B - ib) << 1;
 #endif
-    gMeas.iabc.s16C = -gMeas.iabc.s16B - gMeas.iabc.s16A;
+    gMeas.iabc.s16C = QMath_Sat16(-(int32_t)gMeas.iabc.s16B - (int32_t)gMeas.iabc.s16A);
 #if (IBUS_RECONSTRUCTED == 1)
     gMeas.ibus = gMeas.ibusRec;
 #else

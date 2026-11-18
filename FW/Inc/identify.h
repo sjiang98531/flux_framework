@@ -99,6 +99,15 @@ extern IdentResult_TypeDef gIdent;
  * ==========================================================================*/
 #define IDENT_DT_N      11
 
+/* 辨识电流按 MOTOR_I_RATED_A 缩放（本电机 0.75 A 时 IDENT_I_SCALE = 1.0，与原值逐位相同）；
+ * 最大测试电流（2.5 * SCALE）不超过 SPD_PI_LIMIT，且 seg 15 合成矢量峰值（2.5 A 档 + 2 倍 0.625 A 偏置）不超过 0.80 * I_MAX */
+#define IDENT_VEC_PEAK_K    2.795085    /* sqrt(2.5^2 + 1.25^2)：seg 15 幅值与 2 倍偏置的合成 */
+#define IDENT_I_SCALE_RAW   (MOTOR_I_RATED_A / 0.75)
+#define IDENT_I_SCALE_MAX   ((SPD_PI_LIMIT / 2.5) < (0.80 * I_MAX / IDENT_VEC_PEAK_K) ? \
+                             (SPD_PI_LIMIT / 2.5) : (0.80 * I_MAX / IDENT_VEC_PEAK_K))
+#define IDENT_I_SCALE       (IDENT_I_SCALE_RAW < IDENT_I_SCALE_MAX ? IDENT_I_SCALE_RAW : IDENT_I_SCALE_MAX)
+#define IDENT_Q15_I(a)      Q15((a) * IDENT_I_SCALE / I_MAX)
+
 #define IDENT_MODE_AUTO     0       /* 静止测量 -> 自动重新起动 -> 运行测量 -> 按指令继续运行 */
 #define IDENT_MODE_STATIC   1       /* 仅静止测量 */
 #define IDENT_MODE_RUN      2       /* 仅运行测量（每个新指令一次） */

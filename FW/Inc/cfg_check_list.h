@@ -21,6 +21,10 @@ CFG_CHECK(MOTOR_PARAMS_POSITIVE, MOTOR_POLE_PAIRS >= 1 && MOTOR_RS_OHM > 0 && MO
 /* 铭牌额定值：0 < MOTOR_I_RATED_A < I_MAX，0 < MOTOR_SPEED_RATED_RPM < SPEED_MAX，MOTOR_P_RATED_W > 0 */
 CFG_CHECK(MOTOR_RATING_SANE, MOTOR_I_RATED_A > 0 && MOTOR_I_RATED_A < I_MAX && MOTOR_P_RATED_W > 0 &&
          MOTOR_SPEED_RATED_RPM > 0 && MOTOR_SPEED_RATED_RPM < SPEED_MAX)
+/* 辨识最大合成激励矢量（2.5 A 档 + 2 倍偏置）不超过 0.80 * I_MAX（留 16 LSB 舍入余量） */
+CFG_CHECK(IDENT_VEC_PEAK_FITS,
+          (double)IDENT_Q15_I(2.5) * IDENT_Q15_I(2.5) + (double)IDENT_Q15_I(1.25) * IDENT_Q15_I(1.25) <=
+          (0.80 * 32768.0 + 16.0) * (0.80 * 32768.0 + 16.0))
 
 /* ---- 速度基准 ------------------------------------------------------------ */
 /* SPEED_MAX 下反电势前馈系数须大于 0（>= UDC_MAX 时由 Q15 宏自动饱和并置 cfgWarn bit3） */

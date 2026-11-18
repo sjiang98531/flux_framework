@@ -34,13 +34,6 @@ IdentResult_TypeDef gIdent;
 volatile IdentCfg_TypeDef gIdentCfg = { 0 };
 IdentTest_TypeDef gIdentTest;
 
-/* 辨识电流按 MOTOR_I_RATED_A 缩放（本电机 0.75 A 时 IDENT_I_SCALE = 1.0，与原值逐位相同）；
- * 最大测试电流（2.5 * SCALE 与大幅值正交偏置合成）不超过 SPD_PI_LIMIT，并保留余量防三相静止坐标系 int16 溢出 */
-#define IDENT_I_SCALE_RAW   (MOTOR_I_RATED_A / 0.75)
-#define IDENT_I_SCALE_MAX   ((SPD_PI_LIMIT < 0.72 * I_MAX ? SPD_PI_LIMIT : 0.72 * I_MAX) / 2.5)
-#define IDENT_I_SCALE       (IDENT_I_SCALE_RAW < IDENT_I_SCALE_MAX ? IDENT_I_SCALE_RAW : IDENT_I_SCALE_MAX)
-#define IDENT_Q15_I(a)      Q15((a) * IDENT_I_SCALE / I_MAX)
-
 /* 死区阶梯各档 d 轴电流（按额定电流缩放）：从定位电流附近向上，再向下细分到小电流段（反映过零附近的特性） */
 static const int16_t s_dtLevel[IDENT_DT_N] = {
     IDENT_Q15_I(1.00), IDENT_Q15_I(0.80), IDENT_Q15_I(0.60), IDENT_Q15_I(0.50), IDENT_Q15_I(0.40),
@@ -359,10 +352,19 @@ static void acSegStart(uint16_t seg)    /* 慢环 */
     double dlyTicks = (double)AC_V_DELAY - (double)s_acDlyShift;
     if (dlyTicks < 0.0) dlyTicks = 0.0;
     s_acTheta = (int16_t)((gIpd.ok ? gIpd.theta : Ident_AlignTheta()) + (s_acSegQ[seg] ? ANGLE_90_Q15 : 0));
-    s_acAmp = s_acSegA[seg];
+    {
+        int32_t bx = gIdentCfg.biasX ? (int32_t)gIdentCfg.biasX : 1;
+        int32_t lim = (int32_t)(0.85 * 32768.0 + 0.5);
+        int32_t amp = QMath_Clamp((int32_t)s_acSegA[seg], lim);
+        int64_t b = -(int64_t)s_acSegB[seg] * bx;   /* 注入坐标系旋转了 +90°，N 极位于其 -q 方向 */
+        int32_t maxB = (int32_t)sqrtf((float)((double)lim * lim - (double)amp * amp));
+        if (b > maxB) b = maxB;
+        if (b < -maxB) b = -maxB;
+        s_acAmp = (int16_t)amp;
+        s_acBias = (int16_t)b;
+    }
     s_acEnv = 0;
     s_acEnvStep = (int32_t)(32768L / (AC_RAMP * (int32_t)s_acPer[f])) + 1;
-    s_acBias = (int16_t)-(s_acSegB[seg] * (gIdentCfg.biasX ? gIdentCfg.biasX : 1));     /* 注入坐标系旋转了 +90°，N 极位于其 -q 方向 */
     s_acInc = (uint32_t)(4294967296.0 / (double)s_acPer[f] + 0.5);
     s_acDly = (uint32_t)(dlyTicks * (double)s_acInc + 0.5);
     s_acPhi = 0;

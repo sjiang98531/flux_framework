@@ -15,6 +15,7 @@
 #define CFG_CHECK_H
 
 #include "cfg_derived.h"
+#include "identify.h"
 
 /* 每项：满足 = 0，不满足 = 该项在 cfg_check_list.h 里的行号 */
 #define CFG_CHECK(name, cond)  ((cond) ? 0 : __LINE__),
