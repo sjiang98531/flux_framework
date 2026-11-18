@@ -96,6 +96,8 @@ void Ident_Reset(void)
     gIdent.state = IDENT_RUNNING;
     gIdent.warn = 0;
     gIdent.acDlyShift = 0.0f;
+    gIdent.acDlyTicks = (float)CTRL_INVPARK_ADVANCE;
+    gIdent.snrMin = 1e9f;
     FocCore_LoadGains();
     rlStart();
     gIdentTest.phase = IDENT_PH_RL; /* 先测 R/L（电压模式，不使用电流环），测完再回 IDENT_PH_NONE 正常定位 */
@@ -171,6 +173,7 @@ static void ipdFit(void)
 #define AC_V_DELAY  CTRL_INVPARK_ADVANCE
 #define AC_F_MIN_HZ 25.0f
 #define AC_DT_SNR   2.0f        /* 目标 ωL·I_inj >= AC_DT_SNR * V_dt */
+#define AC_SNR_MIN  1.0f        /* 实测感抗压降相对死区电压最低门限（低于则置 IDENT_WARN_LOW_SNR） */
 /* 频率编号 3 = 0.5*f0：仅用于 q 轴，与 f0 配对测量转子摆动（见 acFit） */
 static uint16_t s_acPer[AC_NF + 1];     /* 拍 / 周期（acInitFreqs 计算） */
 static float    s_acHz[AC_NF + 1];      /* 实际注入频率（Hz） */
@@ -274,6 +277,7 @@ static void acInitFreqs(void)
     for (f = 0; f <= AC_NF; f++) gIdent.acHz[f] = s_acHz[f];
     s_acDlyShift = 0.0f;
     s_acI10L = 0.0f;
+    gIdent.snrMin = 1e9f;
     acSetCurBw(l, l, r, (float)PWM_FREQ / 30.0f);
 }
 
@@ -327,6 +331,7 @@ static void acCalDelay(void)
     }
     if (bestCost >= 1e29f) bestSh = 0.0f;
     gIdent.acDlyShift = bestSh;
+    gIdent.acDlyTicks = (float)AC_V_DELAY - bestSh;
     /* 仅在默认延迟导致非物理解（baseCost < 0）或三频点实部漂移超过 0.3*Rs 且拟合后离散度降为 <20% 时才修正延迟，避免噪声过拟合 */
     if (bestCost < 1e29f && (baseCost < 0.0f ||
         (fabsf(bestSh) > 0.30f && baseCost > 0.27f * rRef * rRef && bestCost < 0.20f * baseCost))) {
@@ -431,7 +436,14 @@ static void acSegFinish(uint16_t seg)
 {
     float vr = (float)(s_acVs - s_acEs), vi = (float)(s_acVc - s_acEc), ir = (float)s_acIs, ii = (float)s_acIc, d = ir * ir + ii * ii;
     float kv = (float)(UDC_MAX / 32768.0), ki = (float)(I_MAX / 32768.0), kvi = kv / ki;
-    if (d <= 0) return;
+    if (d <= 0.0f) {
+        s_acZim[seg] = 0.0f;
+        if (seg < AC_NF) {
+            s_zCmdR[seg] = s_zCmdI[seg] = s_zDtR[seg] = s_zDtI[seg] = s_acZre[seg] = 0.0f;
+        }
+        gIdent.warn |= IDENT_WARN_AC_FAIL;
+        return;
+    }
     if (seg < AC_NF) {
         float cr = (float)s_acVs, ci = (float)s_acVc, er = (float)s_acEs, ei = (float)s_acEc;
         s_zCmdR[seg] = (cr * ir + ci * ii) / d * kvi;
@@ -441,6 +453,12 @@ static void acSegFinish(uint16_t seg)
         s_acZre[seg] = (vr * ir + vi * ii) / d * kvi;
     }
     s_acZim[seg] = (vi * ir - vr * ii) / d * kvi;
+    if (seg == 0 || seg == AC_S_Q04) {
+        float iAmp = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
+        float snr  = (gIdent.deadVoltV > 0.0f) ? fabsf(s_acZim[seg]) * iAmp / gIdent.deadVoltV : 1e9f;
+        if (snr < gIdent.snrMin) gIdent.snrMin = snr;
+        if (snr < AC_SNR_MIN) gIdent.warn |= IDENT_WARN_LOW_SNR;
+    }
     if (seg == AC_NF - 1) acCalDelay();     /* d 轴三频点测完：拟合延迟偏差并更新 s_acZre/s_acZim[0..2] */
     if (seg == AC_S_Q04L) {     /* 小幅值段测完：用实测小信号 Ld / Lq 重算电流环增益后再测大幅值饱和段（额外延迟时按延迟下调带宽上限） */
         float w0 = 2.0f * (float)MATH_PI * s_acHz[0];
@@ -700,18 +718,19 @@ static uint8_t dfStep(void)     /* 1 = 完成 */
 }
 
 /* 静止测量结果提交给 param.c（自动生效）：Rs、Lq（SPM 时 Ld = Lq）、L(i)、死区。回到 Stop 后生效。
+ * commitL = 0 时仅提交直流阶梯测得的 Rs 与死区（mask 1|32），保留原有 L / L(i)。
  * 每项先经 param.c 的合理性检查（物理上为正、定点范围可容纳，见 checkParam），不合理的保留原值并在 gParamStat.rejectMask 中标记 */
-static void offerStill(void)
+static void offerStill(uint8_t commitL)
 {
     MotorParam_TypeDef p = gParam;
     uint16_t m = 0;
     if (gIdent.rsOhm > 0) { p.rsOhm = gIdent.rsOhm; m |= 1u; }
-    if (gIdent.lqH > 0) {
+    if (commitL && gIdent.lqH > 0) {
         p.lqH = gIdent.lqH;
         p.ldH = MOTOR_IPM ? gIdent.ldH : gIdent.lqH;
         m |= 2u;
     }
-    if (gIdent.lqH > 0) {
+    if (commitL && gIdent.lqH > 0) {
         p.lsKneeA = gIdent.lsSatKneeA;
         p.lsPerA = gIdent.lsSatPerA;
         m |= 4u;
@@ -727,10 +746,18 @@ void Ident_Slow(void)
 {
     IdentTest_TypeDef *t = &gIdentTest;
     switch (t->phase) {
-    case IDENT_PH_RL:       /* R/L（快环输出电压）：完成后回到定位（IDENT_PH_NONE = 定位正常进行，电流环已按 R/L 更新） */
+    case IDENT_PH_RL:       /* R/L（快环输出电压）：完成后回到定位；若放弃（rlR/rlL <= 0）直接终止以免盲飞 */
         if (rlSlow()) {
             FocCore_PresetPI(0, 0);
-            t->phase = IDENT_PH_NONE;
+            if (gIdent.rlR <= 0.0f || gIdent.rlL <= 0.0f) {
+                FocCore_SetIdqRef(0, 0);
+                gIdent.warn |= IDENT_WARN_RL_TIMEOUT | IDENT_WARN_AUTO_BLOCKED;
+                gIdent.state = IDENT_DONE;
+                t->cnt = 0;
+                t->phase = IDENT_PH_DONE;
+            } else {
+                t->phase = IDENT_PH_NONE;
+            }
         }
         break;
     case IDENT_PH_DT_STEP:  /* 死区阶梯 */
@@ -793,13 +820,15 @@ void Ident_Slow(void)
         break;
     case IDENT_PH_SAT_FIT:  /* 饱和拟合（分摊到多个慢环周期），快环保持零电流 */
         if (dfStep()) {
-            offerStill();
+            uint8_t trustedPre = (uint8_t)(gIdent.rsOhm > 0.0f && gIdent.lqH > 0.0f &&
+                                           (!MOTOR_IPM || gIdent.ldH > 0.0f) &&
+                                           gIdent.acLdH[0] > 0.0f && gIdent.acRohm[0] > 0.0f &&
+                                           gIdent.rlR > 0.0f && gIdent.rlL > 0.0f &&
+                                           !(gIdent.warn & (IDENT_WARN_AC_DRIFT | IDENT_WARN_LOW_SNR | IDENT_WARN_AC_FAIL)));
+            offerStill(trustedPre);
+            if (!trustedPre) gIdent.warn |= IDENT_WARN_AUTO_BLOCKED;
             if (gIdentCfg.mode == IDENT_MODE_AUTO) {
-                uint8_t ok = (uint8_t)(gIdent.rsOhm > 0.0f && gIdent.lqH > 0.0f &&
-                                       (!MOTOR_IPM || gIdent.ldH > 0.0f) &&
-                                       gIdent.acLdH[0] > 0.0f && gIdent.acRohm[0] > 0.0f &&
-                                       !(gParamStat.rejectMask & 39u) && gParamStat.pending &&
-                                       !(gIdent.warn & IDENT_WARN_AC_DRIFT));
+                uint8_t ok = (uint8_t)(trustedPre && !(gParamStat.rejectMask & 39u) && gParamStat.pending);
                 if (ok) {
                     s_autoStage = 1;            /* 停机（参数在 Stop 中装入）后重新起动，执行运行测量；state 保持 RUNNING */
                     s_restartReq = 1;

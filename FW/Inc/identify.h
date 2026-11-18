@@ -30,6 +30,8 @@ typedef enum {
 #define IDENT_WARN_DLY_MISMATCH (1u << 2)   /* 三频点实测电压-电流延迟与 CTRL_INVPARK_ADVANCE 偏差 > 0.25 拍 */
 #define IDENT_WARN_AC_DRIFT     (1u << 3)   /* 交流阻抗三频点 L/R 漂移或 |Z| 交叉校核异常 */
 #define IDENT_WARN_AUTO_BLOCKED (1u << 4)   /* IDENT_MODE_AUTO 静止结果未通过合理性检查，已阻止自动重起动 */
+#define IDENT_WARN_LOW_SNR      (1u << 5)   /* 交流注入感抗压降相对死区等效电压不足（ωL·I / Vdt < 1.0） */
+#define IDENT_WARN_AC_FAIL      (1u << 6)   /* 交流阻抗分段电流积分为零，测量无效 */
 
 typedef struct {
     float rlR, rlL;     /* 第一步 R/L（200 Hz 电压注入，不使用电流环）：仅用于先整定电流环（R 含死区偏大，L 偏小）；-1 = 未测得 */
@@ -42,6 +44,8 @@ typedef struct {
     float acLdMagH[3];  /* acHz[0..2] d 轴电感幅值校核 sqrt(|Z|^2 - rsOhm^2)/ω（对纯延迟不敏感） */
     float acRohm[3];    /* acHz[0..2] d 轴阻抗实部（已扣除死区模型与拟合延迟偏差，应接近 rsOhm） */
     float acDlyShift;   /* d 轴三频点估算的延迟偏差（PWM 拍，正值 = 实际延迟小于 CTRL_INVPARK_ADVANCE） */
+    float acDlyTicks;   /* 实测电压-电流总延迟（PWM 拍 = CTRL_INVPARK_ADVANCE - bestSh），供台架标定板级延迟 */
+    float snrMin;       /* 小信号基频段实测感抗压降与死区电压最小比值 min(|Im(Z)|*I / Vdt) */
     float lqAtA[5], lqAtH[5];   /* q 轴 f0 交流 0.4 / 1.0 / 1.5 / 2.0 / 2.5 A（随额定电流缩放）：实际电流幅值（A）、基波电感（H，已含摆动修正；
                                  * [1..4] 为偏置外推到 0 的值 = 2 * lqAtHb1 - lqAtHb2） */
     float lqAtHb1[4], lqAtHb2[4];   /* 1.0 ~ 2.5 A 四档在 N 极偏置 1 倍 / 2 倍时的电感（反映交叉饱和） */
