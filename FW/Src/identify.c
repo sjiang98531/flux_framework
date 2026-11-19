@@ -228,9 +228,25 @@ static float    s_acDlyShift, s_acI00, s_acZreQ04, s_acI04L, s_acI10L; /* 延迟
 static float    s_acGain[AC_NSEG];      /* 各段指令幅值缩放（仿射/割线幅值标定及 0.5*f0 等幅对齐） */
 static uint8_t  s_acRetry[AC_NSEG];     /* 各段重测次数 */
 static uint8_t  s_tryHasLo, s_tryHasHi, s_tryHasCap, s_tryCapped, s_capMask;  /* s_capMask bit n: q轴第n档(0..4)指令被T1封顶 */
+static int16_t  s_acPlanA[4], s_acPlanB[8]; /* 运行期重规划的 q 轴大幅值档目标与 1x/2x 偏置（seg 7..10, 12..15） */
+static uint8_t  s_l0Only;                   /* 1 = 含 2x 偏置电流余量不足 1.52*t7，只提交 L0，不提交 lsKnee/lsPer */
 static float    s_tryG1, s_tryGPrev, s_tryIPrev, s_tryXPrev;
 static float    s_tryGLo, s_tryILo, s_tryGHi, s_tryIHi, s_tryHiCap;
 static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等待慢环读取 */
+
+static int16_t acSegTargetA(uint16_t seg)
+{
+    if (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4u) return s_acPlanA[seg - AC_S_Q10];
+    if (seg >= AC_S_Q10B2 && seg < AC_S_Q10B2 + 4u) return s_acPlanA[seg - AC_S_Q10B2];
+    return s_acSegA[seg];
+}
+
+static int16_t acSegTargetB(uint16_t seg)
+{
+    if (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4u) return s_acPlanB[seg - AC_S_Q10];
+    if (seg >= AC_S_Q10B2 && seg < AC_S_Q10B2 + 4u) return s_acPlanB[4u + (seg - AC_S_Q10B2)];
+    return s_acSegB[seg];
+}
 
 static void acSetFreq(uint16_t idx, float hz)
 {
@@ -293,6 +309,12 @@ static void acInitFreqs(void)
     acSetFreq(3, 0.5f * f0);
     for (f = 0; f <= AC_NF; f++) gIdent.acHz[f] = s_acHz[f];
     for (f = 0; f < AC_NSEG; f++) { s_acGain[f] = 1.0f; s_acRetry[f] = 0; }
+    for (f = 0; f < 4u; f++) {
+        s_acPlanA[f] = s_acSegA[AC_S_Q10 + f];
+        s_acPlanB[f] = s_acSegB[AC_S_Q10 + f];
+        s_acPlanB[4u + f] = s_acSegB[AC_S_Q10B2 + f];
+    }
+    s_l0Only = 0;
     s_capMask = 0;
     s_acDlyShift = 0.0f;
     s_acI00 = 0.0f;
@@ -387,10 +409,10 @@ static void acSegStart(uint16_t seg)    /* 慢环 */
     {
         int32_t bx = gIdentCfg.biasX ? (int32_t)gIdentCfg.biasX : 1;
         int32_t lim = (int32_t)(IDENT_VEC_MAX_A / I_MAX * 32768.0 + 16.5);
-        int32_t ampRaw = (s_acGain[seg] == 1.0f) ? (int32_t)s_acSegA[seg]
-                       : (int32_t)((float)s_acSegA[seg] * s_acGain[seg] + 0.5f);
+        int32_t ampRaw = (s_acGain[seg] == 1.0f) ? (int32_t)acSegTargetA(seg)
+                       : (int32_t)((float)acSegTargetA(seg) * s_acGain[seg] + 0.5f);
         int32_t amp = QMath_Clamp(ampRaw, lim);
-        int64_t b = -(int64_t)s_acSegB[seg] * bx;   /* 注入坐标系旋转了 +90°，N 极位于其 -q 方向 */
+        int64_t b = -(int64_t)acSegTargetB(seg) * bx;   /* 注入坐标系旋转了 +90°，N 极位于其 -q 方向 */
         int32_t maxB = (int32_t)sqrtf((float)((double)lim * lim - (double)amp * amp));
         s_tryCapped = (ampRaw > lim) ? 1u : 0u;
         if (b > maxB) b = maxB;
@@ -554,16 +576,19 @@ static uint8_t acSegFinish(uint16_t seg)
     }
     iAmp = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
     if (seg < 6u || seg == AC_S_Q10) {
-        float ref = (float)s_acSegA[seg] * ki;
+        float ref = (float)acSegTargetA(seg) * ki;
         float cr = (float)s_acVs, ci = (float)s_acVc;
         float vAmp = 2.0f * sqrtf(cr * cr + ci * ci) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * kv;
         float vdc = (gMeas.vbusAvg > 0) ? (float)gMeas.vbusAvg * kv : (float)UDC_RATE;
         float vLim = 0.85f * (0.90f * vdc / 1.7320508f);
         if (acRetryGain(seg, ref, 0.15f, 0.25f, 3u, iAmp, vAmp, vLim, 1u)) return 1;
         if (seg == AC_S_Q04 && iAmp > 1.3f * ref) gIdent.warn |= IDENT_WARN_AMP_FAIL;
-        if (seg == AC_S_Q10) {  /* seg 6 重整定后用 seg 7 最后两点标定 I = α·I_cmd - β，推算 seg 8-10/12-15 */
+        if (seg == AC_S_Q10) {  /* seg 6 重整定后用 seg 7 最后两点标定 I = α·I_cmd - β，含 2x 偏置预算重规划 seg 8-10/12-15 */
             float xCurr = (float)s_acAmp * ki;
             float alpha = 1.0f, beta = xCurr - iAmp;
+            float limA = (float)IDENT_VEC_MAX_A * 0.98f, sc = (float)IDENT_I_SCALE;
+            float bx = gIdentCfg.biasX ? (float)gIdentCfg.biasX : 1.0f;
+            float tTop = 2.5f * sc;
             uint16_t k;
             if (s_acRetry[seg] > 0u) {
                 float dx = xCurr - s_tryXPrev;
@@ -575,13 +600,68 @@ static uint8_t acSegFinish(uint16_t seg)
                     beta = alpha * xCurr - iAmp;
                 }
             }
-            for (k = AC_S_Q10 + 1u; k < AC_NSEG; k++) {
-                float t, icmd;
-                if (k == AC_S_Q10L) continue;
-                t = (float)s_acSegA[k] * ki;
-                icmd = (t + beta) / alpha;
-                if (icmd < 0.25f * t) icmd = 0.25f * t;
-                s_acGain[k] = (t > 0.0f) ? (icmd / t) : 1.0f;
+            {   /* 二分求含 2x 偏置合成矢量不超 limA 的最大目标电流 tTop */
+                float lo = iAmp, hi = 2.5f * sc;
+                uint16_t it;
+                if (hi < lo) hi = lo;
+                for (it = 0; it < 12u; it++) {
+                    float mid = (it == 0u) ? hi : 0.5f * (lo + hi);
+                    float ic = (mid + beta) / alpha;
+                    float r = (sc > 0.0f) ? (mid / sc) : 0.0f;
+                    float b2 = 0.2f * r * r * sc * bx;
+                    if (ic < 0.25f * mid) ic = 0.25f * mid;
+                    if (ic * ic + b2 * b2 <= limA * limA) {
+                        lo = mid;
+                        if (it == 0u) break;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                tTop = lo;
+            }
+            {
+                float ic0 = (iAmp + beta) / alpha;
+                float r0 = (sc > 0.0f) ? (iAmp / sc) : 0.0f;
+                float b20 = 0.2f * r0 * r0 * sc * bx;
+                if (ic0 < 0.25f * iAmp) ic0 = 0.25f * iAmp;
+                if (s_tryCapped || iAmp <= 0.0f || ic0 * ic0 + b20 * b20 > limA * limA || tTop < 1.52f * iAmp) {
+                    s_l0Only = 1u;
+                    for (k = AC_S_Q10 + 1u; k < AC_NSEG; k++) {
+                        float t, icmd;
+                        if (k == AC_S_Q10L) continue;
+                        t = (float)acSegTargetA(k) * ki;
+                        icmd = (t + beta) / alpha;
+                        if (icmd < 0.25f * t) icmd = 0.25f * t;
+                        s_acGain[k] = (t > 0.0f) ? (icmd / t) : 1.0f;
+                    }
+                } else {
+                    float q = powf(tTop / iAmp, 1.0f / 3.0f), tk = iAmp;
+                    int32_t qA0 = (int32_t)(iAmp / ki + 0.5f);
+                    if (qA0 > 32767) qA0 = 32767;
+                    s_acPlanA[0] = (int16_t)qA0;
+                    s_acGain[AC_S_Q10B2] = ic0 / iAmp;
+                    for (k = 1u; k < 4u; k++) {
+                        float rk, icmd, b1, b2;
+                        int32_t qA, qB1, qB2;
+                        tk = (k == 3u) ? tTop : (tk * q);
+                        rk = (sc > 0.0f) ? (tk / sc) : 0.0f;
+                        icmd = (tk + beta) / alpha;
+                        if (icmd < 0.25f * tk) icmd = 0.25f * tk;
+                        b1 = 0.1f * rk * rk * sc;
+                        b2 = 0.2f * rk * rk * sc;
+                        qA = (int32_t)(tk / ki + 0.5f);
+                        qB1 = (int32_t)(b1 / ki + 0.5f);
+                        qB2 = (int32_t)(b2 / ki + 0.5f);
+                        if (qA > 32767) qA = 32767;
+                        if (qB1 > 32767) qB1 = 32767;
+                        if (qB2 > 32767) qB2 = 32767;
+                        s_acPlanA[k] = (int16_t)qA;
+                        s_acPlanB[k] = (int16_t)qB1;
+                        s_acPlanB[4u + k] = (int16_t)qB2;
+                        s_acGain[AC_S_Q10 + k] = (tk > 0.0f) ? (icmd / tk) : 1.0f;
+                        s_acGain[AC_S_Q10B2 + k] = s_acGain[AC_S_Q10 + k];
+                    }
+                }
             }
         }
     } else if (seg == AC_S_Q04L || seg == AC_S_Q10L) {
@@ -685,16 +765,18 @@ static void acFit(void)
             gIdent.lqAtH[f] = 2.0f * gIdent.lqAtH[f] - l2;
         }
     }
-    for (f = 0; f < 4u; f++) {
-        float lo = gIdent.lqAtA[f], hi = gIdent.lqAtA[f + 1u];
-        float need = (s_capMask & (1u << (f + 1u))) ? 0.97f : 1.15f;   /* 封顶档只要求不倒退 */
-        if (!(lo > 0.0f && hi >= need * lo)) {
-            gIdent.warn |= IDENT_WARN_AMP_ORDER;
-            break;
+    if (!s_l0Only) {
+        for (f = 0; f < 4u; f++) {
+            float lo = gIdent.lqAtA[f], hi = gIdent.lqAtA[f + 1u];
+            float need = (s_capMask & (1u << (f + 1u))) ? 0.97f : 1.15f;   /* 封顶档只要求不倒退 */
+            if (!(lo > 0.0f && hi >= need * lo)) {
+                gIdent.warn |= IDENT_WARN_AMP_ORDER;
+                break;
+            }
         }
-    }
-    if (!(gIdent.lqAtA[4] >= 1.5f * gIdent.lqAtA[1])) {                /* 封顶后总跨度仍不足 */
-        gIdent.warn |= IDENT_WARN_AMP_ORDER;
+        if (!(gIdent.lqAtA[4] >= 1.5f * gIdent.lqAtA[1])) {                /* 封顶后总跨度仍不足 */
+            gIdent.warn |= IDENT_WARN_AMP_ORDER;
+        }
     }
     /* 观测器需要的是转子坐标系中的低频电感（稳态运行时转子所见磁场恒定，转子内无涡流）。
      * 注入频率在满足信噪比与转折频率的前提下越低越好，故取基频 f0（s_acHz[0]）。 */
@@ -856,6 +938,12 @@ static uint8_t dfStep(void)     /* 1 = 完成 */
     float sc = (float)IDENT_I_SCALE;
     float ik = 0.05f * sc * (float)s_dfI, k, kStep = 0.005f / sc, kMax = 0.6001f / sc;
     uint16_t i, j;
+    if (s_l0Only) {
+        gIdent.lsSatKneeA = 0.0f;
+        gIdent.lsSatPerA = 0.0f;
+        gIdent.lqH = gIdent.acLqH[0];
+        return 1;
+    }
     for (k = 0; k <= kMax; k += kStep) {
         float slr = 0, srr = 0, sll = 0, l0, e;
         for (i = 0; i < 5; i++) {
@@ -906,7 +994,7 @@ static void offerStill(uint8_t commitL)
         p.ldH = MOTOR_IPM ? gIdent.ldH : gIdent.lqH;
         m |= 2u;
     }
-    if (commitL && gIdent.lqH > 0) {
+    if (commitL && !s_l0Only && gIdent.lqH > 0) {
         float maxA = 0.0f;
         uint16_t i;
         for (i = 0; i < 5u; i++) {

@@ -59,8 +59,8 @@ static uint16_t checkParam(const MotorParam_TypeDef *p)
     if (!(p->rsOhm > 0 && p->rsOhm * I_MAX / FLUX_V_BASE < 0.99997)) bad |= 1u;
     /* bit1 L：为正，且满量程电流下的电感磁链 L*I 在观测器磁链量程内 */
     if (!(p->lqH > 0 && p->ldH > 0 && p->lqH * I_MAX / psiN < 0.9 && p->ldH * I_MAX / psiN < 0.9)) bad |= 2u;
-    /* bit2 L(i)：拐点在电流量程内，斜率非负且 Q12 可容纳，上限电流非负 */
-    if (!(p->lsKneeA >= 0 && p->lsKneeA < I_MAX && p->lsPerA >= 0 && p->lsPerA * I_MAX < 7.0 && p->lsMaxA >= 0)) bad |= 4u;
+    /* bit2 L(i)：拐点在电流量程内，斜率非负且 Q12 可容纳，上限电流为 0（不钳）或不低于拐点 */
+    if (!(p->lsKneeA >= 0 && p->lsKneeA < I_MAX && p->lsPerA >= 0 && p->lsPerA * I_MAX < 7.0 && (p->lsMaxA == 0 || p->lsMaxA >= p->lsKneeA))) bad |= 4u;
     /* bit3 psi：最大定子磁链 psi + L*I 在观测器积分器限幅内，磁链定点非零且积分步长在 Q15 内 */
     if (!(p->psiWb > 0 && (p->psiWb + p->lqH * I_MAX) / psiN < 0.9 &&
           FLUX_NOMINAL_Q15_AT(p->psiWb, psiN) >= 16 &&
