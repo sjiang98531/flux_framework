@@ -216,7 +216,7 @@ static float    s_acDlyShift, s_acI00, s_acZreQ04, s_acI04L, s_acI10L; /* 延迟
 static float    s_acGain[AC_NSEG];      /* 各段指令幅值缩放（仿射/割线幅值标定及 0.5*f0 等幅对齐） */
 static uint8_t  s_acRetry[AC_NSEG];     /* 各段重测次数 */
 static uint8_t  s_tryHasLo, s_tryHasHi, s_tryHasCap, s_tryCapped;
-static float    s_tryG1, s_tryGPrev, s_tryIPrev;
+static float    s_tryG1, s_tryGPrev, s_tryIPrev, s_tryXPrev;
 static float    s_tryGLo, s_tryILo, s_tryGHi, s_tryIHi, s_tryHiCap;
 static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等待慢环读取 */
 
@@ -517,6 +517,7 @@ static uint8_t acRetryGain(uint16_t seg, float ref, float accTol, float failTol,
     }
     s_tryGPrev = g;
     s_tryIPrev = iAmp;
+    s_tryXPrev = (float)s_acAmp * (float)(I_MAX / 32768.0);
     s_acGain[seg] = gNext;
     s_acRetry[seg]++;
     return 1;
@@ -539,13 +540,36 @@ static uint8_t acSegFinish(uint16_t seg)
         return 0;
     }
     iAmp = 2.0f * sqrtf(d) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * ki;
-    if (seg < 6u) {
+    if (seg < 6u || seg == AC_S_Q10) {
         float ref = (float)s_acSegA[seg] * ki;
         float cr = (float)s_acVs, ci = (float)s_acVc;
         float vAmp = 2.0f * sqrtf(cr * cr + ci * ci) / (float)(AC_INT * s_acPer[s_acSegF[seg]]) * kv;
         float vdc = (gMeas.vbusAvg > 0) ? (float)gMeas.vbusAvg * kv : (float)UDC_RATE;
         float vLim = 0.85f * (0.90f * vdc / 1.7320508f);
         if (acRetryGain(seg, ref, 0.15f, 0.25f, 3u, iAmp, vAmp, vLim, 1u)) return 1;
+        if (seg == AC_S_Q10) {  /* seg 6 重整定后用 seg 7 最后两点标定 I = α·I_cmd - β，推算 seg 8-10/12-15 */
+            float xCurr = (float)s_acAmp * ki;
+            float alpha = 1.0f, beta = xCurr - iAmp;
+            uint16_t k;
+            if (s_acRetry[seg] > 0u) {
+                float dx = xCurr - s_tryXPrev;
+                float dy = iAmp - s_tryIPrev;
+                if (dx * dy > 0.0f && fabsf(dx) > 1e-4f * ref) {
+                    alpha = dy / dx;
+                    if (alpha < 0.2f) alpha = 0.2f;
+                    if (alpha > 2.0f) alpha = 2.0f;
+                    beta = alpha * xCurr - iAmp;
+                }
+            }
+            for (k = AC_S_Q10 + 1u; k < AC_NSEG; k++) {
+                float t, icmd;
+                if (k == AC_S_Q10L) continue;
+                t = (float)s_acSegA[k] * ki;
+                icmd = (t + beta) / alpha;
+                if (icmd < 0.25f * t) icmd = 0.25f * t;
+                s_acGain[k] = (t > 0.0f) ? (icmd / t) : 1.0f;
+            }
+        }
     } else if (seg == AC_S_Q04L || seg == AC_S_Q10L) {
         float ref = (seg == AC_S_Q04L) ? gIdent.lqAtA[0] : gIdent.lqAtA[1];
         if (acRetryGain(seg, ref, 0.05f, 0.0f, 3u, iAmp, 0.0f, 0.0f, 0u)) return 1;
