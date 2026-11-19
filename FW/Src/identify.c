@@ -281,6 +281,7 @@ static int32_t  s_acVs, s_acVc, s_acIs, s_acIc, s_acEs, s_acEc;
 static int32_t  s_acI3s, s_acI3c;
 /* 零偏置段正交轴整周期子窗静止监测（消除注入频率耦合，无盲区捕捉风车） */
 static int32_t  s_acVqSum, s_acVqSubAcc, s_acVqSubMin, s_acVqSubMax;
+static int32_t  s_acVq2s, s_acVq2c;
 static uint32_t s_acVqSubT, s_acVqSubCnt;
 static float    s_acVqAxMin, s_acVqAxMax;
 static int16_t  s_acVph;
@@ -675,6 +676,7 @@ static void acSegStart(uint16_t seg, uint8_t isRetry)
     s_acOverI = 0;
     s_acVs = s_acVc = s_acIs = s_acIc = s_acEs = s_acEc = 0;
     s_acI3s = s_acI3c = 0;
+    s_acVq2s = s_acVq2c = 0;
     s_acVph = (int16_t)(gIdent.deadVoltV * (float)(32768.0 / UDC_MAX));
     COMPILER_BARRIER();    /* 编译器屏障：确保上面的非 volatile 写对快环可见后再清 s_acDone */
     s_acDone = 0;
@@ -770,7 +772,13 @@ static void acFast(void)
             s_acVc  += ((int32_t)gFoc.vdq.s16D * b.s16Cos) >> 15;
             if (idAbs > s_acIpk) s_acIpk = (int16_t)idAbs;
             if (seg < AC_S_Q04L || (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4u)) {
-                if (seg < AC_S_Q04L) s_acVqSum += vq;
+                if (seg < AC_S_Q04L) {
+                    s_acVqSum += vq;
+                } else {
+                    SinCos_TypeDef b2 = FocMath_SinCos((int16_t)(((phiOld + s_acDly) * 2u) >> 16));
+                    s_acVq2s += (vq * b2.s16Sin) >> 15;
+                    s_acVq2c += (vq * b2.s16Cos) >> 15;
+                }
                 s_acVqSubAcc += vq;
                 if (++s_acVqSubCnt >= s_acVqSubT) {
                     int32_t avgQ = s_acVqSubAcc / (int32_t)s_acVqSubT;
@@ -910,8 +918,11 @@ static uint8_t acSegFinish(uint16_t seg)
             }
             if (vqPP > vThr || (s_acVqAxMax - s_acVqAxMin) > vThr)
                 s_acMotion = 1u;
-        } else if (vqPP > 2.0f * vThr) {
-            s_acMotion = 1u;
+        } else {
+            /* 同频往复摆动时 ω_r·sin(θ) 与互感调制在正交电压上产生 2·f0 分量，整周期平均 vqPP 会将其抵消 */
+            float vqAc2 = 2.0f * sqrtf((float)s_acVq2s * (float)s_acVq2s + (float)s_acVq2c * (float)s_acVq2c) / nInt * kv;
+            if (vqPP > 2.0f * vThr || vqAc2 > 0.033f * vAmp)
+                s_acMotion = 1u;
         }
     }
 
