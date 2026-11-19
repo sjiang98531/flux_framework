@@ -34,7 +34,7 @@ typedef enum {
 #define IDENT_WARN_AC_FAIL      (1u << 6)   /* 交流阻抗分段电流积分为零，测量无效 */
 #define IDENT_WARN_AMP_FAIL     (1u << 7)   /* 交流注入幅值标定 3 次内未进入目标 ±25% */
 #define IDENT_WARN_AMP_ORDER    (1u << 8)   /* q 轴五档实测电流未严格递增或相邻比 < 1.15 */
-#define IDENT_WARN_DT_UNSTABLE  (1u << 9)   /* 死区阶梯期间转子未静止或有效档位不足 2 档，未提交 Rs 与死区 */
+#define IDENT_WARN_DT_UNSTABLE  (1u << 9)   /* 死区阶梯期间转子未静止（丢档 >= 4）或有效档位不足 2 档，未提交 Rs 与死区 */
 
 typedef struct {
     float rlR, rlL;     /* 第一步 R/L（200 Hz 电压注入，不使用电流环）：仅用于先整定电流环（R 含死区偏大，L 偏小）；-1 = 未测得 */

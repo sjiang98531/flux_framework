@@ -140,17 +140,18 @@ static void dtFit(void)
 {
     const IdentTest_TypeDef *t = &gIdentTest;
     float sx = 0, sy = 0, sxx = 0, sxy = 0, n = 0, th, g, vbus;
-    uint16_t i;
+    uint16_t i, dropped = 0;
     for (i = 0; i < IDENT_DT_N; i++) {
         float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0);
-        if ((s_dtDropMask & (1u << i)) || x < 0.45f * (float)IDENT_I_SCALE) continue;
+        if (s_dtDropMask & (1u << i)) { dropped++; continue; }
+        if (x < 0.45f * (float)IDENT_I_SCALE) continue;
         sx += x;
         sy += y;
         sxx += x * x;
         sxy += x * y;
         n += 1;
     }
-    if (n < 2 || (n * sxx - sx * sx) <= 0) {
+    if (dropped >= 4u || n < 2 || (n * sxx - sx * sx) <= 0) {
         gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
         gIdent.rsOhm = 0.0f;
         gIdent.deadVoltV = 0.0f;
