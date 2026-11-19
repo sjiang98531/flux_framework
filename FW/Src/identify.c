@@ -454,7 +454,12 @@ static void acCalDelay(void)
     }
     gIdent.acDlyShift = s_acDlyShift;
     gIdent.acDlyTicks = (float)AC_V_DELAY - s_acDlyShift;
-    if (fabsf(s_acDlyShift) > 0.25f) gIdent.warn |= IDENT_WARN_DLY_MISMATCH;
+    if (fabsf(s_acDlyShift) > 0.25f) {
+        gIdent.warn |= IDENT_WARN_DLY_MISMATCH;
+        /* 非整数拍延迟失准（如 32~128Hz 低频段相位失配导致半拍级偏移）无法靠整数拍重对齐消除，置 AC_DRIFT 阻断 */
+        if (fabsf(s_acDlyShift - floorf(s_acDlyShift + 0.5f)) > 0.20f)
+            gIdent.warn |= IDENT_WARN_AC_DRIFT;
+    }
     for (f = 0; f < AC_NF; f++) {
         float zr, zi, w = 2.0f * (float)MATH_PI * s_acHz[f], z2, rUse;
         acEvalDlyPoint(f, s_acDlyShift, &zr, &zi);
@@ -1006,7 +1011,7 @@ static void acFit(void)
             float l2 = s_acZim[AC_S_Q10B2 + f - 1u] / w25 + k10 / (w25 * w25);
             gIdent.lqAtHb1[f - 1u] = l1;
             gIdent.lqAtHb2[f - 1u] = l2;
-            gIdent.lqAtH[f] = 2.0f * l1 - l2;
+            gIdent.lqAtH[f] = l1;
         }
         if (s_acSatN < 3u) {
             s_l0Only = 1u;
