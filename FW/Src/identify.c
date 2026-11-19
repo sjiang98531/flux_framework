@@ -212,7 +212,7 @@ static int16_t  s_acVph;            /* 每相死区电压（Q15，死区阶梯�
 #define AC_DT_KI_Q8 ((int32_t)(256.0 * I_MAX / INVERTER_DT_I0_A + 0.5))
 static float    s_acZre[AC_NF], s_acZim[AC_NSEG];     /* 实部只用 d 轴三段（acRohm）；电流幅值直接写入 gIdent.lqAtA */
 static float    s_zCmdR[AC_NF], s_zCmdI[AC_NF], s_zDtR[AC_NF], s_zDtI[AC_NF];  /* d 轴三频点指令电压/死区电压相对电流的复阻抗，用于延迟残差估算 */
-static float    s_acDlyShift, s_acI04L, s_acI10L; /* 三频点估算的延迟残差（PWM 拍）、0.5*f0 0.4 A / 1.0 A 实际电流幅值 */
+static float    s_acDlyShift, s_acI00, s_acZreQ04, s_acI04L, s_acI10L; /* 延迟残差（PWM 拍）、基频 d/q 小信号电流与实部、0.5*f0 电流幅值 */
 static float    s_acGain[AC_NSEG];      /* 各段指令幅值缩放（仿射/割线幅值标定及 0.5*f0 等幅对齐） */
 static uint8_t  s_acRetry[AC_NSEG];     /* 各段重测次数 */
 static uint8_t  s_tryHasLo, s_tryHasHi, s_tryHasCap, s_tryCapped;
@@ -282,6 +282,8 @@ static void acInitFreqs(void)
     for (f = 0; f <= AC_NF; f++) gIdent.acHz[f] = s_acHz[f];
     for (f = 0; f < AC_NSEG; f++) { s_acGain[f] = 1.0f; s_acRetry[f] = 0; }
     s_acDlyShift = 0.0f;
+    s_acI00 = 0.0f;
+    s_acZreQ04 = 0.0f;
     s_acI04L = 0.0f;
     s_acI10L = 0.0f;
     gIdent.snrMin = 1e9f;
@@ -557,11 +559,8 @@ static uint8_t acSegFinish(uint16_t seg)
         s_acZre[seg] = (vr * ir + vi * ii) / d * kvi;
     }
     s_acZim[seg] = (vi * ir - vr * ii) / d * kvi;
-    if (seg == 0 || seg == AC_S_Q04) {
-        float snr = (gIdent.deadVoltV > 0.0f) ? fabsf(s_acZim[seg]) * iAmp / gIdent.deadVoltV : 1e9f;
-        if (snr < gIdent.snrMin) gIdent.snrMin = snr;
-        if (snr < AC_SNR_MIN) gIdent.warn |= IDENT_WARN_LOW_SNR;
-    }
+    if (seg == 0) s_acI00 = iAmp;
+    if (seg == AC_S_Q04) s_acZreQ04 = (vr * ir + vi * ii) / d * kvi;
     if (seg == AC_NF - 1) acCalDelay();     /* d 轴三频点测完：拟合延迟偏差并更新 s_acZre/s_acZim[0..2] */
     if (seg == AC_S_Q04L) {     /* 小幅值段测完：用实测小信号 Ld / Lq 重算电流环增益后再测大幅值饱和段（额外延迟时按延迟下调带宽上限） */
         float w0 = 2.0f * (float)MATH_PI * s_acHz[0];
@@ -648,6 +647,16 @@ static void acFit(void)
      * 注入频率在满足信噪比与转折频率的前提下越低越好，故取基频 f0（s_acHz[0]）。 */
     gIdent.ldH = gIdent.acLdH[0];
     gIdent.lqH = gIdent.acLqH[0];
+    {
+        float rUse = (gIdent.rsOhm > 0.0f) ? gIdent.rsOhm : s_acZre[0];
+        float xd = gIdent.acLdMagH[0] * w25;
+        float z2q = s_acZreQ04 * s_acZreQ04 + s_acZim[AC_S_Q04] * s_acZim[AC_S_Q04];
+        float xq = (z2q > rUse * rUse) ? sqrtf(z2q - rUse * rUse) : 0.0f;
+        float snrD = (gIdent.deadVoltV > 0.0f) ? xd * s_acI00 / gIdent.deadVoltV : 1e9f;
+        float snrQ = (gIdent.deadVoltV > 0.0f) ? xq * gIdent.lqAtA[0] / gIdent.deadVoltV : 1e9f;
+        gIdent.snrMin = (snrD < snrQ) ? snrD : snrQ;
+        if (gIdent.snrMin < AC_SNR_MIN) gIdent.warn |= IDENT_WARN_LOW_SNR;
+    }
     if (gIdent.acLdH[0] <= 0.0f || gIdent.acLdH[1] <= 0.0f || gIdent.acLdH[2] <= 0.0f ||
         gIdent.acRohm[0] <= 0.0f || gIdent.acLqH[0] <= 0.0f ||
         gIdent.acLdH[2] < 0.65f * gIdent.acLdH[0] || gIdent.acLdH[2] > 1.35f * gIdent.acLdH[0] ||
