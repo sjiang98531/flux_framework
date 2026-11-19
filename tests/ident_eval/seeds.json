@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "description": "Frozen seed manifest for baseline (0f98ead), candidate (75487c4), and bidirectional ablation.",
+  "hard_seed_20261119": { "seed": 20261119, "count": 120 },
+  "old_fn_seed_20261118": { "seed": 20261118, "count": 100, "indices": [1, 6, 21, 33, 55, 81] },
+  "vac48_offgn_30x": { "seed": 20261118, "count": 30 },
+  "bad_motor_gate_seed": { "seed": 20261188, "count": 30 }
+}
