@@ -18,10 +18,13 @@
 
 #if defined(__ARMCC_VERSION)                    /* Keil AC5 / AC6 */
 #define FORCE_INLINE static __forceinline
+#define COMPILER_BARRIER() __schedule_barrier()
 #elif defined(__GNUC__)                         /* gcc / clang（主机编译） */
 #define FORCE_INLINE static inline __attribute__((always_inline))
+#define COMPILER_BARRIER() __asm volatile("" ::: "memory")
 #else
 #define FORCE_INLINE static inline
+#define COMPILER_BARRIER()
 #endif
 
 #if defined(__ARMCC_VERSION) && !defined(CFG_STATIC_CHECK) && FASTPATH_IN_RAM

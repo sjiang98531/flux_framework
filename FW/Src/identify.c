@@ -17,6 +17,7 @@
  * ==========================================================================*/
 #include "identify.h"
 #include "cfg_derived.h"
+#include "compiler.h"
 #include "foc_core.h"
 #include "meas.h"
 #include "foc_math.h"
@@ -135,8 +136,16 @@ static float dtGeomFactor(int16_t thetaQ15)
 static void dtFit(void)
 {
     const IdentTest_TypeDef *t = &gIdentTest;
+    /* 板级校准后残余零偏的规格上界（A），用于扩展死区过渡带边界 */
+    #define DT_OFF_BOUND_A  (0.02f * (float)I_MAX)
+    /* 拟合下限：2.6×I0 + 2×off_bound（含 1.3x 配置偏差 + 零偏余量） */
+    #define DT_FIT_FLOOR    (2.6f * (float)INVERTER_DT_I0_A + 2.0f * DT_OFF_BOUND_A)
+    /* 可辨识性边界：最高档至少 3.9×I0 + 2×off_bound */
+    #define DT_XMAX_MIN     (3.9f * (float)INVERTER_DT_I0_A + 2.0f * DT_OFF_BOUND_A)
     float sx = 0, sy = 0, sxx = 0, sxy = 0, n = 0, g, vbus, vd0, sse = 0, xMin = 1e9f, xMax = 0.0f;
     uint16_t i, fitDrop = 0, totDrop = 0;
+    float xArr[IDENT_DT_N], yArr[IDENT_DT_N];
+    uint16_t nFit = 0;
     for (i = 0; i < IDENT_DT_N; i++) {
         float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0);
         float xRef = (float)s_dtLevel[i] * (float)(I_MAX / 32768.0);
@@ -145,20 +154,15 @@ static void dtFit(void)
             if (xRef >= 0.45f * (float)IDENT_I_SCALE) fitDrop++;
             continue;
         }
-        if (x < 0.45f * (float)IDENT_I_SCALE || x < 2.6f * (float)INVERTER_DT_I0_A) continue;   /* 死区过渡带（含 1.3x 配置偏差）内的档位不进拟合 */
+        if (x < 0.45f * (float)IDENT_I_SCALE || x < DT_FIT_FLOOR) continue;   /* 死区过渡带（含配置偏差+零偏余量）内的档位不进拟合 */
         if (x < xMin) xMin = x;
         if (x > xMax) xMax = x;
-        sx += x;
-        sy += y;
-        sxx += x * x;
-        sxy += x * y;
-        n += 1.0f;
+        sx += x; sy += y; sxx += x * x; sxy += x * y; n += 1.0f;
+        xArr[nFit] = x; yArr[nFit] = y; nFit++;
     }
-    /* 死区过渡带可辨识性边界：Rs 拟合要求最高档阶梯电流至少 3.9×INVERTER_DT_I0_A、且过渡带（2.6×I0，
-     * 含板级配置 1.3x 偏差）以上至少留 2 个干净档位；斜率含死区贡献约 Vdt/I0，低于此边界时 Rs 显著偏大
-     * 且无法与死区分辨 -> 阻断提交并警告。正常配置的额定电流远高于该边界。 */
-    if (fitDrop >= 2u || totDrop >= 4u || n < 2.0f || (n * sxx - sx * sx) <= 0.0f ||
-        xMax < 3.9f * (float)INVERTER_DT_I0_A) {
+    /* 可辨识性边界 + 点数下限 3（两点拟合残差恒为 0，分半斜率也无法做） */
+    if (fitDrop >= 2u || totDrop >= 4u || n < 3.0f || (n * sxx - sx * sx) <= 0.0f ||
+        xMax < DT_XMAX_MIN) {
         gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
         gIdent.rsOhm = 0.0f;
         gIdent.deadVoltV = 0.0f;
@@ -167,16 +171,41 @@ static void dtFit(void)
     }
     gIdent.rsOhm = (n * sxy - sx * sy) / (n * sxx - sx * sx);
     vd0 = (sy - gIdent.rsOhm * sx) / n;
+    /* 分半斜率一致性检查：低半与高半各拟一条斜率，差异过大说明仍受过渡带污染 */
+    {
+        float sLo = 0, sHi = 0;
+        uint16_t half = nFit / 2;
+        if (half >= 2 && nFit - half >= 2) {
+            float sxL=0, syL=0, sxxL=0, sxyL=0, sxH=0, syH=0, sxxH=0, sxyH=0;
+            for (i = 0; i < half; i++) { sxL+=xArr[i]; syL+=yArr[i]; sxxL+=xArr[i]*xArr[i]; sxyL+=xArr[i]*yArr[i]; }
+            for (i = half; i < nFit; i++) { sxH+=xArr[i]; syH+=yArr[i]; sxxH+=xArr[i]*xArr[i]; sxyH+=xArr[i]*yArr[i]; }
+            { float dL = (float)half*sxxL - sxL*sxL; sLo = (dL > 1e-12f) ? ((float)half*sxyL - sxL*syL) / dL : 0.0f; }
+            { float dH = (float)(nFit-half)*sxxH - sxH*sxH; sHi = (dH > 1e-12f) ? ((float)(nFit-half)*sxyH - sxH*syH) / dH : 0.0f; }
+        }
+        /* 阈值：两半斜率相对差异 > 50% 视为过渡带污染（从开发集标定，初值保守） */
+        if (sLo > 0.0f && sHi > 0.0f) {
+            float ratio = (sLo > sHi) ? sLo / sHi : sHi / sLo;
+            if (ratio > 1.5f) {
+                gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
+                gIdent.rsOhm = 0.0f;
+                gIdent.deadVoltV = 0.0f;
+                gIdent.deadTimeS = 0.0f;
+                return;
+            }
+        }
+    }
+    /* 残差：口径与拟合窗统一（分母=n，下限=DT_FIT_FLOOR） */
     for (i = 0; i < IDENT_DT_N; i++) {
         float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0), e;
-        if ((s_dtDropMask & (1u << i)) || x < 0.45f * (float)IDENT_I_SCALE || x < 2.0f * (float)INVERTER_DT_I0_A) continue;
+        if ((s_dtDropMask & (1u << i)) || x < 0.45f * (float)IDENT_I_SCALE || x < DT_FIT_FLOOR) continue;
         e = y - (gIdent.rsOhm * x + vd0);
         sse += e * e;
     }
     {
         float rmse = sqrtf(sse / n);
         float vSpan = fabsf(gIdent.rsOhm * (xMax - xMin)) + fabsf(vd0);
-        if (gIdent.rsOhm <= 0.0f || (vSpan > 0.1f && rmse > 0.12f * vSpan)) {
+        /* 去掉 vSpan>0.1 跳过逻辑，统一用相对+绝对双门限 */
+        if (gIdent.rsOhm <= 0.0f || rmse > 0.12f * vSpan + 0.05f) {   /* 0.05V 绝对噪声下限 */
             gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
             gIdent.rsOhm = 0.0f;
             gIdent.deadVoltV = 0.0f;
@@ -639,6 +668,7 @@ static void acSegStart(uint16_t seg, uint8_t isRetry)
     s_acVs = s_acVc = s_acIs = s_acIc = s_acEs = s_acEc = 0;
     s_acI3s = s_acI3c = 0;
     s_acVph = (int16_t)(gIdent.deadVoltV * (float)(32768.0 / UDC_MAX));
+    COMPILER_BARRIER();    /* 编译器屏障：确保上面的非 volatile 写对快环可见后再清 s_acDone */
     s_acDone = 0;
     s_acSeg = seg;
 }
@@ -673,13 +703,18 @@ static void acFast(void)
         gFoc.ang = FocMath_SinCos(s_acTheta);
         FocMath_Park(&gMeas.iab, &gFoc.ang, &gFoc.idq);
 
-        /* 3. 瞬时峰值硬保护 */
+        /* 3. 瞬时峰值硬保护：比较合成电流 id²+iq² 与 iInstMax²（含偏置轴 PI 纹波和交叉饱和） */
         idAbs = gFoc.idq.s16D < 0 ? -(int32_t)gFoc.idq.s16D : (int32_t)gFoc.idq.s16D;
-        if (idAbs > s_acIpkLim && s_acT > 2u) {
-            s_acOverI = 1u;
-            s_acDone = 1u;
-            FocCore_ApplyVoltageAB(0, 0);
-            return;
+        {
+            int32_t iqAbs = gFoc.idq.s16Q < 0 ? -(int32_t)gFoc.idq.s16Q : (int32_t)gFoc.idq.s16Q;
+            int32_t iMaxQ15 = (int32_t)s_acIpkLim;
+            if (s_acT > 2u && (idAbs > s_acIpkLim ||
+                (int32_t)((int64_t)idAbs * idAbs + (int64_t)iqAbs * iqAbs) > (int64_t)iMaxQ15 * iMaxQ15)) {
+                s_acOverI = 1u;
+                s_acDone = 1u;
+                FocCore_ApplyVoltageAB(0, 0);
+                return;
+            }
         }
 
         /* 4. 2-DOF 控制器：偏置轴 PI + 注入轴 [复阻抗前馈 + 保守 PI 削峰/归零] */
@@ -988,6 +1023,20 @@ static void acFit(void)
         }
     } else {
         gIdent.warn |= IDENT_WARN_AMP_ORDER;
+    }
+
+    /* 扫幅不足 × 深饱和门控：当饱和拟合有效（s_acSatN >= 3）但顶档电感相对 L0 已明显下降，
+     * 且顶档电流未达到 2.5×IDENT_I_SCALE（说明矢量/电压限幅压低了扫幅范围），
+     * 说明拟合区间不足以覆盖真实饱和深度 -> 降级为仅 L0（阻断 L(i) 提交），防止外推偏差大的曲线静默放行 */
+    if (!s_l0Only && s_acSatN >= 3u && gIdent.lqAtH[0] > 0.0f) {
+        float lTop = gIdent.lqAtH[s_acSatN - 1u];
+        float lRatio = (gIdent.lqAtH[0] > 1e-12f) ? lTop / gIdent.lqAtH[0] : 1.0f;
+        float iTop = gIdent.lqAtA[s_acSatN - 1u];
+        float iSwpMax = 2.5f * (float)IDENT_I_SCALE;
+        if (lRatio < 0.70f && iTop < 0.85f * iSwpMax) {
+            s_l0Only = 1u;
+            gIdent.warn |= IDENT_WARN_AMP_ORDER;
+        }
     }
 
     gIdent.ldH = gIdent.acLdH[0];

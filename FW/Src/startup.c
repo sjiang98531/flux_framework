@@ -340,25 +340,29 @@ void Startup_AlignSlow(void)
          * 连续时间无源不等于离散时间稳定：极低磁链电机（psi ~ 0.4 mWb）理论 Kd 极大，一阶滤波 + 采样延迟下
          * 特征根越过 -1，表现为 ~500 Hz 的阻尼指令大幅交替（啸叫）。两级防护（均不依赖配置 psi/J）：
          *   1) 阻尼分量幅值钳位 ALIGN_A/8（约 0.1 倍额定电流，不影响 d 轴定位电流）；
-         *   2) 颤振检测：指令在 >= 50% 钳位幅值处连续换向 => Kd 减半并清滤波，可多次衰减。 */
+         *   2) 颤振检测：相邻拍 |Δiq| >= iqMax/2 就 +2、否则 −1（不依赖反号奇偶，可抓周期 4 极限环），
+         *      累积 >= 8 => Kd 减半并清滤波，可多次衰减。减半下限取 min(damp, max(damp/2, 256))。 */
         emf = gFoc.piQ.qdSum >> 15;
         s_emfFilt += emf - (s_emfFilt >> ALIGN_EMF_FILT_SH);
         {
             int32_t damp = (s_dampRunQ8 > 0) ? s_dampRunQ8 : s_dampQ8;
             int32_t iqMax = ALIGN_ID_Q15 / 8;
             int32_t iqCmd = -((s_emfFilt >> ALIGN_EMF_FILT_SH) * damp >> 8);
+            int32_t delta;
             if (iqCmd > iqMax) iqCmd = iqMax;
             if (iqCmd < -iqMax) iqCmd = -iqMax;
-            if ((iqCmd >= iqMax / 2 || iqCmd <= -iqMax / 2) &&
-                ((iqCmd >= 0) != (s_dampPrevIq >= 0)) && s_dampPrevIq != 0) {
-                if (s_dampFlips < 0xFFu) s_dampFlips++;
-                if (s_dampFlips >= 4u) {
-                    s_dampRunQ8 = (damp >> 1 >= 256) ? (damp >> 1) : 256;
-                    s_dampFlips = 0;
-                    s_emfFilt = 0;     /* 清滤波，避免旧相位继续激励 */
-                }
-            } else if (s_dampFlips > 0u) {
-                s_dampFlips--;
+            delta = iqCmd - s_dampPrevIq;
+            if (delta < 0) delta = -delta;
+            if (delta >= iqMax / 2) {
+                if (s_dampFlips < 0xFEu) s_dampFlips += 2;
+            } else {
+                if (s_dampFlips > 0u) s_dampFlips--;
+            }
+            if (s_dampFlips >= 8u) {
+                int32_t half = damp >> 1;
+                s_dampRunQ8 = (half >= 256) ? (half < damp ? half : damp) : (damp < 256 ? damp : 256);
+                s_dampFlips = 0;
+                s_emfFilt = 0;
             }
             s_dampPrevIq = iqCmd;
             iq = iqCmd;
@@ -377,6 +381,8 @@ void Startup_AlignSlow(void)
                 s_still = 0;
             }
             if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
+                if (s_alignTicks >= s_alignMaxTicks && s_still < s_alignStillTicks)
+                    gIdent.warn |= IDENT_WARN_DT_UNSTABLE;   /* 超时未停稳：置告警 */
                 Ident_Begin();
             }
         }
