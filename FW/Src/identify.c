@@ -145,7 +145,7 @@ static void dtFit(void)
             if (xRef >= 0.45f * (float)IDENT_I_SCALE) fitDrop++;
             continue;
         }
-        if (x < 0.45f * (float)IDENT_I_SCALE || x < 2.0f * (float)INVERTER_DT_I0_A) continue;   /* 死区过渡带（<2*I0）内的档位不进拟合 */
+        if (x < 0.45f * (float)IDENT_I_SCALE || x < 2.6f * (float)INVERTER_DT_I0_A) continue;   /* 死区过渡带（含 1.3x 配置偏差）内的档位不进拟合 */
         if (x < xMin) xMin = x;
         if (x > xMax) xMax = x;
         sx += x;
@@ -154,11 +154,11 @@ static void dtFit(void)
         sxy += x * y;
         n += 1.0f;
     }
-    /* 死区过渡带可辨识性边界：Rs 拟合要求最高档阶梯电流至少 3×INVERTER_DT_I0_A（保证 >= 2 个干净档位
-     * 高于过渡带；斜率含死区贡献约 Vdt/I0，低于此边界时 Rs 显著偏大且无法与死区分辨 -> 阻断提交并警告）。
-     * 正常配置的额定电流远高于该边界；额定电流错小 0.5x 以下的电机在此被安全拦截。 */
+    /* 死区过渡带可辨识性边界：Rs 拟合要求最高档阶梯电流至少 3.9×INVERTER_DT_I0_A、且过渡带（2.6×I0，
+     * 含板级配置 1.3x 偏差）以上至少留 2 个干净档位；斜率含死区贡献约 Vdt/I0，低于此边界时 Rs 显著偏大
+     * 且无法与死区分辨 -> 阻断提交并警告。正常配置的额定电流远高于该边界。 */
     if (fitDrop >= 2u || totDrop >= 4u || n < 2.0f || (n * sxx - sx * sx) <= 0.0f ||
-        xMax < 3.0f * (float)INVERTER_DT_I0_A) {
+        xMax < 3.9f * (float)INVERTER_DT_I0_A) {
         gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
         gIdent.rsOhm = 0.0f;
         gIdent.deadVoltV = 0.0f;
