@@ -24,6 +24,7 @@
 #include "spin.h"
 #include "param.h"
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 IdentResult_TypeDef gIdent;
@@ -43,6 +44,10 @@ static const int16_t s_dtLevel[IDENT_DT_N] = {
 #define DT_SETTLE_MS    300
 #define DT_AVG_MS       200
 #define ZERO_WAIT_MS    50
+#define DT_DRIFT_VQ_MAX 0.45f   /* 死区阶梯前后半窗 vq 漂移 / |vd| 上限（健康 100 组最大 0.300，留 1.5x 余量） */
+#define DT_DRIFT_IQ_MAX 0.030f  /* 死区阶梯前后半窗 iq*rlR 漂移 / |vd| 上限（健康 100 组最大 0.0159） */
+static uint8_t  s_dtRetry;
+static uint16_t s_dtDropMask;
 
 
 /* 测量用定位角：gIdentCfg.alignDeg（度，可在线修改）换算为 Q15 角度 */
@@ -91,11 +96,10 @@ static uint16_t s_olFluxN;
 /* 开始一次静止测量（进入 Align 时）：从 R/L 粗测开始 */
 void Ident_Reset(void)
 {
+    memset(&gIdent, 0, sizeof(gIdent));
     gIdentTest.idx = 0;
     gIdentTest.cnt = 0;
     gIdent.state = IDENT_RUNNING;
-    gIdent.warn = 0;
-    gIdent.acDlyShift = 0.0f;
     gIdent.acDlyTicks = (float)CTRL_INVPARK_ADVANCE;
     gIdent.snrMin = 1e9f;
     FocCore_LoadGains();
@@ -118,6 +122,8 @@ void Ident_Begin(void)
     gIdentTest.idx = 0;
     gIdentTest.cnt = 0;
     gIdentTest.sum[0] = gIdentTest.sum[1] = 0;
+    s_dtRetry = 0;
+    s_dtDropMask = 0;
     gIdentTest.phase = IDENT_PH_DT_STEP;
 }
 
@@ -137,14 +143,20 @@ static void dtFit(void)
     uint16_t i;
     for (i = 0; i < IDENT_DT_N; i++) {
         float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0);
-        if (x < 0.45f * (float)IDENT_I_SCALE) continue;
+        if ((s_dtDropMask & (1u << i)) || x < 0.45f * (float)IDENT_I_SCALE) continue;
         sx += x;
         sy += y;
         sxx += x * x;
         sxy += x * y;
         n += 1;
     }
-    if (n < 2 || (n * sxx - sx * sx) <= 0) return;
+    if (n < 2 || (n * sxx - sx * sx) <= 0) {
+        gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
+        gIdent.rsOhm = 0.0f;
+        gIdent.deadVoltV = 0.0f;
+        gIdent.deadTimeS = 0.0f;
+        return;
+    }
     gIdent.rsOhm = (n * sxy - sx * sy) / (n * sxx - sx * sx);
     th = (float)Ident_AlignTheta() * (float)(2.0 * MATH_PI / 65536.0);
     g = (2.0f / 3.0f) * (fabsf(cosf(th)) + fabsf(cosf(th - 2.0943951f)) + fabsf(cosf(th + 2.0943951f)));
@@ -930,17 +942,41 @@ void Ident_Slow(void)
             }
         }
         break;
-    case IDENT_PH_DT_STEP:  /* 死区阶梯 */
+    case IDENT_PH_DT_STEP:  /* 死区阶梯（复用 s_acVs/Vc/Is/Ic 统计前后半窗 vq/iq 漂移，判转子静止） */
         FocCore_SetIdqRef(s_dtLevel[t->idx], 0);
+        if (t->cnt == 0) { s_acVs = s_acVc = s_acIs = s_acIc = 0; }
         if (++t->cnt > DT_SETTLE_MS) {
             t->sum[0] += gFoc.idq.s16D;
             t->sum[1] += gFoc.vdq.s16D;
+            if (t->cnt <= DT_SETTLE_MS + DT_AVG_MS / 2) {
+                s_acVs += gFoc.vdq.s16Q;
+                s_acIs += gFoc.idq.s16Q;
+            } else {
+                s_acVc += gFoc.vdq.s16Q;
+                s_acIc += gFoc.idq.s16Q;
+            }
         }
         if (t->cnt >= DT_SETTLE_MS + DT_AVG_MS) {
-            t->dtId[t->idx] = (int16_t)(t->sum[0] / DT_AVG_MS);
-            t->dtVd[t->idx] = (int16_t)(t->sum[1] / DT_AVG_MS);
+            float vdAbs = fabsf((float)t->sum[1]) * (float)(UDC_MAX / 32768.0 / DT_AVG_MS);
+            float dvq = fabsf((float)(s_acVc - s_acVs)) * (float)(UDC_MAX / 32768.0 / (DT_AVG_MS / 2));
+            float diqR = fabsf((float)(s_acIc - s_acIs)) * (float)(I_MAX / 32768.0 / (DT_AVG_MS / 2)) * gIdent.rlR;
+            uint8_t unstable = (uint8_t)(vdAbs > 0.05f && (dvq > DT_DRIFT_VQ_MAX * vdAbs || diqR > DT_DRIFT_IQ_MAX * vdAbs));
+            int16_t idAvg = (int16_t)(t->sum[0] / DT_AVG_MS);
+            int16_t vdAvg = (int16_t)(t->sum[1] / DT_AVG_MS);
             t->sum[0] = t->sum[1] = 0;
+            s_acVs = s_acVc = s_acIs = s_acIc = 0;
             t->cnt = 0;
+            if (unstable && s_dtRetry < 2u) {
+                s_dtRetry++;
+                break;
+            }
+            if (unstable) {
+                s_dtDropMask |= (uint16_t)(1u << t->idx);
+            } else {
+                t->dtId[t->idx] = idAvg;
+                t->dtVd[t->idx] = vdAvg;
+            }
+            s_dtRetry = 0;
             if (++t->idx >= IDENT_DT_N) {
                 t->idx = 0;
                 t->phase = IDENT_PH_DT_ZERO;
@@ -995,7 +1031,7 @@ void Ident_Slow(void)
                                            gIdent.acLdH[0] > 0.0f && gIdent.acRohm[0] > 0.0f &&
                                            gIdent.rlR > 0.0f && gIdent.rlL > 0.0f &&
                                            !(gIdent.warn & (IDENT_WARN_AC_DRIFT | IDENT_WARN_LOW_SNR | IDENT_WARN_AC_FAIL |
-                                                            IDENT_WARN_AMP_FAIL | IDENT_WARN_AMP_ORDER)));
+                                                            IDENT_WARN_AMP_FAIL | IDENT_WARN_AMP_ORDER | IDENT_WARN_DT_UNSTABLE)));
             offerStill(trustedPre);
             if (!trustedPre) gIdent.warn |= IDENT_WARN_AUTO_BLOCKED;
             if (gIdentCfg.mode == IDENT_MODE_AUTO) {
