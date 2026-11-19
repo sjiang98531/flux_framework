@@ -1039,14 +1039,16 @@ static void acFit(void)
         gIdent.warn |= IDENT_WARN_AMP_ORDER;
     }
 
-    /* 扫幅不足 × 深饱和门控：当饱和拟合有效（s_acSatN >= 3）但顶档电感相对 L0 已明显下降，
-     * 且顶档电流未达到 2.5×IDENT_I_SCALE（说明矢量/电压限幅压低了扫幅范围），
-     * 说明拟合区间不足以覆盖真实饱和深度 -> 降级为仅 L0（阻断 L(i) 提交），防止外推偏差大的曲线静默放行 */
+    /* 扫幅不足 × 深饱和门控 & 电感反增物理护栏：
+     * 1. 铁芯饱和时电感随电流只可能非增，若顶档电感反超档 0 超过 10% 必为偏轴/失锁，置 AC_DRIFT 阻断
+     * 2. 当饱和拟合有效（s_acSatN >= 3）但顶档电感相对 L0 已明显下降且顶档电流未达 2.5×IDENT_I_SCALE，降级仅 L0 */
     if (!s_l0Only && s_acSatN >= 3u && gIdent.lqAtH[0] > 0.0f) {
         float lTop = gIdent.lqAtH[s_acSatN - 1u];
         float lRatio = (gIdent.lqAtH[0] > 1e-12f) ? lTop / gIdent.lqAtH[0] : 1.0f;
         float iTop = gIdent.lqAtA[s_acSatN - 1u];
         float iSwpMax = 2.5f * (float)IDENT_I_SCALE;
+        if (lTop > 1.10f * gIdent.lqAtH[0])
+            gIdent.warn |= IDENT_WARN_AC_DRIFT;
         if (lRatio < 0.70f && iTop < 0.85f * iSwpMax) {
             s_l0Only = 1u;
             gIdent.warn |= IDENT_WARN_AMP_ORDER;
