@@ -4,7 +4,7 @@
  *
  * 自动方式（默认）：静止测量 -> 停机后重新起动 -> 运行测量，见 identify.h。
  * 静止测量（给指令后电机不旋转）：Ident_Reset 从 phase 9 开始，Align 子状态的快环 / 慢环交由本模块处理：
- *   phase 9  R/L 粗测：alpha 轴注入正弦电压（200 Hz 起，感抗相位不足时自动升高复测），不使用电流环；
+ *   phase 9  R/L 粗测：alpha 轴注入 200 Hz 正弦电压，不使用电流环；
  *            测得后立即更新电流环增益；若失败直接终止于 phase 4
  *   定位（正常进行，采用无源虚拟电阻阻尼）-> phase 1/2 死区阶梯：d 轴电流 11 档（子窗静止监测），拟合 vd = Rs*id + 死区电压
  *   phase 6  交流阻抗：2-DOF 控制（复阻抗电压前馈 + 保守带宽 PI），d/q 轴多频多幅值注入，同步提取 3 次谐波与正交轴静止监测
@@ -51,7 +51,7 @@ int16_t Ident_AlignTheta(void)
     return (int16_t)(d * 65536 / 360);
 }
 
-static void rlStart(float hz);
+static void rlStart(void);
 static uint8_t s_autoStage;         /* 自动方式：0 = 静止测量未完成，1 = 静止测量已完成、执行运行测量 */
 static uint8_t s_restartReq;        /* 自动方式：静止测量刚完成，请求停机再起动（一次性标志） */
 
@@ -84,7 +84,6 @@ static uint16_t s_olFluxN;
 static int32_t  s_dtSubVq, s_dtSubMin, s_dtSubMax;
 static uint8_t  s_dtSubIdx, s_dtRetry;
 static uint16_t s_dtDropMask;
-static uint8_t  s_rlPass;   /* 0 = 200 Hz 初测，1 = 高频复测（低电感感抗相位过小时） */
 
 void Ident_Reset(void)
 {
@@ -94,9 +93,8 @@ void Ident_Reset(void)
     gIdent.state = IDENT_RUNNING;
     gIdent.acDlyTicks = (float)CTRL_INVPARK_ADVANCE;
     gIdent.snrMin = 1e9f;
-    s_rlPass = 0;
     FocCore_LoadGains();
-    rlStart(200.0f);
+    rlStart();
     gIdentTest.phase = IDENT_PH_RL;
 }
 
@@ -156,7 +154,8 @@ static void dtFit(void)
         sxy += x * y;
         n += 1.0f;
     }
-    if (fitDrop >= 2u || totDrop >= 4u || n < 2.0f || (n * sxx - sx * sx) <= 0.0f) {
+    if (fitDrop >= 2u || totDrop >= 4u || n < 2.0f || (n * sxx - sx * sx) <= 0.0f ||
+        xMax < 1.35f * (float)INVERTER_DT_I0_A) {
         gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
         gIdent.rsOhm = 0.0f;
         gIdent.deadVoltV = 0.0f;
@@ -860,7 +859,7 @@ static uint8_t acSegFinish(uint16_t seg)
             if (vqMean < s_acVqAxMin) s_acVqAxMin = vqMean;
             if (vqMean > s_acVqAxMax) s_acVqAxMax = vqMean;
         }
-        if (fabsf(vqMean) > vThr || vqPP > vThr || (s_acVqAxMax - s_acVqAxMin) > vThr)
+        if (vqPP > vThr || (s_acVqAxMax - s_acVqAxMin) > vThr)
             s_acMotion = 1u;
     }
 
@@ -1010,22 +1009,17 @@ static void acFit(void)
 }
 
 /* ---- R/L 粗测（IDENT_PH_RL = 9）------------------------------------------------ */
+#define RL_HZ       200.0
+#define RL_PER      ((uint16_t)(PWM_FREQ / RL_HZ + 0.5))
 #define RL_AVG      16
 #define RL_I_Q15    (0.5 * MOTOR_I_RATED_A / I_MAX * 32768.0)
 #define RL_V0_V     ((0.5 < 0.01 * UDC_RATE) ? 0.5 : (0.01 * UDC_RATE))
 #define RL_V0_Q15   (Q15(RL_V0_V / UDC_MAX) < 1 ? 1 : Q15(RL_V0_V / UDC_MAX))
 #define RL_VMAX_Q15 Q15(0.45 * UDC_RATE / 1.7320508 / UDC_MAX)
 
-static uint16_t s_rlPer;
-static float    s_rlHz;
-
-static void rlStart(float hz)
+static void rlStart(void)
 {
-    uint32_t per = (uint32_t)((float)PWM_FREQ / hz + 0.5f);
-    if (per < 10u) per = 10u;
-    s_rlPer = (uint16_t)per;
-    s_rlHz = (float)PWM_FREQ / (float)per;
-    s_acInc = (uint32_t)(4294967296.0 / (double)s_rlPer + 0.5);
+    s_acInc = (uint32_t)(4294967296.0 / (double)RL_PER + 0.5);
     s_acDly = (uint32_t)(AC_V_DELAY * (double)s_acInc + 0.5);
     s_acPhi = 0;
     s_acT = 0;
@@ -1047,7 +1041,7 @@ static void rlFast(void)
         int32_t i = gMeas.iab.s16Alpha;
         s_acIs += (i * b.s16Sin) >> 15;
         s_acIc += (i * b.s16Cos) >> 15;
-        if (++s_acT >= s_rlPer) s_acDone = 1;
+        if (++s_acT >= RL_PER) s_acDone = 1;
     }
     s_acPhi += s_acInc;
     FocCore_ApplyVoltageAB((int16_t)(((int32_t)s_acAmp * a.s16Sin) >> 15), 0);
@@ -1062,7 +1056,7 @@ static uint8_t rlSlow(void)
     s_acIs = s_acIc = 0;
     s_acT = 0;
     s_acDone = 0;
-    i1 = 2.0f * sqrtf(is * is + ic * ic) / (float)s_rlPer;
+    i1 = 2.0f * sqrtf(is * is + ic * ic) / (float)RL_PER;
     v = (float)s_acAmp;
     if (s_acSeg == 0) {
         float k = (i1 > 1.0f) ? (float)RL_I_Q15 / i1 : 2.0f;
@@ -1098,23 +1092,13 @@ static uint8_t rlSlow(void)
     s_acVc += (int32_t)ic;
     if (++s_acEs < RL_AVG) return 0;
     {
-        float ss = (float)s_acVs, cc = (float)s_acVc, n = (float)(RL_AVG * s_rlPer), d = ss * ss + cc * cc;
+        float ss = (float)s_acVs, cc = (float)s_acVc, n = (float)(RL_AVG * RL_PER), d = ss * ss + cc * cc;
         float r, x;
         if (d <= 0.0f) { gIdent.rlR = -1.0f; gIdent.warn |= IDENT_WARN_RL_TIMEOUT; return 1; }
         r = v * ss * n / (2.0f * d) * (float)(UDC_MAX / I_MAX);
         x = -v * cc * n / (2.0f * d) * (float)(UDC_MAX / I_MAX);
-        /* 感抗相位角过小（< ~8.5°）时自动切高频复测，确保超低电感与未知延迟下仍获得可靠初值 */
-        if (x <= 0.15f * r && s_rlPass == 0u) {
-            float hiHz = (float)PWM_FREQ / 20.0f;
-            if (hiHz > 1000.0f) hiHz = 1000.0f;
-            if (hiHz > s_rlHz * 1.5f) {
-                s_rlPass = 1u;
-                rlStart(hiHz);
-                return 0;
-            }
-        }
         gIdent.rlR = r;
-        gIdent.rlL = x / (2.0f * (float)MATH_PI * s_rlHz);
+        gIdent.rlL = x / (float)(2.0 * MATH_PI * RL_HZ);
         if (r > 0.0f && gIdent.rlL > 0.0f) {
             MotorParam_TypeDef p = gParam;
             p.rsOhm = r;

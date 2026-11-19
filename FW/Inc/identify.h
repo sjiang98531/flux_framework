@@ -127,7 +127,7 @@ extern IdentResult_TypeDef gIdent;
  *   执行顺序：RL(9) -> 定位(0) -> DT_STEP(1) -> DT_ZERO(2) -> AC(6) -> SAT_FIT(7) -> IPD(3) -> DONE(4) */
 typedef enum {
     IDENT_PH_NONE     = 0,          /* 未开始，或 R/L 粗测完成后正在正常定位 */
-    IDENT_PH_RL       = 9,          /* 第 1 步：正弦电压注入粗测 R/L（200 Hz 起，感抗不足自动升高复测；不使用电流环） */
+    IDENT_PH_RL       = 9,          /* 第 1 步：200 Hz 电压注入粗测 R/L（定位前，不使用电流环） */
     IDENT_PH_DT_STEP  = 1,          /* 第 2 步：定位完成后，d 轴 11 档直流电流阶梯测 Rs 与死区（含子窗静止监测） */
     IDENT_PH_DT_ZERO  = 2,          /* 第 3 步：死区阶梯后电流回零等待 */
     IDENT_PH_AC       = 6,          /* 第 4 步：d/q 轴 2-DOF 多频多幅值交流阻抗测量（含 3 次谐波与正交轴静止监测） */
