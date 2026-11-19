@@ -136,8 +136,11 @@ static float dtGeomFactor(int16_t thetaQ15)
 static void dtFit(void)
 {
     const IdentTest_TypeDef *t = &gIdentTest;
-    /* 板级校准后残余零偏的规格上界（A），用于扩展死区过渡带边界 */
-    #define DT_OFF_BOUND_A  (0.02f * (float)I_MAX)
+    /* 板级校准后残余零偏的规格上界（A），用于扩展死区过渡带边界。
+     * 取 2%FS 与 0.5×I0 的较小者：高 I_MAX 板（如 vac48 I_MAX=39A）的 2%FS=0.78A
+     * 远大于 I0=0.5A，此时用 0.5×I0=0.25A 即可覆盖残余零偏而不误拦正常电机 */
+    #define DT_OFF_BOUND_A  (0.02f * (float)I_MAX < 0.5f * (float)INVERTER_DT_I0_A ? \
+                             0.02f * (float)I_MAX : 0.5f * (float)INVERTER_DT_I0_A)
     /* 拟合下限：2.6×I0 + 2×off_bound（含 1.3x 配置偏差 + 零偏余量） */
     #define DT_FIT_FLOOR    (2.6f * (float)INVERTER_DT_I0_A + 2.0f * DT_OFF_BOUND_A)
     /* 可辨识性边界：最高档至少 3.9×I0 + 2×off_bound */

@@ -382,7 +382,8 @@ void Startup_AlignSlow(void)
             }
             if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
                 if (s_alignTicks >= s_alignMaxTicks && s_still < s_alignStillTicks)
-                    gIdent.warn |= IDENT_WARN_DT_UNSTABLE;   /* 超时未停稳：置告警 */
+                    gIdent.warn |= IDENT_WARN_SWING_CLAMP;   /* 超时未停稳：用 SWING_CLAMP 记录（不在 trustedPre 掩码，不阻断；
+                                                                * 后续子窗静止监测会兜底检测转子是否仍在动） */
                 Ident_Begin();
             }
         }
