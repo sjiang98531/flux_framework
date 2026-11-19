@@ -49,8 +49,8 @@ typedef struct {
     float acDlyShift;   /* d 轴三频点估算的延迟偏差（PWM 拍，正值 = 实际延迟小于 CTRL_INVPARK_ADVANCE） */
     float acDlyTicks;   /* 实测电压-电流总延迟（PWM 拍 = CTRL_INVPARK_ADVANCE - bestSh），供台架标定板级延迟 */
     float snrMin;       /* 小信号基频段实测感抗压降与死区电压最小比值 min(|Im(Z)|*I / Vdt) */
-    float lqAtA[5], lqAtH[5];   /* q 轴 f0 交流 0.4 / 1.0 / 1.5 / 2.0 / 2.5 A（随额定电流缩放）：实际电流幅值（A）、基波电感（H，已含摆动修正；
-                                 * [1..4] 为偏置外推到 0 的值 = 2 * lqAtHb1 - lqAtHb2） */
+    float lqAtA[5], lqAtH[5];   /* q 轴 f0 交流 0.4 / 1.0 / 1.5 / 2.0 / 2.5 A（随额定电流缩放）：实际电流幅值（A）、
+                                 * 含 3 次谐波描述函数修正的等效割线电感 L_sec（H）；[1..4] 已扣偏置交叉饱和（2*lqAtHb1 - lqAtHb2，限幅 20%） */
     float lqAtHb1[4], lqAtHb2[4];   /* 1.0 ~ 2.5 A 四档在 N 极偏置 1 倍 / 2 倍时的电感（反映交叉饱和） */
     float kSwing[2], kSwingModel;   /* 转子摆动系数（H·(rad/s)^2）：acHz[3] / f0 实测值（0.4 A、1.0 A）与理论值 p*psi*acc*2π/60。
                                      * 实测远小于理论说明转子被卡住未摆动；f0 修正量 = K / (2π·f0)^2 */
