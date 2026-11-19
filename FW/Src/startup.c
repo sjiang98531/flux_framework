@@ -30,7 +30,7 @@ static int32_t s_dampQ8;                   /* 定位阻尼增益：Q15 电流 / 
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
 #endif
 static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
-static int32_t s_dtFilt;                   /* 同一滤波器滤波的逆变器电压误差 q 分量（摆动伪峰值参考 / 辨识停稳判据） */
+static int32_t s_dtFilt;                   /* 同一滤波器滤波的逆变器电压误差分量（摆动伪峰值参考） */
 static volatile uint8_t s_ipd;             /* 1 = Align 子状态正在执行 IPD（慢环写，快环读） */
 /* 摆动中起动：1 = 本次起动采用；转向（+1 / -1）；判定"无摆动"的拍数、最长等待拍数；可接入的最小峰值转速（Q15）；
  * e_q 上升途中记录的最近两个电平（L2 较新）及当时的 d 轴积分项；是否出现过超过门限的反电势 */
@@ -328,22 +328,21 @@ void Startup_AlignSlow(void)
         int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15;
         int32_t emf, iq;
         if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
-        /* 阻尼：q 轴反电势 e_q = w*psi_f，经 ALIGN_EMF_FILT_TAU_S 低通，iq = -k*e_q。
-         * e_q 取 q 轴电流 PI 的积分项（= Rs*iq + 逆变器电压误差 + e_q，稳态电压）减去 Rs*iq_实测，而不用 PI 总输出：
-         * 总输出中含 Kp*误差 的瞬态分量，阻尼指令变化时会跳变，环路增益 > 1 时会振荡。 */
-        emf = (gFoc.piQ.qdSum >> 15) - QMath_MulQ15(gGain.focKrsQ15, gFoc.idq.s16Q);
+        /* 辨识定位阶段尚未测得真实 Rs 与死区（gGain.focKrsQ15 此时为含死区的 R/L 粗测值，往往显著大于真实 Rs）：
+         * 扣除未标定的 Rs*iq 会形成负虚拟电阻而正反馈锁死。改用无源虚拟电阻阻尼 iq = -Kd * vq_ss：
+         * 耗散功率 -eq*iq = (Rs + 1/Kd)*iq^2 + Vdt*iq >= 0，对任意未知电机无条件稳定且唯一平衡点在 iq = 0。 */
+        emf = gFoc.piQ.qdSum >> 15;
         s_emfFilt += emf - (s_emfFilt >> ALIGN_EMF_FILT_SH);
-        /* 另外扣除逆变器电压误差。定位时 d 轴电流在另两相上各为 -ALIGN_A/2，摆动产生的 iq 会把其中一相推入
-         * 死区误差的线性段（INVERTER_DT_I0_A 以内，等效电阻约为 Rs 的 2 倍以上），该电压随 iq 同步变化：不扣除时
-         * 反电势只估出真值的一半左右，阻尼只有设计值的一半，判停稳也会在转子仍在摆动时成立（容差见 cfg_internal.h ALIGN_ZETA）。 */
-        s_dtFilt += FluxObs_DtErr(gMeas.iab, gFoc.ang).s16Q - (s_dtFilt >> ALIGN_EMF_FILT_SH);
-        iq = -(((s_emfFilt - s_dtFilt) >> ALIGN_EMF_FILT_SH) * s_dampQ8 >> 8);
+        iq = -((s_emfFilt >> ALIGN_EMF_FILT_SH) * s_dampQ8 >> 8);
         iq = QMath_Clamp(iq, ALIGN_ID_Q15);
         FocCore_SetIdqRef((int16_t)id, (int16_t)iq);
         ++s_alignTicks;
-        {   /* 参数辨识：满足最短时间后等待停稳 */
-            int32_t e = (s_emfFilt - s_dtFilt) >> ALIGN_EMF_FILT_SH;
+        {   /* 参数辨识：停稳判据取 |vq_filt| + |focKrs * iq|（|eq| 的保守上界），静止时两者同时归零 */
+            int32_t e = s_emfFilt >> ALIGN_EMF_FILT_SH;
+            int32_t ir = QMath_MulQ15(gGain.focKrsQ15, gFoc.idq.s16Q);
             if (e < 0) e = -e;
+            if (ir < 0) ir = -ir;
+            e += ir;
             if (s_alignTicks > s_alignMinTicks && e < gGain.alignStillEmfQ15) {
                 if (s_still < 0xFFFF) s_still++;
             } else {

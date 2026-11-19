@@ -26,15 +26,15 @@ typedef enum {
 
 /* gIdent.warn 诊断告警位（0 = 全项正常；非 0 表示存在保护限幅、延迟偏差或未通过自动重起动校验） */
 #define IDENT_WARN_RL_TIMEOUT   (1u << 0)   /* R/L 粗测未在 200 周期内收敛或因电流不足放弃 */
-#define IDENT_WARN_SWING_CLAMP  (1u << 1)   /* 转子摆动系数触发 4*kSwingModel 夹限或高低频电流幅值偏差回退 */
+#define IDENT_WARN_SWING_CLAMP  (1u << 1)   /* 转子摆动系数触发物理上界 0.35*L0*w0^2 夹限或高低频电流幅值偏差回退 */
 #define IDENT_WARN_DLY_MISMATCH (1u << 2)   /* 三频点实测电压-电流延迟与 CTRL_INVPARK_ADVANCE 偏差 > 0.25 拍 */
-#define IDENT_WARN_AC_DRIFT     (1u << 3)   /* 交流阻抗三频点 L/R 漂移或 |Z| 交叉校核异常 */
+#define IDENT_WARN_AC_DRIFT     (1u << 3)   /* 交流阻抗三频点 L/R 漂移、|Z| 交叉校核、饱和拟合残差或正交轴静止监测异常 */
 #define IDENT_WARN_AUTO_BLOCKED (1u << 4)   /* IDENT_MODE_AUTO 静止结果未通过合理性检查，已阻止自动重起动 */
 #define IDENT_WARN_LOW_SNR      (1u << 5)   /* 交流注入感抗压降相对死区等效电压不足（ωL·I / Vdt < 0.60） */
-#define IDENT_WARN_AC_FAIL      (1u << 6)   /* 交流阻抗分段电流积分为零，测量无效 */
-#define IDENT_WARN_AMP_FAIL     (1u << 7)   /* 交流注入幅值标定 3 次内未进入目标 ±25% */
-#define IDENT_WARN_AMP_ORDER    (1u << 8)   /* q 轴五档实测电流未严格递增或相邻比 < 1.15 */
-#define IDENT_WARN_DT_UNSTABLE  (1u << 9)   /* 死区阶梯期间转子未静止（丢档 >= 4）或有效档位不足 2 档，未提交 Rs 与死区 */
+#define IDENT_WARN_AC_FAIL      (1u << 6)   /* 交流阻抗分段电流积分为零或瞬时过流保护终止，测量无效 */
+#define IDENT_WARN_AMP_FAIL     (1u << 7)   /* 交流注入 2-DOF 幅值标定重测后仍未进入目标 ±25% */
+#define IDENT_WARN_AMP_ORDER    (1u << 8)   /* q 轴饱和扫幅点数不足 3 档、相邻比 < 1.08 或总跨度 < 1.40（退化为仅 L0） */
+#define IDENT_WARN_DT_UNSTABLE  (1u << 9)   /* 死区阶梯期间转子未静止（高电流档丢档 >= 2 或总丢档 >= 4）或拟合残差过大，未提交 Rs 与死区 */
 
 typedef struct {
     float rlR, rlL;     /* 第一步 R/L（200 Hz 电压注入，不使用电流环）：仅用于先整定电流环（R 含死区偏大，L 偏小）；-1 = 未测得 */
@@ -124,15 +124,15 @@ extern IdentResult_TypeDef gIdent;
 #define IDENT_MODE_RUN      2       /* 仅运行测量（每个新指令一次） */
 
 /* 静止测量阶段编号（gIdentTest.phase 取值，按执行顺序排列；保留原编号以兼容 J-Scope 观测配置）：
- *   执行顺序：RL(9) -> 定位(0) -> DT_STEP(1) -> DT_ZERO(2) -> IPD(3) -> AC(6) -> SAT_FIT(7) -> DONE(4) */
+ *   执行顺序：RL(9) -> 定位(0) -> DT_STEP(1) -> DT_ZERO(2) -> AC(6) -> SAT_FIT(7) -> IPD(3) -> DONE(4) */
 typedef enum {
     IDENT_PH_NONE     = 0,          /* 未开始，或 R/L 粗测完成后正在正常定位 */
-    IDENT_PH_RL       = 9,          /* 第 1 步：200 Hz 电压注入粗测 R/L（定位前，不使用电流环） */
-    IDENT_PH_DT_STEP  = 1,          /* 第 2 步：定位完成后，d 轴 11 档直流电流阶梯测 Rs 与死区 */
+    IDENT_PH_RL       = 9,          /* 第 1 步：正弦电压注入粗测 R/L（200 Hz 起，感抗不足自动升高复测；不使用电流环） */
+    IDENT_PH_DT_STEP  = 1,          /* 第 2 步：定位完成后，d 轴 11 档直流电流阶梯测 Rs 与死区（含子窗静止监测） */
     IDENT_PH_DT_ZERO  = 2,          /* 第 3 步：死区阶梯后电流回零等待 */
-    IDENT_PH_IPD      = 3,          /* 第 4 步：IPD 高频注入 + 直流偏置测 N 极角度与极性对比度 */
-    IDENT_PH_AC       = 6,          /* 第 5 步：d/q 轴多频多幅值交流阻抗测量 */
-    IDENT_PH_SAT_FIT  = 7,          /* 第 6 步：q 轴电感饱和 L(i) 网格拟合（分摊到慢环） */
+    IDENT_PH_AC       = 6,          /* 第 4 步：d/q 轴 2-DOF 多频多幅值交流阻抗测量（含 3 次谐波与正交轴静止监测） */
+    IDENT_PH_SAT_FIT  = 7,          /* 第 5 步：q 轴电感饱和 L(i) 精确描述函数网格拟合（分摊到慢环） */
+    IDENT_PH_IPD      = 3,          /* 第 6 步：IPD 高频注入 + 直流偏置测 N 极角度与极性对比度（置于 AC 之后避免击飞转子） */
     IDENT_PH_DONE     = 4           /* 第 7 步：静止测量全部完成，结果已提交 param.c */
 } IdentPhase_TypeDef;
 
