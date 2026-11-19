@@ -30,7 +30,7 @@ typedef enum {
 #define IDENT_WARN_DLY_MISMATCH (1u << 2)   /* 三频点实测电压-电流延迟与 CTRL_INVPARK_ADVANCE 偏差 > 0.25 拍 */
 #define IDENT_WARN_AC_DRIFT     (1u << 3)   /* 交流阻抗三频点 L/R 漂移或 |Z| 交叉校核异常 */
 #define IDENT_WARN_AUTO_BLOCKED (1u << 4)   /* IDENT_MODE_AUTO 静止结果未通过合理性检查，已阻止自动重起动 */
-#define IDENT_WARN_LOW_SNR      (1u << 5)   /* 交流注入感抗压降相对死区等效电压不足（ωL·I / Vdt < 1.0） */
+#define IDENT_WARN_LOW_SNR      (1u << 5)   /* 交流注入感抗压降相对死区等效电压不足（ωL·I / Vdt < 0.60） */
 #define IDENT_WARN_AC_FAIL      (1u << 6)   /* 交流阻抗分段电流积分为零，测量无效 */
 #define IDENT_WARN_AMP_FAIL     (1u << 7)   /* 交流注入幅值标定 3 次内未进入目标 ±25% */
 #define IDENT_WARN_AMP_ORDER    (1u << 8)   /* q 轴五档实测电流未严格递增或相邻比 < 1.15 */

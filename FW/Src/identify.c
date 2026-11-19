@@ -44,8 +44,8 @@ static const int16_t s_dtLevel[IDENT_DT_N] = {
 #define DT_SETTLE_MS    300
 #define DT_AVG_MS       200
 #define ZERO_WAIT_MS    50
-#define DT_DRIFT_VQ_MAX 0.45f   /* 死区阶梯前后半窗 vq 漂移 / |vd| 上限（健康 100 组最大 0.300，留 1.5x 余量） */
-#define DT_DRIFT_IQ_MAX 0.030f  /* 死区阶梯前后半窗 iq*rlR 漂移 / |vd| 上限（健康 100 组最大 0.0159） */
+#define DT_DRIFT_VQ_MAX 0.75f   /* 死区阶梯前后半窗 vq 漂移 / |vd| 上限（静止 <=0.21，风车带转 >=1.80，取几何中点） */
+#define DT_DRIFT_IQ_MAX 0.080f  /* 死区阶梯前后半窗 iq*rlR 漂移 / |vd| 上限（静止 <=0.023，风车带转 >=0.11，取几何中点） */
 static uint8_t  s_dtRetry;
 static uint16_t s_dtDropMask;
 
@@ -185,7 +185,7 @@ static void ipdFit(void)
 #define AC_V_DELAY  CTRL_INVPARK_ADVANCE
 #define AC_F_MIN_HZ 25.0f
 #define AC_DT_SNR   2.0f        /* 目标 ωL·I_inj >= AC_DT_SNR * V_dt */
-#define AC_SNR_MIN  1.0f        /* 实测感抗压降相对死区电压最低门限（低于则置 IDENT_WARN_LOW_SNR） */
+#define AC_SNR_MIN  0.60f       /* 实测感抗压降相对死区电压最低门限（低于则置 IDENT_WARN_LOW_SNR） */
 /* 频率编号 3 = 0.5*f0：仅用于 q 轴，与 f0 配对测量转子摆动（见 acFit） */
 static uint16_t s_acPer[AC_NF + 1];     /* 拍 / 周期（acInitFreqs 计算） */
 static float    s_acHz[AC_NF + 1];      /* 实际注入频率（Hz） */
@@ -975,6 +975,7 @@ static uint8_t dfStep(void)     /* 1 = 完成 */
         s_dfIk = 0;
         s_dfL0 = gIdent.lqAtH[0];
     }
+    if (s_dfBest > 5.0f * 0.08f * 0.08f) gIdent.warn |= IDENT_WARN_AC_DRIFT;  /* 五档 L(i) 拟合 RMSE > 8%：转子摆动或异常非单调 */
     gIdent.lsSatKneeA = s_dfIk;
     gIdent.lsSatPerA = s_dfK;
     gIdent.lqH = s_dfL0;
@@ -1114,7 +1115,7 @@ void Ident_Slow(void)
         break;
     case IDENT_PH_SAT_FIT:  /* 饱和拟合（分摊到多个慢环周期），快环保持零电流 */
         if (dfStep()) {
-            uint8_t trustedPre = (uint8_t)(gIdent.rsOhm > 0.0f && gIdent.lqH > 0.0f &&
+            uint8_t trustedPre = (uint8_t)(!s_l0Only && gIdent.rsOhm > 0.0f && gIdent.lqH > 0.0f &&
                                            (!MOTOR_IPM || gIdent.ldH > 0.0f) &&
                                            gIdent.acLdH[0] > 0.0f && gIdent.acRohm[0] > 0.0f &&
                                            gIdent.rlR > 0.0f && gIdent.rlL > 0.0f &&
