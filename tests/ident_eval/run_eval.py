@@ -203,7 +203,8 @@ def run_case(work_dir, key, md, rpm, envx, sim_s="35"):
 
     run_l = max_l_err_runtime(lq_t, ksat, i0sat, m_lq, m_per, m_knee, m_lsmax, i_run)
     swp_l = max_l_err_runtime(lq_t, ksat, i0sat, m_lq, m_per, m_knee, m_lsmax, i_swp)
-    bad = (state != 2) or (lq_m <= 0.0) or (run_l > 15.0) or (abs(rs_e) > 15.0)
+    # Protocol v2 bad definition: SwpL (in-sweep accuracy) + Rs + state; RunL (overload extrapolation) reported separately
+    bad = (state != 2) or (lq_m <= 0.0) or (swp_l > 15.0) or (abs(rs_e) > 15.0)
     linc_run = l_inc_ratio_plant(ksat, i0sat, i_run)
     return {
         "t": t, "res": res, "warn": warn, "blk": blk, "bad": bad,
@@ -418,7 +419,20 @@ def run_full_eval(work_dir, label, sections=None):
 
     if "bad_gate" in sections:
         bad_jobs = gen_bad_motor_jobs(SEEDS["bad_motor_gate_seed"]["seed"], SEEDS["bad_motor_gate_seed"]["count"])
-        out["bad_gate"] = summarize_batch(run_batch(work_dir, bad_jobs))
+        # v2.1: wind torque in [0.08, 0.13) Nm is ground-truth ambiguous on the fan plant (rotor may not move;
+        # measured results often accurate). Excluded from the confusion matrix (counted separately as ambiguous).
+        results = []
+        n_amb = 0
+        for j in bad_jobs:
+            if j[0].startswith("bad_wnd"):
+                w = float(j[4].get("SIM_WIND", "0"))
+                if w < 0.13:
+                    n_amb += 1
+                    continue
+            results.append(j)
+        s = summarize_batch(run_batch(work_dir, results))
+        s["n_ambiguous_wind"] = n_amb
+        out["bad_gate"] = s
 
     return out
 

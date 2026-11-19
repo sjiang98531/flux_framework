@@ -145,7 +145,7 @@ static void dtFit(void)
             if (xRef >= 0.45f * (float)IDENT_I_SCALE) fitDrop++;
             continue;
         }
-        if (x < 0.45f * (float)IDENT_I_SCALE) continue;
+        if (x < 0.45f * (float)IDENT_I_SCALE || x < 2.0f * (float)INVERTER_DT_I0_A) continue;   /* 死区过渡带（<2*I0）内的档位不进拟合 */
         if (x < xMin) xMin = x;
         if (x > xMax) xMax = x;
         sx += x;
@@ -154,8 +154,11 @@ static void dtFit(void)
         sxy += x * y;
         n += 1.0f;
     }
+    /* 死区过渡带可辨识性边界：Rs 拟合要求最高档阶梯电流至少 3×INVERTER_DT_I0_A（保证 >= 2 个干净档位
+     * 高于过渡带；斜率含死区贡献约 Vdt/I0，低于此边界时 Rs 显著偏大且无法与死区分辨 -> 阻断提交并警告）。
+     * 正常配置的额定电流远高于该边界；额定电流错小 0.5x 以下的电机在此被安全拦截。 */
     if (fitDrop >= 2u || totDrop >= 4u || n < 2.0f || (n * sxx - sx * sx) <= 0.0f ||
-        xMax < 1.35f * (float)INVERTER_DT_I0_A) {
+        xMax < 3.0f * (float)INVERTER_DT_I0_A) {
         gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
         gIdent.rsOhm = 0.0f;
         gIdent.deadVoltV = 0.0f;
@@ -166,7 +169,7 @@ static void dtFit(void)
     vd0 = (sy - gIdent.rsOhm * sx) / n;
     for (i = 0; i < IDENT_DT_N; i++) {
         float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0), e;
-        if ((s_dtDropMask & (1u << i)) || x < 0.45f * (float)IDENT_I_SCALE) continue;
+        if ((s_dtDropMask & (1u << i)) || x < 0.45f * (float)IDENT_I_SCALE || x < 2.0f * (float)INVERTER_DT_I0_A) continue;
         e = y - (gIdent.rsOhm * x + vd0);
         sse += e * e;
     }
