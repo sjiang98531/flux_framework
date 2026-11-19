@@ -27,6 +27,9 @@ static uint16_t s_alignTicks;
 /* 静止参数辨识的阻尼定位参数（Startup_LoadGains 按摆动周期 T 计算）：最短 / 判停稳持续 / 最长、阻尼增益 */
 static uint16_t s_alignMinTicks, s_alignStillTicks, s_alignMaxTicks;
 static int32_t s_dampQ8;                   /* 定位阻尼增益：Q15 电流 / Q15 电压，Q8 */
+static int32_t s_dampRunQ8;                /* 实际使用的阻尼（检测到离散颤振后自适应减半，仅本次定位有效；0 = 未衰减） */
+static int32_t s_dampPrevIq;               /* 上一拍阻尼电流指令（颤振检测用） */
+static uint8_t s_dampFlips;                /* 阻尼指令连续大幅换向的计数 */
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
 #endif
 static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
@@ -71,6 +74,9 @@ void Startup_OnEnterAlign(void)
     s_swing = 0;
 #if IDENT_TEST
     s_still = 0;
+    s_dampRunQ8 = 0;
+    s_dampPrevIq = 0;
+    s_dampFlips = 0;
     if (Ident_StaticThisStart()) {
         s_alignTheta = Ident_AlignTheta();
         Ident_Reset();
@@ -330,11 +336,33 @@ void Startup_AlignSlow(void)
         if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
         /* 辨识定位阶段尚未测得真实 Rs 与死区（gGain.focKrsQ15 此时为含死区的 R/L 粗测值，往往显著大于真实 Rs）：
          * 扣除未标定的 Rs*iq 会形成负虚拟电阻而正反馈锁死。改用无源虚拟电阻阻尼 iq = -Kd * vq_ss：
-         * 耗散功率 -eq*iq = (Rs + 1/Kd)*iq^2 + Vdt*iq >= 0，对任意未知电机无条件稳定且唯一平衡点在 iq = 0。 */
+         * 耗散功率 -eq*iq = (Rs + 1/Kd)*iq^2 + Vdt*iq >= 0，对任意未知电机无条件稳定且唯一平衡点在 iq = 0。
+         * 连续时间无源不等于离散时间稳定：极低磁链电机（psi ~ 0.4 mWb）理论 Kd 极大，一阶滤波 + 采样延迟下
+         * 特征根越过 -1，表现为 ~500 Hz 的阻尼指令大幅交替（啸叫）。两级防护（均不依赖配置 psi/J）：
+         *   1) 阻尼分量幅值钳位 ALIGN_A/8（约 0.1 倍额定电流，不影响 d 轴定位电流）；
+         *   2) 颤振检测：指令在 >= 50% 钳位幅值处连续换向 => Kd 减半并清滤波，可多次衰减。 */
         emf = gFoc.piQ.qdSum >> 15;
         s_emfFilt += emf - (s_emfFilt >> ALIGN_EMF_FILT_SH);
-        iq = -((s_emfFilt >> ALIGN_EMF_FILT_SH) * s_dampQ8 >> 8);
-        iq = QMath_Clamp(iq, ALIGN_ID_Q15);
+        {
+            int32_t damp = (s_dampRunQ8 > 0) ? s_dampRunQ8 : s_dampQ8;
+            int32_t iqMax = ALIGN_ID_Q15 / 8;
+            int32_t iqCmd = -((s_emfFilt >> ALIGN_EMF_FILT_SH) * damp >> 8);
+            if (iqCmd > iqMax) iqCmd = iqMax;
+            if (iqCmd < -iqMax) iqCmd = -iqMax;
+            if ((iqCmd >= iqMax / 2 || iqCmd <= -iqMax / 2) &&
+                ((iqCmd >= 0) != (s_dampPrevIq >= 0)) && s_dampPrevIq != 0) {
+                if (s_dampFlips < 0xFFu) s_dampFlips++;
+                if (s_dampFlips >= 4u) {
+                    s_dampRunQ8 = (damp >> 1 >= 256) ? (damp >> 1) : 256;
+                    s_dampFlips = 0;
+                    s_emfFilt = 0;     /* 清滤波，避免旧相位继续激励 */
+                }
+            } else if (s_dampFlips > 0u) {
+                s_dampFlips--;
+            }
+            s_dampPrevIq = iqCmd;
+            iq = iqCmd;
+        }
         FocCore_SetIdqRef((int16_t)id, (int16_t)iq);
         ++s_alignTicks;
         {   /* 参数辨识：停稳判据取 |vq_filt| + |focKrs * iq|（|eq| 的保守上界），静止时两者同时归零 */

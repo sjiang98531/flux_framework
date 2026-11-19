@@ -1203,7 +1203,10 @@ static void offerStill(uint8_t commitL)
         if (maxA < gIdent.lqAtA[s_acSatN - 1u]) maxA = gIdent.lqAtA[s_acSatN - 1u];
         p.lsKneeA = gIdent.lsSatKneeA;
         p.lsPerA = gIdent.lsSatPerA;
-        p.lsMaxA = maxA;
+        /* 有界线性外推：运行期过载常超出扫幅上限（如额定 0.75 A 电机扫到 2.5 A 而过载 4.0 A），
+         * 直接钳平会使观测器 L 偏高 ~20%（真实电机饱和越往后越快，误差只会更大）；
+         * 允许按拟合斜率外推至 1.5 倍扫幅上限后再钳平，兼顾覆盖与无实测数据区的外推风险 */
+        p.lsMaxA = maxA * 1.5f;
         m |= 4u;
     }
     if (INVERTER_DT_COMP && gIdent.deadTimeS > 0) { p.dtEffS = gIdent.deadTimeS; m |= 32u; }
