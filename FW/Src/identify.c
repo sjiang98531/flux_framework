@@ -547,6 +547,7 @@ static uint8_t acSegFinish(uint16_t seg)
         float vdc = (gMeas.vbusAvg > 0) ? (float)gMeas.vbusAvg * kv : (float)UDC_RATE;
         float vLim = 0.85f * (0.90f * vdc / 1.7320508f);
         if (acRetryGain(seg, ref, 0.15f, 0.25f, 3u, iAmp, vAmp, vLim, 1u)) return 1;
+        if (seg == AC_S_Q04 && iAmp > 1.3f * ref) gIdent.warn |= IDENT_WARN_AMP_FAIL;
         if (seg == AC_S_Q10) {  /* seg 6 重整定后用 seg 7 最后两点标定 I = α·I_cmd - β，推算 seg 8-10/12-15 */
             float xCurr = (float)s_acAmp * ki;
             float alpha = 1.0f, beta = xCurr - iAmp;
@@ -665,6 +666,12 @@ static void acFit(void)
             gIdent.lqAtHb1[f - 1] = gIdent.lqAtH[f];
             gIdent.lqAtHb2[f - 1] = l2;
             gIdent.lqAtH[f] = 2.0f * gIdent.lqAtH[f] - l2;
+        }
+    }
+    for (f = 0; f < 4u; f++) {
+        if (!(gIdent.lqAtA[f] > 0.0f && gIdent.lqAtA[f + 1u] >= 1.15f * gIdent.lqAtA[f])) {
+            gIdent.warn |= IDENT_WARN_AMP_ORDER;
+            break;
         }
     }
     /* 观测器需要的是转子坐标系中的低频电感（稳态运行时转子所见磁场恒定，转子内无涡流）。
@@ -972,7 +979,7 @@ void Ident_Slow(void)
                                            gIdent.acLdH[0] > 0.0f && gIdent.acRohm[0] > 0.0f &&
                                            gIdent.rlR > 0.0f && gIdent.rlL > 0.0f &&
                                            !(gIdent.warn & (IDENT_WARN_AC_DRIFT | IDENT_WARN_LOW_SNR | IDENT_WARN_AC_FAIL |
-                                                            IDENT_WARN_AMP_FAIL)));
+                                                            IDENT_WARN_AMP_FAIL | IDENT_WARN_AMP_ORDER)));
             offerStill(trustedPre);
             if (!trustedPre) gIdent.warn |= IDENT_WARN_AUTO_BLOCKED;
             if (gIdentCfg.mode == IDENT_MODE_AUTO) {
