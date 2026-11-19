@@ -215,7 +215,7 @@ static float    s_zCmdR[AC_NF], s_zCmdI[AC_NF], s_zDtR[AC_NF], s_zDtI[AC_NF];  /
 static float    s_acDlyShift, s_acI00, s_acZreQ04, s_acI04L, s_acI10L; /* 延迟残差（PWM 拍）、基频 d/q 小信号电流与实部、0.5*f0 电流幅值 */
 static float    s_acGain[AC_NSEG];      /* 各段指令幅值缩放（仿射/割线幅值标定及 0.5*f0 等幅对齐） */
 static uint8_t  s_acRetry[AC_NSEG];     /* 各段重测次数 */
-static uint8_t  s_tryHasLo, s_tryHasHi, s_tryHasCap, s_tryCapped;
+static uint8_t  s_tryHasLo, s_tryHasHi, s_tryHasCap, s_tryCapped, s_capMask;  /* s_capMask bit n: q轴第n档(0..4)指令被T1封顶 */
 static float    s_tryG1, s_tryGPrev, s_tryIPrev, s_tryXPrev;
 static float    s_tryGLo, s_tryILo, s_tryGHi, s_tryIHi, s_tryHiCap;
 static volatile uint8_t s_acDone;    /* 快环置 1：本段积分完成，等待慢环读取 */
@@ -281,6 +281,7 @@ static void acInitFreqs(void)
     acSetFreq(3, 0.5f * f0);
     for (f = 0; f <= AC_NF; f++) gIdent.acHz[f] = s_acHz[f];
     for (f = 0; f < AC_NSEG; f++) { s_acGain[f] = 1.0f; s_acRetry[f] = 0; }
+    s_capMask = 0;
     s_acDlyShift = 0.0f;
     s_acI00 = 0.0f;
     s_acZreQ04 = 0.0f;
@@ -596,8 +597,12 @@ static uint8_t acSegFinish(uint16_t seg)
     }
     if (seg == AC_S_Q10L)
         s_acI10L = iAmp;
-    if (seg == AC_S_Q04 || (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4))     /* q 轴 f0 五档的电流幅值（Σ i sin = A N / 2） */
-        gIdent.lqAtA[seg == AC_S_Q04 ? 0 : seg - AC_S_Q10 + 1] = iAmp;
+    if (seg == AC_S_Q04 || (seg >= AC_S_Q10 && seg < AC_S_Q10 + 4)) {   /* q 轴 f0 五档的电流幅值（Σ i sin = A N / 2） */
+        uint16_t n = (seg == AC_S_Q04) ? 0u : (uint16_t)(seg - AC_S_Q10 + 1u);
+        gIdent.lqAtA[n] = iAmp;
+        if (s_tryCapped) s_capMask |= (uint8_t)(1u << n);
+        else s_capMask &= (uint8_t)~(1u << n);
+    }
     return 0;
 }
 
@@ -669,10 +674,15 @@ static void acFit(void)
         }
     }
     for (f = 0; f < 4u; f++) {
-        if (!(gIdent.lqAtA[f] > 0.0f && gIdent.lqAtA[f + 1u] >= 1.15f * gIdent.lqAtA[f])) {
+        float lo = gIdent.lqAtA[f], hi = gIdent.lqAtA[f + 1u];
+        float need = (s_capMask & (1u << (f + 1u))) ? 0.97f : 1.15f;   /* 封顶档只要求不倒退 */
+        if (!(lo > 0.0f && hi >= need * lo)) {
             gIdent.warn |= IDENT_WARN_AMP_ORDER;
             break;
         }
+    }
+    if (!(gIdent.lqAtA[4] >= 1.5f * gIdent.lqAtA[1])) {                /* 封顶后总跨度仍不足 */
+        gIdent.warn |= IDENT_WARN_AMP_ORDER;
     }
     /* 观测器需要的是转子坐标系中的低频电感（稳态运行时转子所见磁场恒定，转子内无涡流）。
      * 注入频率在满足信噪比与转折频率的前提下越低越好，故取基频 f0（s_acHz[0]）。 */
