@@ -42,6 +42,7 @@ void Param_Defaults(MotorParam_TypeDef *p)
     p->lqH = MOTOR_LQ_H;
     p->lsKneeA = MOTOR_LS_SAT_KNEE_A;
     p->lsPerA = MOTOR_LS_SAT_PER_A;
+    p->lsMaxA = 0.0;
     p->psiWb = MOTOR_PSI_F_WB;
     p->accRpmSPerA = MOTOR_ACC_RPM_S_PER_A;
     p->dtEffS = INVERTER_DT_EFF_S;
@@ -58,8 +59,8 @@ static uint16_t checkParam(const MotorParam_TypeDef *p)
     if (!(p->rsOhm > 0 && p->rsOhm * I_MAX / FLUX_V_BASE < 0.99997)) bad |= 1u;
     /* bit1 L：为正，且满量程电流下的电感磁链 L*I 在观测器磁链量程内 */
     if (!(p->lqH > 0 && p->ldH > 0 && p->lqH * I_MAX / psiN < 0.9 && p->ldH * I_MAX / psiN < 0.9)) bad |= 2u;
-    /* bit2 L(i)：拐点在电流量程内，斜率非负且 Q12 可容纳 */
-    if (!(p->lsKneeA >= 0 && p->lsKneeA < I_MAX && p->lsPerA >= 0 && p->lsPerA * I_MAX < 7.0)) bad |= 4u;
+    /* bit2 L(i)：拐点在电流量程内，斜率非负且 Q12 可容纳，上限电流非负 */
+    if (!(p->lsKneeA >= 0 && p->lsKneeA < I_MAX && p->lsPerA >= 0 && p->lsPerA * I_MAX < 7.0 && p->lsMaxA >= 0)) bad |= 4u;
     /* bit3 psi：最大定子磁链 psi + L*I 在观测器积分器限幅内，磁链定点非零且积分步长在 Q15 内 */
     if (!(p->psiWb > 0 && (p->psiWb + p->lqH * I_MAX) / psiN < 0.9 &&
           FLUX_NOMINAL_Q15_AT(p->psiWb, psiN) >= 16 &&
@@ -119,8 +120,9 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->fluxKlQ15 = FLUX_KL_Q15_AT(p->lqH, psiN);
     g->focKrsQ15 = FOC_KRS_Q15_OF(p->rsOhm);
     g->fluxKdlQ15 = FLUX_KDL_Q15_AT(p->ldH, p->lqH, psiN);
-    /* 观测器电感饱和 L(i)：拐点、斜率 */
+    /* 观测器电感饱和 L(i)：拐点、相对拐点上限、斜率 */
     g->lsKneeQ15 = FLUX_LS_KNEE_Q15_OF(p->lsKneeA);
+    g->lsMaxQ15 = FLUX_LS_MAX_Q15_OF(p->lsMaxA, p->lsKneeA);
     g->lsSatKQ12 = FLUX_LS_SAT_K_Q12_OF(p->lsPerA);
     /* 观测器死区补偿：等效死区 / PWM 周期（INVERTER_DT_COMP = 0 时为 0，不补偿） */
     g->dtKtQ15 = FLUX_DT_KT_Q15_OF(p->dtEffS);
@@ -233,7 +235,7 @@ void Param_Offer(const MotorParam_TypeDef *p, uint16_t validMask)
     uint16_t bad = checkParam(p);
     if ((validMask & 1u) && !(bad & 1u)) n.rsOhm = p->rsOhm;
     if ((validMask & 2u) && !(bad & 2u)) { n.ldH = p->ldH; n.lqH = p->lqH; }
-    if ((validMask & 4u) && !(bad & 4u)) { n.lsKneeA = p->lsKneeA; n.lsPerA = p->lsPerA; }
+    if ((validMask & 4u) && !(bad & 4u)) { n.lsKneeA = p->lsKneeA; n.lsPerA = p->lsPerA; n.lsMaxA = p->lsMaxA; }
     if ((validMask & 8u) && !(bad & 8u)) n.psiWb = p->psiWb;
     if ((validMask & 16u) && !(bad & 16u)) n.accRpmSPerA = p->accRpmSPerA;
     if ((validMask & 32u) && !(bad & 32u)) n.dtEffS = p->dtEffS;
@@ -273,4 +275,17 @@ void Param_Background(void)
     s_offerReq = 0;
     gParamStat.pending = 0;
     gParamStat.source = 2;
+}
+
+/* 按当前 gParam 的 L(|i|) 饱和模型计算电感（与 flux_obs.c:lsEff 一致，含 lsMaxA 钳位） */
+float Param_LqAt(float iAbsA)
+{
+    float x = iAbsA;
+    if (gParam.lsMaxA > 0.0 && x > (float)gParam.lsMaxA) x = (float)gParam.lsMaxA;
+    if (x <= (float)gParam.lsKneeA || gParam.lsPerA <= 0.0) return (float)gParam.lqH;
+    {
+        float m = 1.0f - (float)gParam.lsPerA * (x - (float)gParam.lsKneeA);
+        if (m < (float)MOTOR_LS_SAT_MIN) m = (float)MOTOR_LS_SAT_MIN;
+        return (float)gParam.lqH * m;
+    }
 }

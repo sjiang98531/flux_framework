@@ -52,6 +52,7 @@ FORCE_INLINE int16_t lsEff(int16_t ia, int16_t ib)
     m = (a > b) ? a + ((3 * b) >> 3) : b + ((3 * a) >> 3);
     m -= gGain.lsKneeQ15;
     if (m <= 0) return gFluxObs.s16KLq;
+    if (m > gGain.lsMaxQ15) m = gGain.lsMaxQ15;
     r = 32768 - ((m * gGain.lsSatKQ12) >> 12);
     if (r < FLUX_LS_MIN_Q15) r = FLUX_LS_MIN_Q15;
     return (int16_t)(((int32_t)gFluxObs.s16KLq * r) >> 15);

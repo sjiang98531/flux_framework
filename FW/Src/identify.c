@@ -895,8 +895,14 @@ static void offerStill(uint8_t commitL)
         m |= 2u;
     }
     if (commitL && gIdent.lqH > 0) {
+        float maxA = 0.0f;
+        uint16_t i;
+        for (i = 0; i < 5u; i++) {
+            if (gIdent.lqAtA[i] > maxA) maxA = gIdent.lqAtA[i];
+        }
         p.lsKneeA = gIdent.lsSatKneeA;
         p.lsPerA = gIdent.lsSatPerA;
+        p.lsMaxA = maxA;
         m |= 4u;
     }
     if (INVERTER_DT_COMP && gIdent.deadTimeS > 0) { p.dtEffS = gIdent.deadTimeS; m |= 32u; }
@@ -1205,13 +1211,9 @@ uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
         const float ki = (float)(I_MAX / 32768.0) / OLFLUX_AVG_MS, kv = (float)(UDC_MAX / 32768.0) / OLFLUX_AVG_MS;
         float id = s_rnId * ki, iq = s_rnIq * ki, vd = s_rnVd * kv, vq = s_rnVq * kv;
         float w = (float)ol * (float)(SPEED_MAX / 2147483648.0 * 2.0 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS);
-        float im = sqrtf(id * id + iq * iq), r = (float)gParam.rsOhm, l = (float)gParam.lqH, vdt = 0, ed, eq;
+        float im = sqrtf(id * id + iq * iq), r = (float)gParam.rsOhm, l = Param_LqAt(im), vdt = 0, ed, eq;
         float vph = (float)gParam.dtEffS * (float)PWM_FREQ * gMeas.vbusAvg * (float)(UDC_MAX / 32768.0);
         uint16_t j;
-        {   /* L(|i|)：与观测器相同的饱和模型 */
-            float m = 1.0f - (float)gParam.lsPerA * (im - (float)gParam.lsKneeA);
-            if (im > (float)gParam.lsKneeA) l *= (m < (float)MOTOR_LS_SAT_MIN ? (float)MOTOR_LS_SAT_MIN : m);
-        }
         for (j = 0; j < 16; j++) {
             float s = sinf(((float)j + 0.5f) * (float)(MATH_PI / 32.0)), x = im * s / (float)INVERTER_DT_I0_A;
             vdt += (x > 1.0f ? 1.0f : x) * s;

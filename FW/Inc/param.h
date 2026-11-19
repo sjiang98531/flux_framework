@@ -34,6 +34,7 @@ typedef struct {
     double rsOhm;           /* 相电阻 Ω（MOTOR_RS_OHM） */
     double ldH, lqH;        /* d / q 轴电感 H（MOTOR_LD_H / LQ_H；表贴式 SPM 两者相同） */
     double lsKneeA, lsPerA; /* 电感饱和：拐点电流 A、拐点后每安培电感下降的比例（MOTOR_LS_SAT_KNEE_A / PER_A） */
+    double lsMaxA;          /* 饱和模型有效上限电流 A（0 = 不钳位，辨识时取实际扫到的最大电流） */
     double psiWb;           /* 永磁磁链 Wb（MOTOR_PSI_F_WB），决定反电势 = psi * 电角速度 */
     double accRpmSPerA;     /* 每安培 q 轴电流产生的加速度 rpm/s（MOTOR_ACC_RPM_S_PER_A）= 转矩常数 / 转动惯量 */
     double dtEffS;          /* 逆变器等效死区时间 s（INVERTER_DT_EFF_S），观测器死区补偿用 */
@@ -64,6 +65,7 @@ typedef struct {
      * fluxKdlQ15  Ld - Lq（内嵌式 IPM 的有效磁链与 MTPA；表贴式为 0） */
     int16_t fluxKrsQ15, fluxKlQ15, focKrsQ15, fluxKdlQ15;
     int16_t lsKneeQ15;      /* 电感饱和拐点（Q15 电流） */
+    int16_t lsMaxQ15;       /* 相对拐点允许的最大超额电流 |i|-Ik（Q15 电流），超出后电感保持该处值；32767 = 不钳位 */
     int32_t lsSatKQ12;      /* 拐点后电感下降斜率（Q12，每 Q15 满量程电流）；0 = 不饱和 */
     int16_t dtKtQ15;        /* 死区补偿：每相电压误差 = 母线 * dtKt（Q15 = 等效死区 / PWM 周期）；0 = 不补偿 */
     int16_t pllKp, pllKi;   /* PLL（flux_obs.c）：按 FLUXPLL_WN_HZ / ZETA 算并除以 fluxNomQ15；封顶 32767 时置 cfgWarn bit2 */
@@ -106,5 +108,6 @@ void Param_Defaults(MotorParam_TypeDef *p);         /* 将配置标称值填入 
 void Param_Offer(const MotorParam_TypeDef *p, uint16_t validMask);  /* 辨识结束时提交结果（validMask 位定义同 rejectMask，标记哪些项有新值），回到 Stop 后才更新 */
 uint8_t Param_ApplyNow(const MotorParam_TypeDef *p);  /* 辨识模式：辨识过程中立即生效（慢环中调用），参数不合理时返回 0 */
 void Param_Background(void);                        /* 主循环：Stop 状态（PWM 关闭）时更新 Param_Offer 提交的参数 */
+float Param_LqAt(float iAbsA);                      /* 按当前 gParam 的 L(|i|) 饱和模型（含 lsMaxA 钳位）计算电感 H */
 
 #endif

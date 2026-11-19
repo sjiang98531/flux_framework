@@ -215,6 +215,7 @@
 /* 电感饱和（cfg_motor.h）：拐点（Q15 电流）、斜率（Q12，每 Q15 满量程电流）、下限（Q15） */
 #define FLUX_LS_KNEE_Q15_OF(k)  Q15((k) / I_MAX)
 #define FLUX_LS_SAT_K_Q12_OF(p) ((int32_t)((p) * I_MAX * 4096.0 + 0.5))
+#define FLUX_LS_MAX_Q15_OF(a, k) (((a) > 0.0 && (a) - (k) < I_MAX) ? ((a) > (k) ? Q15(((a) - (k)) / I_MAX) : 0) : 32767)
 #define FLUX_LS_MIN_Q15         Q15(MOTOR_LS_SAT_MIN)
 #define FLUX_KTS_Q15_OF(psi, ld, lq) Q15(2.0f * 3.14159265f * FLUX_WN_HZ_OF(psi, ld, lq) / PWM_FREQ)
 #define FLUX_KTS_Q15            FLUX_KTS_Q15_OF(MOTOR_PSI_F_WB, MOTOR_LD_H, MOTOR_LQ_H)
