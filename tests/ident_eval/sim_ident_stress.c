@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
             static int lastPh = -1, lastRs = -1; static long lastK = 0;
             if ((int)gIdentTest.phase != lastPh || (int)gSup.runState != lastRs || ((getenv("SIM_DIAG_ALL") || gIdentTest.phase == IDENT_PH_AC) && k - lastK > (long)((getenv("SIM_DIAG_DT") ? atof(getenv("SIM_DIAG_DT")) : 0.25) * PWM_FREQ))) {
                 lastPh = (int)gIdentTest.phase; lastRs = (int)gSup.runState; lastK = k;
-                printf("TRACE t=%.3f ph=%d main=%d run=%d rpm=%.0f rotor=%.2f align=%.2f\n", t, lastPh, (int)gSup.mainState, (int)gSup.runState, plant_rpm(&pl),
+                printf("TRACE t=%.3f ph=%d main=%d run=%d rpm=%.0f pLq=%.5g pend=%u rotor=%.2f align=%.2f\n", t, lastPh, (int)gSup.mainState, (int)gSup.runState, plant_rpm(&pl), gParam.lqH, (unsigned)gParamStat.pending,
                        plant_theta_e(&pl) * 180.0 / 3.14159265358979323846,
                        (double)(uint16_t)Ident_AlignTheta() * 360.0 / 65536.0);
             }

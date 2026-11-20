@@ -91,8 +91,11 @@ def gen_stress_jobs(seed, count=30):
     return jobs
 
 
+SIM_SECS = "60"     # identification with two-step align + final hold can exceed the 35 s default of run_eval.run_case
+
+
 def run(wd, key, md, rpm, envx):
-    r = run_eval.run_case(wd, key, md, rpm, envx)
+    r = run_eval.run_case(wd, key, md, rpm, envx, sim_s=SIM_SECS)
     res = r.get("res")
     r["safe_abort"] = bool(res) and int(res["state"]) != 2 and int(res["phase"]) == 0 and int(res.get("src", "0")) != 2
     if r["safe_abort"]:

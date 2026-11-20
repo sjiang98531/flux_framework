@@ -61,6 +61,10 @@ int16_t Ident_AlignTheta(void)
 
 static void rlStart(void);
 static uint8_t s_autoStage;         /* 自动方式：0 = 静止测量未完成，1 = 静止测量已完成、执行运行测量 */
+static uint8_t s_holdOk;            /* 收尾定位结束后的去向：1 = 自动重起动执行运行测量，0 = 结束（见 IDENT_PH_HOLD） */
+static int32_t s_hEmf, s_hPrevIq, s_hDampQ8;
+static uint32_t s_hT, s_hStill;
+static uint8_t s_hFlips;
 static uint8_t s_restartReq;        /* 自动方式：静止测量刚完成，请求停机再起动（一次性标志） */
 
 uint8_t Ident_StaticThisStart(void)
@@ -1424,15 +1428,65 @@ void Ident_Slow(void)
             {
                 uint8_t ok = (uint8_t)(trustedPre && !(gParamStat.rejectMask & 39u) && gParamStat.pending);
                 if (!ok) gIdent.warn |= IDENT_WARN_AUTO_BLOCKED;
-                if (gIdentCfg.mode == IDENT_MODE_AUTO && ok) {
+                s_holdOk = (uint8_t)(gIdentCfg.mode == IDENT_MODE_AUTO && ok);
+            }
+            /* 收尾定位：电流环交回定位快环（Startup_AlignFast，角度 = 定位轴），从零电流起 */
+            FocCore_PresetPI(0, 0);
+            FocCore_SetIdqRef(0, 0);
+            s_hEmf = 0;
+            s_hPrevIq = 0;
+            s_hDampQ8 = gGain.alignDampQ8;
+            s_hT = 0;
+            s_hStill = 0;
+            s_hFlips = 0;
+            t->cnt = 0;
+            t->phase = IDENT_PH_HOLD;
+        }
+        break;
+    case IDENT_PH_HOLD:
+        {
+            /* 定位电流 + q 轴无源虚拟电阻阻尼（同 startup.c 辨识定位，此时 Rs 已测得），等停稳；
+             * 停稳持续 3 * ALIGN_STILL_T、最长 3 * ALIGN_MAX_T（摆动周期按配置惯量计算，见 startup.c 两步定位） */
+            const uint32_t T = gGain.alignPeriodTicks;
+            const uint32_t minT = (uint32_t)((float)T * (float)ALIGN_MIN_T);
+            const uint32_t stillT = (uint32_t)((float)T * (float)(3.0 * ALIGN_STILL_T));
+            const uint32_t maxT = (uint32_t)((float)T * (float)(3.0 * ALIGN_MAX_T));
+            int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15, iqMax = ALIGN_ID_Q15 / 8, iq, e, ir, delta;
+            if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
+            s_hEmf += (gFoc.piQ.qdSum >> 15) - (s_hEmf >> ALIGN_EMF_FILT_SH);
+            iq = -((s_hEmf >> ALIGN_EMF_FILT_SH) * s_hDampQ8 >> 8);
+            if (iq > iqMax) iq = iqMax;
+            if (iq < -iqMax) iq = -iqMax;
+            /* 离散颤振防护（同 startup.c）：相邻拍大幅换向累积 >= 8 则阻尼减半 */
+            delta = iq - s_hPrevIq;
+            if (delta < 0) delta = -delta;
+            if (delta >= iqMax / 2) { if (s_hFlips < 0xFEu) s_hFlips += 2; } else if (s_hFlips > 0u) s_hFlips--;
+            if (s_hFlips >= 8u) {
+                int32_t half = s_hDampQ8 >> 1;
+                if (half >= 256) s_hDampQ8 = half;
+                s_hFlips = 0;
+                s_hEmf = 0;
+            }
+            s_hPrevIq = iq;
+            FocCore_SetIdqRef((int16_t)id, (int16_t)iq);
+            if (id < ALIGN_ID_Q15) break;
+            ++s_hT;
+            e = s_hEmf >> ALIGN_EMF_FILT_SH;
+            ir = QMath_MulQ15(gGain.focKrsQ15, gFoc.idq.s16Q);
+            if (e < 0) e = -e;
+            if (ir < 0) ir = -ir;
+            if (s_hT > minT && e + ir < gGain.alignStillEmfQ15) s_hStill++; else s_hStill = 0;
+            if ((s_hT >= minT && s_hStill >= stillT) || s_hT >= maxT) {
+                FocCore_SetIdqRef(0, 0);
+                if (s_holdOk) {
                     s_autoStage = 1;
                     s_restartReq = 1;
                 } else {
                     gIdent.state = IDENT_DONE;
                 }
+                t->cnt = 0;
+                t->phase = IDENT_PH_DONE;
             }
-            t->cnt = 0;
-            t->phase = IDENT_PH_DONE;
         }
         break;
     case IDENT_PH_DONE:
@@ -1619,7 +1673,7 @@ uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
 
 uint8_t Ident_Fast(void)
 {
-    if (gIdentTest.phase < IDENT_PH_IPD) return 0;
+    if (gIdentTest.phase < IDENT_PH_IPD || gIdentTest.phase == IDENT_PH_HOLD) return 0;   /* 定位快环（Startup_AlignFast）运行电流环 */
     if (gIdentTest.phase == IDENT_PH_AC || gIdentTest.phase == IDENT_PH_SAT_FIT) acFast();
     else if (gIdentTest.phase == IDENT_PH_RL) rlFast();
     else Ipd_Fast();

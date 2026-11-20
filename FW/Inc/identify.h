@@ -126,7 +126,7 @@ extern IdentResult_TypeDef gIdent;
 #define IDENT_MODE_RUN      2       /* 仅运行测量（每个新指令一次） */
 
 /* 静止测量阶段编号（gIdentTest.phase 取值，按执行顺序排列；保留原编号以兼容 J-Scope 观测配置）：
- *   执行顺序：RL(9) -> 定位(0) -> DT_STEP(1) -> DT_ZERO(2) -> AC(6) -> SAT_FIT(7) -> IPD(3) -> DONE(4) */
+ *   执行顺序：RL(9) -> 定位(0) -> DT_STEP(1) -> DT_ZERO(2) -> AC(6) -> SAT_FIT(7) -> IPD(3) -> HOLD(5) -> DONE(4) */
 typedef enum {
     IDENT_PH_NONE     = 0,          /* 未开始，或 R/L 粗测完成后正在正常定位 */
     IDENT_PH_RL       = 9,          /* 第 1 步：200 Hz 电压注入粗测 R/L（定位前，不使用电流环） */
@@ -135,7 +135,9 @@ typedef enum {
     IDENT_PH_AC       = 6,          /* 第 4 步：d/q 轴 2-DOF 多频多幅值交流阻抗测量（含 3 次谐波与正交轴静止监测） */
     IDENT_PH_SAT_FIT  = 7,          /* 第 5 步：q 轴电感饱和 L(i) 精确描述函数网格拟合（分摊到慢环） */
     IDENT_PH_IPD      = 3,          /* 第 6 步：IPD 高频注入 + 直流偏置测 N 极角度与极性对比度（置于 AC 之后避免击飞转子） */
-    IDENT_PH_DONE     = 4           /* 第 7 步：静止测量全部完成，结果已提交 param.c */
+    IDENT_PH_HOLD     = 5,          /* 第 7 步：收尾定位——定位轴上加定位电流与阻尼，等转子停稳后才结束静止测量 / 请求自动重起动
+                                     * （q 轴大电流档、IPD 偏置会推动转子，凸极 + 饱和电机尤甚；重起动时转子须静止且在已知角度） */
+    IDENT_PH_DONE     = 4           /* 第 8 步：静止测量全部完成，结果已提交 param.c */
 } IdentPhase_TypeDef;
 
 typedef struct {
