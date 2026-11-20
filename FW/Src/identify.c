@@ -272,7 +272,7 @@ static const int16_t s_acSegB[AC_NSEG] = { 0, 0, 0, 0, 0, 0,
 static volatile uint16_t s_acSeg;
 static int16_t  s_acAmp, s_acBias;          /* s_acAmp: 交流段为目标电流幅值(Q15)，R/L 段为电压幅值(Q15) */
 static int16_t  s_acVffS, s_acVffC;         /* 2-DOF 阻抗电压前馈：同相与正交（Q15 电压） */
-static int16_t  s_acIpkLim, s_acIpk;        /* 瞬时峰值保护阈值与实测峰值（Q15 电流） */
+static int16_t  s_acIpkLim, s_acIvecLim, s_acIpk; /* 瞬时单轴/合成矢量保护阈值与实测峰值（Q15 电流） */
 static int32_t  s_acEnv, s_acEnvStep;
 static uint32_t s_acPhi, s_acInc, s_acDly;
 static uint32_t s_acT, s_acSettleT, s_acIntT;
@@ -625,6 +625,7 @@ static void acSegStart(uint16_t seg, uint8_t isRetry)
         s_acBias = (int16_t)b;
 
         if (iInstMax > 31800) iInstMax = 31800;
+        s_acIvecLim = (int16_t)iInstMax;
         pkLim = (iInstMax > abs((int32_t)b))
               ? (int32_t)sqrtf((float)((double)iInstMax * iInstMax - (double)b * b))
               : 1000;
@@ -717,9 +718,9 @@ static void acFast(void)
         idAbs = gFoc.idq.s16D < 0 ? -(int32_t)gFoc.idq.s16D : (int32_t)gFoc.idq.s16D;
         {
             int32_t iqAbs = gFoc.idq.s16Q < 0 ? -(int32_t)gFoc.idq.s16Q : (int32_t)gFoc.idq.s16Q;
-            int32_t iMaxQ15 = (int32_t)s_acIpkLim;
+            int32_t iVecQ15 = (int32_t)s_acIvecLim;
             if (s_acT > 2u && (idAbs > s_acIpkLim ||
-                (int32_t)((int64_t)idAbs * idAbs + (int64_t)iqAbs * iqAbs) > (int64_t)iMaxQ15 * iMaxQ15)) {
+                ((int64_t)idAbs * idAbs + (int64_t)iqAbs * iqAbs) > (int64_t)iVecQ15 * iVecQ15)) {
                 s_acOverI = 1u;
                 s_acDone = 1u;
                 FocCore_ApplyVoltageAB(0, 0);
@@ -1134,6 +1135,7 @@ static uint8_t rlSlow(void)
     ic = (float)s_acIc;
     s_acIs = s_acIc = 0;
     s_acT = 0;
+    COMPILER_BARRIER();
     s_acDone = 0;
     i1 = 2.0f * sqrtf(is * is + ic * ic) / (float)RL_PER;
     v = (float)s_acAmp;
