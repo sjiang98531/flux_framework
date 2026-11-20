@@ -185,23 +185,37 @@ static void dtFit(void)
             { float dL = (float)half*sxxL - sxL*sxL; sLo = (dL > 1e-12f) ? ((float)half*sxyL - sxL*syL) / dL : 0.0f; }
             { float dH = (float)(nFit-half)*sxxH - sxH*sxH; sHi = (dH > 1e-12f) ? ((float)(nFit-half)*sxyH - sxH*syH) / dH : 0.0f; }
         }
-        /* 阈值：两半斜率相对差异 > 50% 视为过渡带污染（从开发集标定，初值保守） */
+        /* 阈值：两半斜率相对差异 > 50% 视为低电流半段受过渡带污染；
+         * 若高电流半段（xArr[0..half-1]）点数 >= 3，丢弃受污染的低半段重拟合，否则报不稳定 */
         if (sLo > 0.0f && sHi > 0.0f) {
             float ratio = (sLo > sHi) ? sLo / sHi : sHi / sLo;
             if (ratio > 1.5f) {
-                gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
-                gIdent.rsOhm = 0.0f;
-                gIdent.deadVoltV = 0.0f;
-                gIdent.deadTimeS = 0.0f;
-                return;
+                if (half >= 3u) {
+                    nFit = half;
+                    n = (float)nFit;
+                    sx = sy = sxx = sxy = 0.0f;
+                    xMin = 1e9f; xMax = 0.0f;
+                    for (i = 0; i < nFit; i++) {
+                        float x = xArr[i], y = yArr[i];
+                        if (x < xMin) xMin = x;
+                        if (x > xMax) xMax = x;
+                        sx += x; sy += y; sxx += x * x; sxy += x * y;
+                    }
+                    gIdent.rsOhm = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+                    vd0 = (sy - gIdent.rsOhm * sx) / n;
+                } else {
+                    gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
+                    gIdent.rsOhm = 0.0f;
+                    gIdent.deadVoltV = 0.0f;
+                    gIdent.deadTimeS = 0.0f;
+                    return;
+                }
             }
         }
     }
-    /* 残差：口径与拟合窗统一（分母=n，下限=DT_FIT_FLOOR） */
-    for (i = 0; i < IDENT_DT_N; i++) {
-        float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0), e;
-        if ((s_dtDropMask & (1u << i)) || x < 0.45f * (float)IDENT_I_SCALE || x < DT_FIT_FLOOR) continue;
-        e = y - (gIdent.rsOhm * x + vd0);
+    /* 残差：口径与拟合窗统一（直接遍历最终保留的 xArr/yArr） */
+    for (i = 0; i < nFit; i++) {
+        float e = yArr[i] - (gIdent.rsOhm * xArr[i] + vd0);
         sse += e * e;
     }
     {
