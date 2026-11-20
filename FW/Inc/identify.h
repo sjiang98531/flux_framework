@@ -24,17 +24,19 @@ typedef enum {
     IDENT_DONE
 } IdentState_TypeDef;
 
-/* gIdent.warn 诊断告警位（0 = 全项正常；非 0 表示存在保护限幅、延迟偏差或未通过自动重起动校验） */
+/* gIdent.warn 诊断告警位（0 = 全项正常）。只有保护性条件阻止提交与自动重起动（AUTO_BLOCKED：R/L 粗测失败、交流段过流中止
+ * AC_FAIL、参数不合理被 param.c 拒绝）；其余位仅记录测量质量，结果照常提交、照常拖动（拖动本身即为检验） */
 #define IDENT_WARN_RL_TIMEOUT   (1u << 0)   /* R/L 粗测未在 200 周期内收敛或因电流不足放弃 */
 #define IDENT_WARN_SWING_CLAMP  (1u << 1)   /* 转子摆动系数触发物理上界 0.35*L0*w0^2 夹限或高低频电流幅值偏差回退 */
 #define IDENT_WARN_DLY_MISMATCH (1u << 2)   /* 三频点实测电压-电流延迟与 CTRL_INVPARK_ADVANCE 偏差 > 0.25 拍 */
 #define IDENT_WARN_AC_DRIFT     (1u << 3)   /* 交流阻抗三频点 L/R 漂移、|Z| 交叉校核、饱和拟合残差或正交轴静止监测异常 */
-#define IDENT_WARN_AUTO_BLOCKED (1u << 4)   /* IDENT_MODE_AUTO 静止结果未通过合理性检查，已阻止自动重起动 */
+#define IDENT_WARN_AUTO_BLOCKED (1u << 4)   /* IDENT_MODE_AUTO 静止结果触发保护或参数不合理，已阻止自动重起动 */
 #define IDENT_WARN_LOW_SNR      (1u << 5)   /* 交流注入感抗压降相对死区等效电压不足（ωL·I / Vdt < 0.60） */
 #define IDENT_WARN_AC_FAIL      (1u << 6)   /* 交流阻抗分段电流积分为零或瞬时过流保护终止，测量无效 */
 #define IDENT_WARN_AMP_FAIL     (1u << 7)   /* 交流注入 2-DOF 幅值标定重测后仍未进入目标 ±25% */
 #define IDENT_WARN_AMP_ORDER    (1u << 8)   /* q 轴饱和扫幅点数不足 3 档、相邻比 < 1.08 或总跨度 < 1.40（退化为仅 L0） */
-#define IDENT_WARN_DT_UNSTABLE  (1u << 9)   /* 死区阶梯期间转子未静止（高电流档丢档 >= 2 或总丢档 >= 4）或拟合残差过大，未提交 Rs 与死区 */
+#define IDENT_WARN_DT_UNSTABLE  (1u << 9)   /* 死区阶梯有档位因转子运动被丢弃、分半斜率不一致或残差偏大（仍提交最佳估计）；
+                                             * 或原理上不可辨识（点数 < 2、最高档未走出过渡带），此时 Rs 与死区为 0、不提交 */
 
 typedef struct {
     float rlR, rlL;     /* 第一步 R/L（200 Hz 电压注入，不使用电流环）：仅用于先整定电流环（R 含死区偏大，L 偏小）；-1 = 未测得 */

@@ -10,7 +10,7 @@
  *   phase 6  交流阻抗：2-DOF 控制（复阻抗电压前馈 + 保守带宽 PI），d/q 轴多频多幅值注入，同步提取 3 次谐波与正交轴静止监测
  *   phase 7  电感饱和 L(i) 拟合（含 3 次谐波精确描述函数，分摊到多个慢环周期）
  *   phase 3  IPD 对比度（ipdFit；置于交流阻抗之后，避免负偏置脉冲击飞低惯量转子）
- *   phase 4  完成：经门控校验后提交给 param.c（offerStill），回到 Stop 后生效
+ *   phase 4  完成：除保护性中止外均提交给 param.c（offerStill），回到 Stop 后生效；测量质量告警只记录
  * 运行测量（正常起动）：I/F 中测量开环磁链（Ident_OpenLoopFluxSlow），闭环稳速后零电流滑行测量
  *   psi_f 与加速度系数（Ident_RunSlow）。
  * 辨识模式的慢环允许使用浮点（仅在辨识时运行）。
@@ -33,11 +33,18 @@ IdentResult_TypeDef gIdent;
 volatile IdentCfg_TypeDef gIdentCfg = { 0 };
 IdentTest_TypeDef gIdentTest;
 
-/* 死区阶梯各档 d 轴电流（按额定电流缩放） */
+/* 死区阶梯最高档电流：按额定电流缩放（1.0 * IDENT_I_SCALE），但至少 4 倍死区过渡带宽度 INVERTER_DT_I0_A：
+ * 过渡带宽度是逆变器属性，与电机额定电流无关；只有走出过渡带（|i| > 约 3.5 I0、死区电压已饱和为常值）的档位
+ * 才能把 Rs 与死区电压分开。额定电流小的电机若按额定电流缩放，最高档仍在过渡带内，Rs 与死区均无法辨识。
+ * 受 IDENT_VEC_MAX_A（已含过流裕量）限制；最高档持续 < 0.5 s，短时超过额定电流不构成发热问题 */
+#define DT_TOP_RAW_A    ((1.00 * IDENT_I_SCALE) > (4.0 * INVERTER_DT_I0_A) ? (1.00 * IDENT_I_SCALE) : (4.0 * INVERTER_DT_I0_A))
+#define DT_TOP_A        (DT_TOP_RAW_A < IDENT_VEC_MAX_A ? DT_TOP_RAW_A : IDENT_VEC_MAX_A)
+#define DT_Q15_I(f)     Q15((f) * DT_TOP_A / I_MAX)
+/* 死区阶梯各档 d 轴电流（最高档的比例） */
 static const int16_t s_dtLevel[IDENT_DT_N] = {
-    IDENT_Q15_I(1.00), IDENT_Q15_I(0.80), IDENT_Q15_I(0.60), IDENT_Q15_I(0.50), IDENT_Q15_I(0.40),
-    IDENT_Q15_I(0.30), IDENT_Q15_I(0.25), IDENT_Q15_I(0.20), IDENT_Q15_I(0.15), IDENT_Q15_I(0.10),
-    IDENT_Q15_I(0.05)
+    DT_Q15_I(1.00), DT_Q15_I(0.80), DT_Q15_I(0.60), DT_Q15_I(0.50), DT_Q15_I(0.40),
+    DT_Q15_I(0.30), DT_Q15_I(0.25), DT_Q15_I(0.20), DT_Q15_I(0.15), DT_Q15_I(0.10),
+    DT_Q15_I(0.05)
 };
 #define DT_SETTLE_MS    300
 #define DT_AVG_MS       200
@@ -136,31 +143,31 @@ static float dtGeomFactor(int16_t thetaQ15)
 static void dtFit(void)
 {
     const IdentTest_TypeDef *t = &gIdentTest;
-    /* 静态门限回归三相退出死区过渡带的物理边界（2.0×I0 / 3.5×I0），
-     * 不再将 ±2%FS 零偏余量硬叠加到静态下限，改由低端自适应剥离与斜率一致性拦截 */
+    /* 静态门限：三相退出死区过渡带的物理边界（2.0×I0 / 3.5×I0） */
     #define DT_FIT_FLOOR    (2.0f * (float)INVERTER_DT_I0_A)
     #define DT_XMAX_MIN     (3.5f * (float)INVERTER_DT_I0_A)
     float sx = 0, sy = 0, sxx = 0, sxy = 0, n = 0, g, vbus, vd0, sse = 0, xMin = 1e9f, xMax = 0.0f;
-    uint16_t i, fitDrop = 0, totDrop = 0;
+    uint16_t i, totDrop = 0;
     float xArr[IDENT_DT_N], yArr[IDENT_DT_N];
     uint16_t nFit = 0;
     for (i = 0; i < IDENT_DT_N; i++) {
         float x = t->dtId[i] * (float)(I_MAX / 32768.0), y = t->dtVd[i] * (float)(UDC_MAX / 32768.0);
-        float xRef = (float)s_dtLevel[i] * (float)(I_MAX / 32768.0);
         if (s_dtDropMask & (1u << i)) {
             totDrop++;
-            if (xRef >= 0.45f * (float)IDENT_I_SCALE) fitDrop++;
             continue;
         }
-        if (x < 0.45f * (float)IDENT_I_SCALE || x < DT_FIT_FLOOR) continue;   /* 死区过渡带内的档位不进拟合 */
+        if (x < 0.45f * (float)DT_TOP_A || x < DT_FIT_FLOOR) continue;   /* 死区过渡带内的档位不进拟合 */
         if (x < xMin) xMin = x;
         if (x > xMax) xMax = x;
         sx += x; sy += y; sxx += x * x; sxy += x * y; n += 1.0f;
         xArr[nFit] = x; yArr[nFit] = y; nFit++;
     }
-    /* 可辨识性边界 + 点数下限 3（两点拟合残差恒为 0，分半斜率也无法做） */
-    if (fitDrop >= 2u || totDrop >= 4u || n < 3.0f || (n * sxx - sx * sx) <= 0.0f ||
-        xMax < DT_XMAX_MIN) {
+    /* 判据分两类：
+     *   原理上算不出（点数 < 2、奇异、最高档未走出过渡带、Rs <= 0）：不提交 Rs 与死区；
+     *   数据质量问题（有档位因转子运动被丢弃、分半斜率不一致、残差大）：置 DT_UNSTABLE 记录，但照常给出最佳估计
+     *   （辨识在操作者确认静止时进行，拖动本身即为检验，见 offerStill） */
+    if (totDrop > 0u) gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
+    if (n < 2.0f || (n * sxx - sx * sx) <= 0.0f || xMax < DT_XMAX_MIN) {
         gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
         gIdent.rsOhm = 0.0f;
         gIdent.deadVoltV = 0.0f;
@@ -195,35 +202,38 @@ static void dtFit(void)
             break;
         }
     }
-    /* 斜率一致性检查：nFit >= 4 做分半斜率比，nFit == 3 做上下两段斜率比 */
-    if (nFit >= 4u) {
-        float sLo = 0, sHi = 0;
-        uint16_t half = nFit / 2u;
-        float sxL=0, syL=0, sxxL=0, sxyL=0, sxH=0, syH=0, sxxH=0, sxyH=0;
-        for (i = 0; i < half; i++) { sxL+=xArr[i]; syL+=yArr[i]; sxxL+=xArr[i]*xArr[i]; sxyL+=xArr[i]*yArr[i]; }
-        for (i = half; i < nFit; i++) { sxH+=xArr[i]; syH+=yArr[i]; sxxH+=xArr[i]*xArr[i]; sxyH+=xArr[i]*yArr[i]; }
-        { float dL = (float)half*sxxL - sxL*sxL; sLo = (dL > 1e-12f) ? ((float)half*sxyL - sxL*syL) / dL : 0.0f; }
-        { float dH = (float)(nFit-half)*sxxH - sxH*sxH; sHi = (dH > 1e-12f) ? ((float)(nFit-half)*sxyH - sxH*syH) / dH : 0.0f; }
-        if (sLo <= 0.0f || sHi <= 0.0f || ((sLo > sHi) ? sLo / sHi : sHi / sLo) > 1.45f) {
+    /* 斜率一致性（xArr 按电流从大到小排列）：大电流半段与小电流半段斜率相差 > 1.45 倍时，小电流段仍受过渡带污染或转子运动影响，
+     * 改用大电流半段（nFit == 3 时用最高两档）的斜率：过渡带污染只会使斜率偏大，大电流段最接近 Rs，且起动对 Rs 偏小更宽容 */
+    if (nFit >= 3u) {
+        uint16_t half = (nFit >= 4u) ? (uint16_t)(nFit / 2u) : 2u;
+        float sxU = 0, syU = 0, sxxU = 0, sxyU = 0, sxL = 0, syL = 0, sxxL = 0, sxyL = 0, sU, sL, dU, dL;
+        uint16_t nL = (uint16_t)((nFit >= 4u) ? (nFit - half) : 2u), i0L = (uint16_t)((nFit >= 4u) ? half : 1u);
+        for (i = 0; i < half; i++) { sxU += xArr[i]; syU += yArr[i]; sxxU += xArr[i] * xArr[i]; sxyU += xArr[i] * yArr[i]; }
+        for (i = i0L; i < i0L + nL; i++) { sxL += xArr[i]; syL += yArr[i]; sxxL += xArr[i] * xArr[i]; sxyL += xArr[i] * yArr[i]; }
+        dU = (float)half * sxxU - sxU * sxU;
+        dL = (float)nL * sxxL - sxL * sxL;
+        sU = (dU > 1e-12f) ? ((float)half * sxyU - sxU * syU) / dU : 0.0f;
+        sL = (dL > 1e-12f) ? ((float)nL * sxyL - sxL * syL) / dL : 0.0f;
+        if (sU <= 0.0f || sL <= 0.0f || ((sU > sL) ? sU / sL : sL / sU) > 1.45f) {
             gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
-            gIdent.rsOhm = 0.0f;
-            gIdent.deadVoltV = 0.0f;
-            gIdent.deadTimeS = 0.0f;
-            return;
-        }
-    } else if (nFit == 3u) {
-        float dx01 = xArr[0] - xArr[1], dx12 = xArr[1] - xArr[2];
-        float s01 = (dx01 > 1e-6f) ? (yArr[0] - yArr[1]) / dx01 : 0.0f;
-        float s12 = (dx12 > 1e-6f) ? (yArr[1] - yArr[2]) / dx12 : 0.0f;
-        if (s01 <= 0.0f || s12 <= 0.0f || ((s01 > s12) ? s01 / s12 : s12 / s01) > 1.45f) {
-            gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
-            gIdent.rsOhm = 0.0f;
-            gIdent.deadVoltV = 0.0f;
-            gIdent.deadTimeS = 0.0f;
-            return;
+            if (sU > 0.0f) {
+                float nU = (float)half;
+                gIdent.rsOhm = sU;
+                vd0 = (syU - sU * sxU) / nU;
+                n = nU;
+                nFit = half;
+                xMin = xArr[half - 1u];
+            }
         }
     }
-    /* 残差：口径与拟合窗统一，按纯电阻压降跨度归一化 */
+    if (gIdent.rsOhm <= 0.0f) {
+        gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
+        gIdent.rsOhm = 0.0f;
+        gIdent.deadVoltV = 0.0f;
+        gIdent.deadTimeS = 0.0f;
+        return;
+    }
+    /* 残差（口径与拟合窗统一，按纯电阻压降跨度归一化）：只记录 */
     for (i = 0; i < nFit; i++) {
         float e = yArr[i] - (gIdent.rsOhm * xArr[i] + vd0);
         sse += e * e;
@@ -231,13 +241,7 @@ static void dtFit(void)
     {
         float rmse = sqrtf(sse / n);
         float vDropSpan = fabsf(gIdent.rsOhm * (xMax - xMin));
-        if (gIdent.rsOhm <= 0.0f || rmse > 0.12f * vDropSpan + 0.08f) {
-            gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
-            gIdent.rsOhm = 0.0f;
-            gIdent.deadVoltV = 0.0f;
-            gIdent.deadTimeS = 0.0f;
-            return;
-        }
+        if (rmse > 0.12f * vDropSpan + 0.08f) gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
     }
     g = dtGeomFactor(Ident_AlignTheta());
     gIdent.deadVoltV = vd0 / g;
@@ -1257,6 +1261,11 @@ static uint8_t dfStep(void)
     return 1;
 }
 
+/* 提交静止测量结果（下一次回到 Stop 时生效）。
+ * 原则：辨识在操作者确认转子静止时进行，测得的参数直接用于拖动；拖动本身（I/F 一致性判断、堵转 / 过流保护）就是检验，
+ * 不再按拟合质量等经验门限阻止提交。commitL = 0 仅用于保护性中止（交流段过流等）。
+ *   Rs / 死区：只有死区阶梯在原理上算不出时才不提交（保留配置值）；交流段电阻实部与 R/L 粗测值都含死区压降、偏大数倍，不能作为替代。
+ *   L(i)：有 AC_DRIFT（频点不一致、电感反增等）时只提交 L0，不提交饱和曲线（饱和曲线不影响起动）。 */
 static void offerStill(uint8_t commitL)
 {
     MotorParam_TypeDef p = gParam;
@@ -1267,7 +1276,7 @@ static void offerStill(uint8_t commitL)
         p.ldH = MOTOR_IPM ? gIdent.ldH : gIdent.lqH;
         m |= 2u;
     }
-    if (commitL && !s_l0Only && s_acSatN >= 3u && gIdent.lqH > 0) {
+    if (commitL && !s_l0Only && s_acSatN >= 3u && gIdent.lqH > 0 && !(gIdent.warn & IDENT_WARN_AC_DRIFT)) {
         float maxA = s_acMaxPkA;
         if (maxA < gIdent.lqAtA[s_acSatN - 1u]) maxA = gIdent.lqAtA[s_acSatN - 1u];
         p.lsKneeA = gIdent.lsSatKneeA;
@@ -1403,12 +1412,14 @@ void Ident_Slow(void)
             (void)Ipd_Evaluate();
             ipdFit();
             FocCore_LoadGains();
-            trustedPre = (uint8_t)(gIdent.rsOhm > 0.0f && gIdent.lqH > 0.0f &&
+            /* 只保留保护与物理合理性：测得正的 L 与 R/L 粗测值、交流段未因过流中止；
+             * DT_UNSTABLE / AC_DRIFT / LOW_SNR / AMP_FAIL 只记录，不阻止拖动（见 offerStill）。
+             * 参数的物理合理性（为正、定点量程）由 param.c checkParam 检查（rejectMask） */
+            trustedPre = (uint8_t)(gIdent.lqH > 0.0f &&
                                    (!MOTOR_IPM || gIdent.ldH > 0.0f) &&
-                                   gIdent.acLdH[0] > 0.0f && gIdent.acRohm[0] > 0.0f &&
+                                   gIdent.acLdH[0] > 0.0f &&
                                    gIdent.rlR > 0.0f && gIdent.rlL > 0.0f &&
-                                   !(gIdent.warn & (IDENT_WARN_AC_DRIFT | IDENT_WARN_LOW_SNR | IDENT_WARN_AC_FAIL |
-                                                    IDENT_WARN_AMP_FAIL | IDENT_WARN_DT_UNSTABLE)));
+                                   !(gIdent.warn & IDENT_WARN_AC_FAIL));
             offerStill(trustedPre);
             {
                 uint8_t ok = (uint8_t)(trustedPre && !(gParamStat.rejectMask & 39u) && gParamStat.pending);

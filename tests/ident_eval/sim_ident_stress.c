@@ -149,6 +149,8 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 5; i++) {
         if (gIdent.lqAtA[i] > id_max_swp) id_max_swp = gIdent.lqAtA[i];
     }
+    if (getenv("SIM_DIAG_TIER")) printf("PARAM rs=%.5g ld=%.5g lq=%.5g dt=%.4g psi=%.5g acc=%.5g knee=%.4g per=%.5g lsmax=%.4g src=%u\n",
+        gParam.rsOhm, gParam.ldH, gParam.lqH, gParam.dtEffS * 1e6, gParam.psiWb, gParam.accRpmSPerA, gParam.lsKneeA, gParam.lsPerA, gParam.lsMaxA, (unsigned)gParamStat.source);
     if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f\n",
                     (unsigned)gSup.fault, (int)gSup.mainState, (int)gSup.runState, tOL, tSpin, spinExit, plant_rpm(&pl), rpmErrMax2s);
     if (getenv("SIM_DIAG_TIER")) {
