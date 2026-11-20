@@ -37,12 +37,12 @@ def sens_line(lines):
     return dict(x.split("=") for x in s[-1].split()[1:] if "=" in x)
 
 
-def angles(wd):
+def angles(wd, secs="10"):
     def one(job):
         k, th = job
         env = dict(os.environ)
         env.update({"SIM_PWMDLY": "1", "SIM_NOISE": "2", "SIM_DSAT": "0", "SIM_PK_RS": "1", "SIM_TH0_DEG": str(th)})
-        out = subprocess.run([os.path.join(wd, "exe_" + k), "10", "2", CMD[k]], env=env, capture_output=True, text=True).stdout.splitlines()
+        out = subprocess.run([os.path.join(wd, "exe_" + k), secs, "2", CMD[k]], env=env, capture_output=True, text=True).stdout.splitlines()
         kv = sens_line(out)
         ok = bool(kv) and kv["fault"] == "0x0" and kv["run"] == "4" and int(kv["spinExit"]) == 0 and abs(float(kv["rpm"])) > 0.3 * float(CMD[k])
         return k, th, ok, float(kv["tSpin"]) if kv else -1.0
@@ -97,7 +97,7 @@ def identalign(wd):
     return res
 
 
-def e2e(wd, seed, n):
+def e2e(wd, seed, n, secs="30"):
     jobs = run_blind.gen_healthy_jobs(seed, n)
     rng = random.Random(seed + 7)
     pre = [(j, rng.randrange(360)) for j in jobs]
@@ -107,7 +107,7 @@ def e2e(wd, seed, n):
         env = dict(os.environ)
         env.update(envx)
         env.update({"SIM_TH0_DEG": str(th), "SIM_PK_RS": "1"})
-        out = subprocess.run([os.path.join(wd, "exe_" + k), "30", "0", CMD[k]], env=env, capture_output=True, text=True).stdout.splitlines()
+        out = subprocess.run([os.path.join(wd, "exe_" + k), secs, "0", CMD[k]], env=env, capture_output=True, text=True).stdout.splitlines()
         kv = sens_line(out)
         r = [l for l in out if l.startswith("RES ")]
         res = dict(x.split("=") for x in r[0].split()[1:] if "=" in x) if r else {}
@@ -145,12 +145,16 @@ def main():
     ap.add_argument("--n", type=int, default=120)
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--secs", default=None, help="simulated seconds per run (default 10 for angles, 30 for e2e)")
+    ap.add_argument("--retry", action="store_true", help="keep simulating after a fault (SIM_FAULT_CONTINUE=1) so automatic restarts are exercised")
     a = ap.parse_args()
+    if a.retry:
+        os.environ["SIM_FAULT_CONTINUE"] = "1"
     if not a.no_build:
         run_eval.build_suite(a.ref, a.work)
     if a.test == "angles":
         print(f"=== initial-angle sweep ({a.ref}) ===")
-        res = angles(a.work)
+        res = angles(a.work, a.secs or "10")
     elif a.test == "identalign":
         print(f"=== identification align, initial-angle sweep ({a.ref}) ===")
         res = identalign(a.work)
@@ -158,7 +162,7 @@ def main():
         if a.seed is None:
             ap.error("e2e needs --seed")
         print(f"=== end-to-end AUTO identification + start, seed={a.seed} n={a.n} ({a.ref}) ===")
-        res = e2e(a.work, a.seed, a.n)
+        res = e2e(a.work, a.seed, a.n, a.secs or "30")
     if a.json:
         json.dump(res, open(a.json, "w"))
 

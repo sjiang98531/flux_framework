@@ -1,4 +1,5 @@
 double g_sim_irated_k = 1.0;
+static int g_sim_faultCount = 0, g_sim_inFault = 0;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +15,8 @@ double g_sim_irated_k = 1.0;
 #include "flux_obs.h"
 #include "diag.h"
 #include "ipd.h"
+#include "openloop.h"
+uint8_t OpenLoop_BoostLevel(void) __attribute__((weak));   /* 旧版本固件无此函数时为 0 */
 
 EPWM_TypeDef sim_EPWM;
 TIM_TypeDef sim_TIM0, sim_TIM3;
@@ -119,8 +122,15 @@ int main(int argc, char **argv) {
             if (abort_mode == 1) Sup_RaiseFault(MC_FAULT_I_DCBUS_OVER);
         }
         if (gSup.fault) {
-            if (!abort_mode) fprintf(stderr, "FAULT 0x%x at t=%.3f failLine=%u\n", (unsigned)gSup.fault, t, (unsigned)gFluxDiag.cfgFailLine);
-            break;
+            /* SIM_FAULT_CONTINUE=1：故障后继续仿真（验证故障释放后的自动重启），只在进入故障时打印一次 */
+            if (!g_sim_inFault) {
+                g_sim_inFault = 1;
+                g_sim_faultCount++;
+                if (!abort_mode) fprintf(stderr, "FAULT 0x%x at t=%.3f failLine=%u\n", (unsigned)gSup.fault, t, (unsigned)gFluxDiag.cfgFailLine);
+            }
+            if (!getenv("SIM_FAULT_CONTINUE")) break;
+        } else {
+            g_sim_inFault = 0;
         }
         if (abort_mode == 2 && aborted && gSup.mainState == MainState_Stop) break;
         if (mode == IDENT_MODE_STATIC && done && gSup.mainState == MainState_Stop && !gParamStat.pending) break;
@@ -151,8 +161,9 @@ int main(int argc, char **argv) {
     }
     if (getenv("SIM_DIAG_TIER")) printf("PARAM rs=%.5g ld=%.5g lq=%.5g dt=%.4g psi=%.5g acc=%.5g knee=%.4g per=%.5g lsmax=%.4g src=%u\n",
         gParam.rsOhm, gParam.ldH, gParam.lqH, gParam.dtEffS * 1e6, gParam.psiWb, gParam.accRpmSPerA, gParam.lsKneeA, gParam.lsPerA, gParam.lsMaxA, (unsigned)gParamStat.source);
-    if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f\n",
-                    (unsigned)gSup.fault, (int)gSup.mainState, (int)gSup.runState, tOL, tSpin, spinExit, plant_rpm(&pl), rpmErrMax2s);
+    if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f nFault=%d boost=%u\n",
+                    (unsigned)gSup.fault, (int)gSup.mainState, (int)gSup.runState, tOL, tSpin, spinExit, plant_rpm(&pl), rpmErrMax2s,
+                    g_sim_faultCount, (unsigned)(OpenLoop_BoostLevel ? OpenLoop_BoostLevel() : 0));
     if (getenv("SIM_DIAG_TIER")) {
         printf("TIER");
         for (int i = 0; i < 5; i++) printf(" a%d=%.4f h%d=%.6g", i, gIdent.lqAtA[i], i, gIdent.lqAtH[i]);

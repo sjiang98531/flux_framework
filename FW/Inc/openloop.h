@@ -31,6 +31,8 @@ void OpenLoop_CommitCatch(int16_t spd);
 
 /* 当前开环转速（Q15 速度），用于相位补偿 */
 int16_t OpenLoop_SpeedQ15(void);
+/* 冷起动失速自适应档位（0 = 正常；冷起动 I/F 堵转一次加一档，最多 3 档：电流逐档加大、加速度逐档减半；上电清零）：诊断用 */
+uint8_t OpenLoop_BoostLevel(void);
 /* Spin 慢环调用：判断是否应交回 I/F（|转速| < OPENLOOP_FALLBACK_RPM 且指令反向或低于 OPENLOOP_SPIN_MIN_RPM） */
 uint8_t OpenLoop_WantsFallback(void);
 /* 回退 I/F 时的开环电流（Q15）：max(OPENLOOP_CURRENT_A, |iq|/sin(OPENLOOP_WARM_DELTA_DEG))，反转时至少 OPENLOOP_REV_CURRENT_A，上限 OPENLOOP_WARM_MAX_A */

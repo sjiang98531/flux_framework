@@ -31,6 +31,14 @@ static int32_t s_accScaleQ12 = 4096;
 static int32_t s_olCur, s_olCurTarget;      /* 开环电流当前值 / 目标值（Q15）；回退时由小升至目标（CURRENT_SLEW_A_S） */
 static volatile int32_t s_accStep = OPENLOOP_ACC_STEP_Q31;   /* 快环读 */
 static int32_t s_accStepFull;                         /* 开环电流达到目标后的加速度步长 */
+/* 冷起动失速自适应：I/F 能否把转子拖进同步取决于接入角误差、电流（转矩能力）与加速度之比，事先无法可靠判断。
+ * 冷起动（摆动 / IPD 之后）在 I/F 中堵转超时一次，加强一档：电流按 OPENLOOP_BOOST_MAX 档从 OPENLOOP_CURRENT_A 均匀加到
+ * OPENLOOP_WARM_MAX_A，加速度每档减半；堵转故障释放后由现有的自动重启（SUP_RESTART_LIMIT 次内）以新档位重试。
+ * 学到的档位保留到下次上电（之后的起动直接使用），不影响闭环回退 / 飞车接管进入 I/F。正常电机首次即可起动，行为不变 */
+#define OPENLOOP_BOOST_MAX  3u
+static uint8_t s_ifBoost;
+
+uint8_t OpenLoop_BoostLevel(void) { return s_ifBoost; }
 
 /* 当前开环转速（Q15），供观测器相位补偿等使用 */
 int16_t OpenLoop_SpeedQ15(void) { return (int16_t)(s_olSpeed >> 16); }
@@ -96,6 +104,8 @@ int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
 static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
 {
     int32_t cur = OPENLOOP_IQ_Q15;
+    if (!warm && s_ifBoost && OPENLOOP_WARM_IMAX_Q15 > OPENLOOP_IQ_Q15)
+        cur += ((int32_t)s_ifBoost * (OPENLOOP_WARM_IMAX_Q15 - OPENLOOP_IQ_Q15)) / (int32_t)OPENLOOP_BOOST_MAX;
     e->warm = warm;
     e->thetaOffset = 0;
     if (warm) {
@@ -135,6 +145,7 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
      * （按"所需 iq"增加的那部分电流用于已有转矩需求，不用于加速）。冷起动 / 同向 = 1 */
     e->accScaleQ12 = (warm && revAcc) ? (int32_t)(((int64_t)OPENLOOP_REV_IQ_Q15 << 12) / OPENLOOP_IQ_Q15) : 4096;
     e->accStepFull = (int32_t)(((int64_t)gGain.openLoopAccStepQ31 * e->accScaleQ12) >> 12);
+    if (!warm) e->accStepFull >>= s_ifBoost;     /* 失速自适应：加速度每档减半 */
     /* 开环加速度与开环电流成正比：电流仍按 CURRENT_SLEW_A_S 向目标上升时，可产生的转矩相应受限，
      * 加速度按同一比例给出，负载角余量（OPENLOOP_ACC_RPM_S 取最大加速度的 1/3）全程保持不变。
      * accStepFull * 电流 < 2^31 由配置检查 OPENLOOP_ACC_STEP_FITS 保证（32 位乘除） */
@@ -262,6 +273,7 @@ void OpenLoop_LoadGains(void)
 /* 上电：飞车接管进入 I/F 的两份入口参数（iq = 0，同向 / 过零），快环接管时直接取用（常数时间） */
 void OpenLoop_Init(void)
 {
+    s_ifBoost = 0;
     OpenLoop_PrepareWarm(0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
     OpenLoop_PrepareWarm(0, 1, 1, 0, &s_catchIf[1]);
     OpenLoop_LoadGains();
@@ -327,6 +339,7 @@ void OpenLoop_Slow(void)
         if (s_agree >= OPENLOOP_AGREE_TICKS) {
             openLoopHandover();
         } else if (++s_hold > OPENLOOP_TIMEOUT_TICKS) {
+            if (s_ifBoost < OPENLOOP_BOOST_MAX) s_ifBoost++;    /* 失速自适应：下一次冷起动加强一档 */
             Sup_RaiseFault(MC_FAULT_ROTOR_BLOCKED);
             Sup_CountRestart();
         }
