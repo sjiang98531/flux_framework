@@ -44,6 +44,12 @@ static int16_t s_swingMinSpd;
 static int32_t s_swingL1, s_swingL2, s_swingVd1, s_swingVd2;
 static int32_t s_swingNegL1, s_swingNegL2, s_swingNegVd1, s_swingNegVd2;   /* 逆向峰值用同一套电平记录 */
 static uint8_t s_swingMoved;
+/* 换轴定位：定位轴（Q15，相对开环角 0）与是否已换轴。
+ * 首轮未能按过轴峰值接入时，转子可能已在定位轴上，也可能停在定位轴背面的死点（d 轴电流与 N 极反向，转矩 ≈ 0，
+ * 静摩擦即可卡住）；若直接按"在定位轴上"接入，死点情形的开环角会错约 180° 而堵转。
+ * 故先把定位轴按扫掠角速度沿转向转 90°：在轴上的转子被拖到新轴，死点上的转子受最大转矩被拉到新轴，再按新轴接入 */
+static int16_t s_swingAxis;
+static uint8_t s_swingTry;
 
 /* 启动摆动中起动（SWING 主流程或 IPD 失败退回时调用） */
 static void beginSwing(void)
@@ -58,6 +64,8 @@ static void beginSwing(void)
     s_swingNegL1 = 0;
     s_swingNegL2 = 0;
     s_swingMoved = 0;
+    s_swingAxis = 0;
+    s_swingTry = 0;
     s_alignTheta = (int16_t)(-s_swingDir * ALIGN_SWING_SWEEP_Q15);
 }
 
@@ -202,7 +210,8 @@ void Startup_AlignFast(void)
  *       否则 转子越过定位轴的角度 = atan(ed / |e|)，转速 = |反电势| / 磁链，再按测量延迟内转过的角度修正，由此接入 I/F。
  *     顺向 / 逆向峰值各用一套电平记录，两者对称：逆向过轴时以负的转子角、负的开环转速接入，由 I/F 加速过零，
  *     不再等转子摆回来，省去最多一个摆动周期。
- *   无摆动（s_swingQuietTicks 内 |e| 始终低于门限）或等待超过 s_swingMaxTicks：按静止在定位轴上接入。 */
+ *   无摆动（s_swingQuietTicks 内 |e| 始终低于门限）或等待超过 s_swingMaxTicks：定位轴按扫掠角速度沿转向转 90°，
+ *     到达后再等 s_swingQuietTicks，按新轴静止接入（避免转子停在死点时按原定位轴接入而错约 180°）。 */
 /* 峰值确认后的接入计算（慢环，每次起动最多执行一次：三次 32 位除法）。
  * e = 该方向上的 |e_q|，ed = 过轴之后的 d 轴反电势，sign = 该方向的角度 / 转速符号。 */
 static void swingCatch(int32_t e, int32_t ed, int8_t sign)
@@ -222,7 +231,8 @@ static void alignSwingSlow(void)
     int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15, e, vd, thr;
     if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
     FocCore_SetIdqRef((int16_t)id, 0);
-    s_alignTheta = (int16_t)(-s_swingDir * (((ALIGN_ID_Q15 - id) * ALIGN_SWING_SWEEP_K_Q16) >> 16));
+    if (s_swingTry == 0u)
+        s_alignTheta = (int16_t)(-s_swingDir * (((ALIGN_ID_Q15 - id) * ALIGN_SWING_SWEEP_K_Q16) >> 16));
     if (id < ALIGN_ID_Q15) return;
     s_emfFilt += (gFoc.piQ.qdSum >> 15) - QMath_MulQ15(gGain.focKrsQ15, gFoc.idq.s16Q) - (s_emfFilt >> ALIGN_EMF_FILT_SH);
     s_dtFilt += (gFoc.piD.qdSum >> 15) - (s_dtFilt >> ALIGN_EMF_FILT_SH);
@@ -236,6 +246,19 @@ static void alignSwingSlow(void)
             s_swingNegL1 = 0;
             s_swingNegL2 = 0x3FFF0000;
         }
+    }
+    if (s_swingTry != 0u) {
+        /* 换轴：定位轴按首轮扫掠的角速度转到新轴（满电流下突跳会使转子冲过并被齿槽 / 摩擦卡在半途），
+         * 到达后再等 s_swingQuietTicks，按新轴接入，不再按峰值接入 */
+        int32_t d = (int32_t)(int16_t)(s_swingAxis - s_alignTheta);
+        int32_t st = ((int32_t)ALIGN_STEP_Q15 * ALIGN_SWING_SWEEP_K_Q16) >> 16;
+        if (st < 1) st = 1;
+        if (d > st) d = st;
+        if (d < -st) d = -st;
+        s_alignTheta = (int16_t)(s_alignTheta + d);
+        if (s_alignTheta != s_swingAxis) s_alignTicks = ALIGN_SWING_SETTLE_TICKS;
+        else if (s_alignTicks >= ALIGN_SWING_SETTLE_TICKS + s_swingQuietTicks) Sup_SwitchSwingOpenLoop(s_swingAxis, 0);
+        return;
     }
     e = s_swingDir * (s_emfFilt >> ALIGN_EMF_FILT_SH);
     vd = s_dtFilt >> ALIGN_EMF_FILT_SH;
@@ -290,7 +313,15 @@ static void alignSwingSlow(void)
             }
         }
     }
-    if (s_alignTicks >= (s_swingMoved ? s_swingMaxTicks : s_swingQuietTicks)) Sup_SwitchSwingOpenLoop(0, 0);
+    if (s_alignTicks >= (s_swingMoved ? s_swingMaxTicks : s_swingQuietTicks)) {
+        if (s_swingTry == 0u) {
+            /* 首轮未能按过轴峰值接入：换轴定位（电流保持 ALIGN_A），见 s_swingAxis */
+            s_swingTry = 1u;
+            s_swingAxis = (int16_t)(s_swingDir * ANGLE_90_Q15);
+            return;
+        }
+        Sup_SwitchSwingOpenLoop(s_swingAxis, 0);
+    }
 }
 
 /* Align 慢环：

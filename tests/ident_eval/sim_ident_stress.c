@@ -87,6 +87,11 @@ int main(int argc, char **argv) {
             PendSV_Handler();
         }
         Param_Background();
+        if (getenv("SIM_DIAG_SU") && gSup.mainState == MainState_Run && (k % (long)(0.005 * PWM_FREQ)) == 0 && t < atof(getenv("SIM_DIAG_SU"))) {
+            printf("SU t=%.3f run=%d th=%.1f rotor=%.1f rpm=%.1f id=%d iq=%d olspd=%d\n", t, (int)gSup.runState,
+                   (double)(uint16_t)gFoc.theta * 360.0 / 65536.0, plant_theta_e(&pl) * 180.0 / 3.14159265358979323846,
+                   plant_rpm(&pl), (int)gFoc.idqRef.s16D, (int)gFoc.idqRef.s16Q, (int)gMeas.speed);
+        }
         if (sens && gSup.mainState == MainState_Run) {
             int rs = (int)gSup.runState;
             if (rs == RunState_OpenLoop && tOL < 0) tOL = t;
