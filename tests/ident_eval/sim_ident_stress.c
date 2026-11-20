@@ -56,6 +56,22 @@ int main(int argc, char **argv) {
     if (getenv("SIM_ALIGNDEG")) gIdentCfg.alignDeg = (int16_t)atoi(getenv("SIM_ALIGNDEG"));
 
     int32_t midKpD = -1, midKpQ = -1;
+    /* 起动敏感度实验：SIM_PK_<项>=倍数，把控制器参数 gParam 相对电机真值缩放（真值 = 配置标称），用于评估各参数误差容限 */
+    int sens = 0;
+    {
+        MotorParam_TypeDef pk = gParam;
+        const char *e;
+        if ((e = getenv("SIM_PK_RS")))  { pk.rsOhm *= atof(e); sens = 1; }
+        if ((e = getenv("SIM_PK_L")))   { pk.ldH *= atof(e); pk.lqH *= atof(e); sens = 1; }
+        if ((e = getenv("SIM_PK_LD")))  { pk.ldH *= atof(e); sens = 1; }
+        if ((e = getenv("SIM_PK_PSI"))) { pk.psiWb *= atof(e); sens = 1; }
+        if ((e = getenv("SIM_PK_ACC"))) { pk.accRpmSPerA *= atof(e); sens = 1; }
+        if ((e = getenv("SIM_PK_DT")))  { pk.dtEffS *= atof(e); sens = 1; }
+        if ((e = getenv("SIM_PK_LSMAX"))) { pk.lsMaxA = atof(e); sens = 1; }
+        if ((e = getenv("SIM_PK_LSPER"))) { pk.lsPerA = atof(e); if ((e = getenv("SIM_PK_LSKNEE"))) pk.lsKneeA = atof(e); sens = 1; }
+        if (sens && !Param_ApplyNow(&pk)) { printf("SENS reject\n"); }
+    }
+    double tOL = -1, tSpin = -1; int spinExit = 0, lastRun = -1; double rpmErrMax2s = 0;
     long acStartTick = -1;
     for (long k = 0; k < nTicks; k++) {
         double t = k * dt;
@@ -71,6 +87,23 @@ int main(int argc, char **argv) {
             PendSV_Handler();
         }
         Param_Background();
+        if (sens && gSup.mainState == MainState_Run) {
+            int rs = (int)gSup.runState;
+            if (rs == RunState_OpenLoop && tOL < 0) tOL = t;
+            if (rs == RunState_Spin && tSpin < 0) tSpin = t;
+            if (lastRun == RunState_Spin && rs != RunState_Spin) spinExit++;
+            lastRun = rs;
+            if (t > sim_secs - 2.0) { double er = fabs(fabs(plant_rpm(&pl)) - cmd_rpm) / cmd_rpm; if (er > rpmErrMax2s) rpmErrMax2s = er; }
+        }
+        if (getenv("SIM_DIAG_TIER")) {
+            static int lastPh = -1, lastRs = -1; static long lastK = 0;
+            if ((int)gIdentTest.phase != lastPh || (int)gSup.runState != lastRs || ((getenv("SIM_DIAG_ALL") || gIdentTest.phase == IDENT_PH_AC) && k - lastK > (long)((getenv("SIM_DIAG_DT") ? atof(getenv("SIM_DIAG_DT")) : 0.25) * PWM_FREQ))) {
+                lastPh = (int)gIdentTest.phase; lastRs = (int)gSup.runState; lastK = k;
+                printf("TRACE t=%.3f ph=%d main=%d run=%d rpm=%.0f rotor=%.2f align=%.2f\n", t, lastPh, (int)gSup.mainState, (int)gSup.runState, plant_rpm(&pl),
+                       plant_theta_e(&pl) * 180.0 / 3.14159265358979323846,
+                       (double)(uint16_t)Ident_AlignTheta() * 360.0 / 65536.0);
+            }
+        }
         if (gIdentTest.phase == IDENT_PH_AC && acStartTick < 0) {
             acStartTick = k;
             midKpD = gFoc.piD.qKp;
@@ -110,6 +143,13 @@ int main(int argc, char **argv) {
     double id_max_swp = 0.0;
     for (int i = 0; i < 5; i++) {
         if (gIdent.lqAtA[i] > id_max_swp) id_max_swp = gIdent.lqAtA[i];
+    }
+    if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f\n",
+                    (unsigned)gSup.fault, (int)gSup.mainState, (int)gSup.runState, tOL, tSpin, spinExit, plant_rpm(&pl), rpmErrMax2s);
+    if (getenv("SIM_DIAG_TIER")) {
+        printf("TIER");
+        for (int i = 0; i < 5; i++) printf(" a%d=%.4f h%d=%.6g", i, gIdent.lqAtA[i], i, gIdent.lqAtH[i]);
+        printf(" k04=%.6g k10=%.6g kM=%.6g\n", gIdent.kSwing[0], gIdent.kSwing[1], gIdent.kSwingModel);
     }
     printf("TRUE rs=%.6f ld=%.6g lq=%.6g ksat=%.6f i0sat=%.6f psi=%.6g imax=%.4f irun=%.4f imaxhw=%.4f dti0=%.4f iref0=%.4f\n",
            pl.res, pl.lD, pl.lQ, pl.qSatK, pl.qSatI0, pl.psi, imax_swp, i_run, (double)I_MAX, (double)INVERTER_DT_I0_A, 0.4 * iscale);

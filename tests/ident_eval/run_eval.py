@@ -147,7 +147,7 @@ def build_suite(ref, work_dir, cfgs=None, override_identify=None, override_start
                f"-I'{dst}/User/Inc' -I'{dst}/Board/Inc' -I'{dst}/User/HeadFiles'")
         cf = (f"-O2 -g -fwrapv -Wall -Wno-unused-variable -Wno-unused-function "
               f"-Wno-misleading-indentation -Wno-discarded-qualifiers "
-              f"-include '{shim_dir}/armcc_compat.h' -include stdio.h {inc}")
+              f"-include '{shim_dir}/armcc_compat.h' -include stdio.h {inc} " + os.environ.get("IDENT_EVAL_CFLAGS", ""))
         objs = []
         srcs = [sim_c, plant_c] + [
             os.path.join(dst, "FW", "Src", f)
