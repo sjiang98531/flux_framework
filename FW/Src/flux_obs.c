@@ -109,6 +109,13 @@ void FluxObs_Reset(void)
 static void setTarget(int32_t tgt);
 #endif
 
+/* ferr>>12 的限幅：超出 ±ceil(FQ_LIMIT*256/norm) 时 fq 必然饱和，先限幅再乘结果不变且乘积不溢出（norm 可超过 8192） */
+static volatile int32_t s_nlfoELim;
+static int32_t nlfoELim(int32_t norm)
+{
+    return (norm > 0) ? (int32_t)(((int64_t)FLUX_NLFO_FQ_LIMIT * 256 + norm - 1) / norm) : 0;
+}
+
 /* 从 gGain 重新装载模型参数（上电或 param.c 更新参数时；在 Stop 状态下调用） */
 void FluxObs_LoadModel(void)
 {
@@ -119,8 +126,10 @@ void FluxObs_LoadModel(void)
     gFluxObs.s16KTs = gGain.fluxKtsQ15;
     gFluxObs.s16KRs = gGain.fluxKrsQ15;
     gFluxObs.s16KLq = gGain.fluxKlQ15;
-    gFluxObs.s16NlfoNormQ8 = gGain.nlfoNormQ8;
-#if MOTOR_IPM
+    gFluxObs.s32NlfoNormQ8 = gGain.nlfoNormQ8;
+#if !MOTOR_IPM
+    s_nlfoELim = nlfoELim(gGain.nlfoNormQ8);
+#else
     setTarget(FLUX_NOM);
 #endif
 }
@@ -176,6 +185,7 @@ static void setTarget(int32_t tgt)
     t2 = tgt * tgt;
     s_target2 = t2;
     s_nlfoNorm = (int32_t)(((int64_t)gGain.nlfoNormQ8 * FLUX_NOM2) / t2);       /* 慢环，允许除法 */
+    s_nlfoELim = nlfoELim(s_nlfoNorm);
 }
 
 /* 内嵌式：id 指令变化时更新有效磁链目标 = psi_f + (Ld - Lq)*id */
@@ -283,10 +293,16 @@ RAMFUNC void FluxObs_Run(void)
 #if MOTOR_IPM
         /* 目标与归一化系数随 id 变化：fq = ferr/target^2（Q15） */
         ferr = s_target2 - ((int32_t)g0 * g0 + (int32_t)g1 * g1);
-        fq = ((ferr >> 12) * s_nlfoNorm) >> 8;
 #else
         ferr = FLUX_NOM2 - ((int32_t)g0 * g0 + (int32_t)g1 * g1);
-        fq = ((ferr >> 12) * gFluxObs.s16NlfoNormQ8) >> 8;
+#endif
+        ferr >>= 12;
+        if (ferr > s_nlfoELim) ferr = s_nlfoELim;
+        if (ferr < -s_nlfoELim) ferr = -s_nlfoELim;
+#if MOTOR_IPM
+        fq = (ferr * s_nlfoNorm) >> 8;
+#else
+        fq = (ferr * gFluxObs.s32NlfoNormQ8) >> 8;
 #endif
         if (fq > FLUX_NLFO_FQ_LIMIT) fq = FLUX_NLFO_FQ_LIMIT;
         if (fq < -FLUX_NLFO_FQ_LIMIT) fq = -FLUX_NLFO_FQ_LIMIT;
@@ -327,6 +343,7 @@ void FluxPLL_Init(PLL_TypeDef *p)
     p->s32Theta    = 0;
     p->s32Speed    = 0;
     p->s32I_1      = 0;
+    p->s32AccFF    = 0;
 }
 
 RAMFUNC int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta)
@@ -349,7 +366,7 @@ FORCE_INLINE int32_t angleStep(int32_t speed, int16_t kTheta)
 
 FORCE_INLINE int16_t advance(PLL_TypeDef *p, int32_t kpTerm, int32_t kiTerm)
 {
-    p->s32I_1   = speedClamp(QMath_AddSat32(p->s32I_1, kiTerm));
+    p->s32I_1   = speedClamp(QMath_AddSat32(p->s32I_1, kiTerm + p->s32AccFF));
     p->s32Speed = speedClamp(QMath_AddSat32(p->s32I_1, kpTerm));
     p->s32Theta = (int32_t)((uint32_t)p->s32Theta + (uint32_t)angleStep(p->s32Speed, p->s16ThGain));
     return (int16_t)(p->s32Theta >> 16);
@@ -398,6 +415,7 @@ void Est_OnEnterOpenLoopCold(void)
     gEst.pll.s32Theta = gFoc.theta << 16;
     gEst.pll.s32Speed = 0;
     gEst.pll.s32I_1 = 0;
+    gEst.pll.s32AccFF = 0;
     Meas_SpeedReset();
     FluxObs_BeginOpenLoop();
 }
@@ -406,6 +424,7 @@ void Est_ResetRun(void)
 {
     gEst.pll.s32I_1 = 0;
     gEst.pll.s32Speed = 0;
+    gEst.pll.s32AccFF = 0;
 }
 
 void Est_OnCatch(int16_t theta, int16_t spd)

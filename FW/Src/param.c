@@ -66,9 +66,9 @@ static uint16_t checkParam(const MotorParam_TypeDef *p)
           FLUX_NOMINAL_Q15_AT(p->psiWb, psiN) >= 16 &&
           2.0 * MATH_PI * FLUX_WN_HZ_OF(p->psiWb, p->ldH, p->lqH) / PWM_FREQ < 0.99997)) bad |= 8u;
     else {
-        /* NLFO 归一化系数须非零且 ((ferr>>12)*norm) 不溢出 int32（norm < 8192） */
+        /* NLFO 归一化系数须非零；快环先把 ferr>>12 限在 fq 饱和点内再乘（flux_obs.c），norm < 2^22 即不溢出 int32 */
         int32_t n = FLUX_NLFO_NORM_Q8_OF(FLUX_NOMINAL_Q15_AT(p->psiWb, psiN));
-        if (n < 1 || n >= 8192) bad |= 8u;
+        if (n < 1 || n >= FLUX_NLFO_NORM_MAX) bad |= 8u;
     }
     /* bit4 加速度系数：为正，且计算出的速度环 Kp、Ki 未被截断为 0 */
     if (!(p->accRpmSPerA > 0 && SPEED_KP_OF(p->accRpmSPerA) >= 1 && SPEED_KI_OF(p->accRpmSPerA) >= 1)) bad |= 16u;
@@ -80,6 +80,20 @@ static uint16_t checkParam(const MotorParam_TypeDef *p)
 /* 参数 -> 全部增益。公式与 cfg_derived.h 的编译期常量使用同一组宏（*_OF），参数等于配置标称值时结果逐位相同。
  * 被封顶的项在 cfgWarn 中记录一位（目标板上为 gFluxDiag.cfgWarn）。
  * 括号内为本电机配置标称值的计算结果，供对照 */
+/* 观测器可靠性相关转速门限的换算比例 s = MOTOR_PSI_F_WB / psi，限制在 [0.25, 4]（见 param.h） */
+static double spdThScale(const MotorParam_TypeDef *p)
+{
+    double s = (p->psiWb > 0) ? (double)MOTOR_PSI_F_WB / p->psiWb : 1.0;
+    if (s < 0.25) s = 0.25;
+    if (s > 4.0) s = 4.0;
+    return s;
+}
+
+double Param_SpeedThScale(void)
+{
+    return spdThScale(&gParam);
+}
+
 static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
 {
     int32_t k;
@@ -112,7 +126,7 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     /* 观测器：按当前参数的磁链基准计算 psi_f 及其平方、积分步长 KTs、NLFO 归一化系数 */
     g->fluxNomQ15 = FLUX_NOMINAL_Q15_AT(p->psiWb, psiN);
     g->fluxNom2 = (int32_t)g->fluxNomQ15 * (int32_t)g->fluxNomQ15;
-    g->nlfoNormQ8 = (int16_t)FLUX_NLFO_NORM_Q8_OF(g->fluxNomQ15);
+    g->nlfoNormQ8 = FLUX_NLFO_NORM_Q8_OF(g->fluxNomQ15);
     g->fluxKtsQ15 = FLUX_KTS_Q15_OF(p->psiWb, p->ldH, p->lqH);
     /* 观测器电压模型 psi_s = ∫(v - Rs*i)、psi_r = psi_s - L*i 的两个系数；
      * 电流环电压单位下的 Rs（定位判静止用）；IPM 的 Ld - Lq */
@@ -179,6 +193,27 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->busVdcRefSq = BUS_VDC_REF_SQ_OF(p->psiWb);
     g->busVdcKQ8 = BUS_VDC_K_Q8_OF(p->psiWb, p->accRpmSPerA);
     g->protectSpeedOcQ15 = PROTECT_SPEED_OC_Q15_OF(p->psiWb);
+    {   /* 观测器可靠性相关的转速门限随磁链换算（见 param.h）：s = 配置磁链 / 当前磁链；s = 1 时各式与 cfg_derived.h 原宏逐位相同 */
+        double s = spdThScale(p), top = 0.9 * SPEED_MAX;
+        double hand, fb, sm, lost, te, fc, frev, warm;
+        hand = OPENLOOP_HANDOVER_RPM * s;  if (hand > top) hand = top;
+        fb   = OPENLOOP_FALLBACK_RPM * s;  if (fb > top) fb = top;
+        sm   = OPENLOOP_SPIN_MIN_RPM * s;  if (sm > top) sm = top;
+        lost = SPIN_LOST_RPM * s;          if (lost > top) lost = top;
+        te   = TRACK_END_RPM * s;          if (te > top) te = top;
+        fc   = FLY_CATCH_RPM * s;          if (fc > top) fc = top;
+        frev = FLY_REV_SPIN_MIN_RPM * s;   if (frev > top) frev = top;
+        warm = 1.5 * fb;                   if (warm > 0.95 * SPEED_MAX) warm = 0.95 * SPEED_MAX;
+        g->spdHandoverQ31 = (int32_t)(hand / SPEED_MAX * 2147483648.0);
+        g->spdFallbackQ31 = (int32_t)(fb / SPEED_MAX * 2147483648.0);
+        g->spdWarmMaxQ31 = (int32_t)(warm / SPEED_MAX * 2147483648.0);
+        g->spdFallbackQ15 = Q15(fb / SPEED_MAX);
+        g->spdSpinMinQ15 = Q15(sm / SPEED_MAX);
+        g->spdLostQ15 = (int16_t)(lost / SPEED_MAX * 32768.0);
+        g->spdTrackEndQ15 = Q15(te / SPEED_MAX);
+        g->spdFlyCatchQ15 = Q15(fc / SPEED_MAX);
+        g->spdFlyRevMinQ15 = Q15(frev / SPEED_MAX);
+    }
 }
 
 /* 将参数与增益装入各模块。调用方已关中断并确认电机处于 Stop（Param_ApplyNow 例外，见下）。

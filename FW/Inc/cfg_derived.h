@@ -243,6 +243,8 @@
 #define FLUX_NLFO_NORM_Q8_OF(n) ((int32_t)(32768.0 * 4096.0 * 256.0 / ((double)(n) * (double)(n)) \
                                  * (double)(1L << FLUX_NLFO_SH) / FLUX_NLFO_TICKS_ + 0.5))
 #define FLUX_NLFO_NORM_Q8       FLUX_NLFO_NORM_Q8_OF(FLUX_NOMINAL_Q15)
+/* 归一化系数上限：快环把 ferr>>12 限在 ±ceil(2^23/norm)（超出部分 fq 本就饱和），乘积 <= 2^23 + norm 不溢出 int32 */
+#define FLUX_NLFO_NORM_MAX      (1L << 22)
 /* NLFO 修正的移位位数（取最接近的 2 的幂，余数乘进归一化） */
 #define FLUX_NLFO_SH            ((FLUX_NLFO_TICKS_) < 181.0 ? 7 : (FLUX_NLFO_TICKS_) < 362.0 ? 8 : (FLUX_NLFO_TICKS_) < 724.0 ? 9 : \
                                  (FLUX_NLFO_TICKS_) < 1448.0 ? 10 : 11)

@@ -177,10 +177,10 @@ static void approachFallback(void)
     int32_t ast = st < 0 ? -st : st, aif = gGain.rampOpenLoopRevQ31, a = gSpd.rampAcc < 0 ? -gSpd.rampAcc : gSpd.rampAcc;
     int32_t *pr;
     int64_t zone;
-    if (!((st > 0 && c < 0) || (st < 0 && c > 0) || ac < OPENLOOP_SPIN_MIN_Q15)) return;
+    if (!((st > 0 && c < 0) || (st < 0 && c > 0) || ac < gGain.spdSpinMinQ15)) return;
     pr = (st > 0) ? &gSpd.speedRampSt.s32RampDown : &gSpd.speedRampSt.s32RampUp;
     if ((int32_t)*pr <= aif) return;
-    zone = (int64_t)OPENLOOP_FALLBACK_Q31 + ((a > aif) ? brakeSq(a) - brakeSq(aif) : 0);      /* (a^2 - a_if^2) / (2j) */
+    zone = (int64_t)gGain.spdFallbackQ31 + ((a > aif) ? brakeSq(a) - brakeSq(aif) : 0);      /* (a^2 - a_if^2) / (2j) */
     if ((int64_t)ast <= zone + a) {
         int32_t lim = a - SPEED_JERK_Q31;
         if (lim < aif) lim = aif;

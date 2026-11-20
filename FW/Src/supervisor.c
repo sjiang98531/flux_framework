@@ -339,7 +339,7 @@ static uint8_t runStopSlow(uint8_t stopReq)
     s_softStop = 1;
     if (softStopSlow()) {
         s_softStop = 0;
-        if (gSup.runState == RunState_Spin && abs(gMeas.speed) >= TRACK_END_Q15) {
+        if (gSup.runState == RunState_Spin && abs(gMeas.speed) >= gGain.spdTrackEndQ15) {
             /* 闭环中停机：不关 PWM，进入零电流跟踪（保持转子状态，滑行中再给指令无需飞车检测） */
             Spin_TrackBegin();
         } else {
@@ -362,8 +362,8 @@ static uint8_t stopRampSlow(void)
 {
     if ((IDENT_TEST && Ident_RunActive()) || gSup.stopMode != STOP_MODE_RAMP) return 0;
     if (gSup.runState != RunState_Spin || s_softStop) return 0;
-    if (abs(gSpd.ramp) <= TRACK_END_Q15) return 0;
-    gSpd.cmd = (gSpd.ramp > 0) ? TRACK_END_Q15 : -TRACK_END_Q15;
+    if (abs(gSpd.ramp) <= gGain.spdTrackEndQ15) return 0;
+    gSpd.cmd = (gSpd.ramp > 0) ? gGain.spdTrackEndQ15 : -gGain.spdTrackEndQ15;
     return 1;
 }
 

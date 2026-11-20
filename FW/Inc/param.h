@@ -57,7 +57,7 @@ typedef struct {
     /* ---- 磁链观测器与锁相环（flux_obs.c） */
     int16_t fluxNomQ15;     /* psi_f 在观测器磁链单位里的值（Q15），NLFO 以其为幅值目标、PLL 增益按其归一化 */
     int32_t fluxNom2;       /* fluxNomQ15 的平方，NLFO 比较 |psi|^2 用（快环不开方） */
-    int16_t nlfoNormQ8;     /* NLFO 修正增益的归一化系数（Q8），把时间常数做成 FLUX_NLFO_TAU_S */
+    int32_t nlfoNormQ8;     /* NLFO 修正增益的归一化系数（Q8），把时间常数做成 FLUX_NLFO_TAU_S（低磁链、大电感电机可超过 16 位） */
     int16_t fluxKtsQ15;     /* 观测器积分步长 KTs（Q15，随动态磁链基准变化） */
     /* fluxKrsQ15  Rs：Q15 电流 -> 观测器 Q15 电压（电阻压降 Rs*i）
      * fluxKlQ15   Lq：Q15 电流 -> 观测器 Q15 磁链（L*i，从定子磁链中减去得到转子磁链）
@@ -86,6 +86,20 @@ typedef struct {
     int16_t flyEndAmpTh;        /* 残余转速对应短路电流门限（Q15） */
     uint16_t flyStillSpinMs;    /* 测到转动后等待停稳时间（ms） */
     uint32_t flyMayMoveExpireMs;/* 停机后跳过最坏情况等待的过期时间（ms） */
+    /* ---- 观测器可靠性相关的转速门限（openloop.c / spin.c / speed_ctrl.c / supervisor.c / flystart.c / identify.c）
+     * cfg_app.h 中以 rpm 给出，其本义是"反电势占额定母线的比例 k"（观测器是否可靠取决于反电势相对逆变器电压误差的大小），
+     * 即 n = k * UDC_RATE * 60 / (2*pi * 极对数 * psi_f)：运行时按 MOTOR_PSI_F_WB / gParam.psiWb 换算，磁链测得与配置不同时随之调整。
+     * 磁链等于配置值时与原编译期常数逐位相同。比例限制在 [0.25, 4]，换算后不超过 0.9 * SPEED_MAX。
+     * 机械意义上的"静止"门限（FLY_STILL_*、FLY_LOW_MIN、ALIGN_STILL）与观测器去直流补偿起点（FLUX_HPF_COMP_MIN）不随之变化 */
+    int32_t spdHandoverQ31;     /* OPENLOOP_HANDOVER_RPM：I/F 切入闭环 */
+    int32_t spdFallbackQ31;     /* OPENLOOP_FALLBACK_RPM：闭环交还 I/F */
+    int32_t spdWarmMaxQ31;      /* 1.5 * OPENLOOP_FALLBACK_RPM：回退进 I/F 时开环转速上限 */
+    int16_t spdFallbackQ15;
+    int16_t spdSpinMinQ15;      /* OPENLOOP_SPIN_MIN_RPM：闭环最低指令转速 */
+    int16_t spdLostQ15;         /* SPIN_LOST_RPM：闭环失锁判据 */
+    int16_t spdTrackEndQ15;     /* TRACK_END_RPM：零电流跟踪 / 受控减速结束 */
+    int16_t spdFlyCatchQ15;     /* FLY_CATCH_RPM：飞车同向直接接入闭环下限 */
+    int16_t spdFlyRevMinQ15;    /* FLY_REV_SPIN_MIN_RPM：飞车反向直接接入闭环下限 */
     /* ---- 保护与告警（protect.c / diag.c） */
     int32_t protectSpeedOcQ15;  /* 超速保护门限（Q15） */
     uint16_t cfgWarn;           /* 增益超出定点范围被封顶：bit1 电流环，bit2 PLL，bit3 反电势前馈超量程 */
@@ -106,7 +120,8 @@ extern ParamStat_TypeDef gParamStat;
 void Param_Init(void);                              /* 上电：按配置标称值计算 gGain。须在各模块 Init 之前调用（Ctrl_Init） */
 void Param_Defaults(MotorParam_TypeDef *p);         /* 将配置标称值填入 p */
 void Param_Offer(const MotorParam_TypeDef *p, uint16_t validMask);  /* 辨识结束时提交结果（validMask 位定义同 rejectMask，标记哪些项有新值），回到 Stop 后才更新 */
-uint8_t Param_ApplyNow(const MotorParam_TypeDef *p);  /* 辨识模式：辨识过程中立即生效（慢环中调用），参数不合理时返回 0 */
+uint8_t Param_ApplyNow(const MotorParam_TypeDef *p);
+double Param_SpeedThScale(void);   /* 观测器可靠性相关转速门限按磁链的换算比例 MOTOR_PSI_F_WB / gParam.psiWb（[0.25, 4]），见 CtrlGain_TypeDef */  /* 辨识模式：辨识过程中立即生效（慢环中调用），参数不合理时返回 0 */
 void Param_Background(void);                        /* 主循环：Stop 状态（PWM 关闭）时更新 Param_Offer 提交的参数 */
 float Param_LqAt(float iAbsA);                      /* 按当前 gParam 的 L(|i|) 饱和模型（含 lsMaxA 钳位）计算电感 H */
 

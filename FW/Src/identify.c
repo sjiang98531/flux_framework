@@ -88,7 +88,7 @@ uint8_t Ident_TakeRestart(void)
     return r;
 }
 
-enum { OLF_WAIT_STABLE = 0, OLF_AVG = 1, OLF_DONE = 2 };
+enum { OLF_WAIT_STABLE = 0, OLF_AVG = 1, OLF_DONE = 2, OLF_NOSYNC = 3 };
 static uint8_t s_olFluxSt;
 static uint16_t s_olFluxN;
 
@@ -1501,15 +1501,25 @@ void Ident_Slow(void)
 #define RUN_PRE_MS      500
 #define RUN_SKIP_MS     20
 #define RUN_COAST_MS    400
-#define RUN_MIN_RPM_RAW (TRACK_END_RPM / 0.45)
-#define RUN_MIN_RPM     (RUN_MIN_RPM_RAW < 0.7 * MOTOR_SPEED_RATED_RPM ? RUN_MIN_RPM_RAW : 0.7 * MOTOR_SPEED_RATED_RPM)
+/* 运行测量最低转速：保证滑行后仍高于零电流跟踪结束转速 TRACK_END（随磁链换算，见 param.h），不超过 0.7 倍额定转速 */
+static double runMinRpm(void)
+{
+    double te = TRACK_END_RPM * Param_SpeedThScale(), r;
+    if (te > 0.9 * SPEED_MAX) te = 0.9 * SPEED_MAX;
+    r = te / 0.45;
+    return (r < 0.7 * MOTOR_SPEED_RATED_RPM) ? r : 0.7 * MOTOR_SPEED_RATED_RPM;
+}
+#define RUN_MIN_RPM     runMinRpm()
 
 enum { RN_WAIT_STABLE = 0, RN_PRE_AVG, RN_COAST, RN_DONE };
 static uint8_t  s_rnSt;
 static uint16_t s_rnT;
 static int16_t  s_rnCmd;
 static int32_t  s_rnIq, s_rnId, s_rnW;
-static float    s_rnVd, s_rnVq, s_rnS[7], s_rnX2y, s_rnWs;
+static uint16_t s_rnCoastMs;         /* 本次滑行时长（按预计减速度，见 RN_PRE_AVG） */
+static int16_t  s_rnW0;              /* 滑行前平均转速（Q15） */
+static int32_t  s_rnAccFF;           /* 滑行段 PLL 加速度前馈（Q31 / 拍） */
+static float    s_rnS[7], s_rnX2y, s_rnWs, s_rnVm, s_rnI2;
 
 uint8_t Ident_HoldTrack(void)
 {
@@ -1562,23 +1572,40 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
         s_rnW += w;
         if (++s_rnT >= RUN_PRE_MS) {
             uint16_t i;
-            s_rnVd = s_rnVq = s_rnX2y = s_rnWs = 0;
+            /* 滑行时长：零电流后负载转矩不变，减速度 ≈ 加速度系数 * 滑行前 iq。限制转速降不超过 30%
+             * （降得更多时反电势变小、观测器易跟丢；重载时 400 ms 内可能直接停转）。下限 40 ms 保证二次拟合点数 */
+            {
+                float iqA = (float)s_rnIq / RUN_PRE_MS * (float)(I_MAX / 32768.0);
+                float w0 = (float)s_rnW / RUN_PRE_MS * (float)(SPEED_MAX / 32768.0);
+                float a = (float)gParam.accRpmSPerA * (iqA < 0 ? -iqA : iqA), t;
+                if (w0 < 0) w0 = -w0;
+                t = (a > 1.0f) ? 300.0f * w0 / a : (float)RUN_COAST_MS;
+                s_rnCoastMs = (uint16_t)(t > RUN_COAST_MS ? RUN_COAST_MS : (t < 40.0f ? 40.0f : t));
+                s_rnW0 = (int16_t)(s_rnW / RUN_PRE_MS);
+                /* PLL 加速度前馈：零电流后 dω/dt = -acc * iq（负载转矩不变）。PLL（二阶，ωn = FLUXPLL_WN_HZ）在恒加速度 a 下
+                 * 稳态相位误差为 a / ωn²，重载时可达数十度而跟丢；按已知减速度前馈，残差只剩加速度系数误差的部分 */
+                s_rnAccFF = (int32_t)(-(float)gParam.accRpmSPerA * iqA / (float)PWM_FREQ / (float)SPEED_MAX * 2147483648.0f);
+            }
+            s_rnX2y = s_rnWs = s_rnVm = s_rnI2 = 0;
             for (i = 0; i < 7; i++) s_rnS[i] = 0;
             s_rnT = 0;
             s_rnSt = RN_COAST;
             Spin_TrackBegin();
+            gEst.pll.s32AccFF = s_rnAccFF;
         }
         break;
     case RN_COAST:
         if (!tracking) {
+            gEst.pll.s32AccFF = 0;
             s_rnSt = RN_WAIT_STABLE;
             s_rnT = 0;
             break;
         }
         if (++s_rnT > RUN_SKIP_MS) {
             float x = (float)s_rnT * 0.001f, y = (float)w;
-            s_rnVd += gFoc.vdq.s16D;
-            s_rnVq += gFoc.vdq.s16Q;
+            float vd = gFoc.vdq.s16D, vq = gFoc.vdq.s16Q, id = gFoc.idq.s16D, iq = gFoc.idq.s16Q;
+            s_rnVm += sqrtf(vd * vd + vq * vq);      /* 零电流时 v = e，模与跟踪角误差无关 */
+            s_rnI2 += id * id + iq * iq;
             s_rnWs += y;
             s_rnS[0] += 1;
             s_rnS[1] += x;
@@ -1589,7 +1616,9 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
             s_rnS[6] += x * y;
             s_rnX2y += x * x * y;
         }
-        if (s_rnT >= RUN_SKIP_MS + RUN_COAST_MS) {
+        /* 结束：到预定时长，或转速已降到滑行前的 70%（实际负载大于预计） */
+        if (s_rnT >= RUN_SKIP_MS + s_rnCoastMs ||
+            (s_rnT > RUN_SKIP_MS + 20 && 10 * (int32_t)(w < 0 ? -w : w) < 7 * (int32_t)(s_rnW0 < 0 ? -s_rnW0 : s_rnW0))) {
             float n = s_rnS[0], a1 = s_rnS[1], a2 = s_rnS[2], a3 = s_rnS[3], a4 = s_rnS[4];
             float y0 = s_rnS[5], y1 = s_rnS[6], y2 = s_rnX2y;
             float det = n * (a2 * a4 - a3 * a3) - a1 * (a1 * a4 - a3 * a2) + a2 * (a1 * a3 - a2 * a2);
@@ -1597,10 +1626,14 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
             float ks = (float)(SPEED_MAX / 32768.0);
             float wm = s_rnWs / n * ks, we = wm * (float)(2.0 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS);
             float iq = (float)s_rnIq / RUN_PRE_MS * (float)(I_MAX / 32768.0);
-            float vm = sqrtf(s_rnVd * s_rnVd + s_rnVq * s_rnVq) / n * (float)(UDC_MAX / 32768.0);
+            float vm = s_rnVm / n * (float)(UDC_MAX / 32768.0);
+            float irms = sqrtf(s_rnI2 / n) * (float)(I_MAX / 32768.0);
+            /* 本测量的前提是滑行段电流为零（v = e、无转矩）：残余电流有效值超过滑行前负载电流的 1/5 时
+             * （零电流跟踪未能保持，例如角度跟丢），psi 与加速度系数均不采用，保留 I/F 中测得的 psi */
+            uint8_t zeroI = (uint8_t)(irms < 0.2f * (iq < 0 ? -iq : iq));
             if (we < 0) we = -we;
-            if (we > 1.0f) gIdent.psiWb = vm / we;
-            if (det != 0 && (iq > 0.02f || iq < -0.02f)) gIdent.accRpmSPerA = -(db / det) * ks / iq;
+            if (zeroI && we > 1.0f) gIdent.psiWb = vm / we;
+            if (zeroI && det != 0 && (iq > 0.02f || iq < -0.02f)) gIdent.accRpmSPerA = -(db / det) * ks / iq;
             gIdent.runRpm = (float)s_rnW / RUN_PRE_MS * ks;
             gIdent.runIqA = iq;
             gIdent.runIdA = (float)s_rnId / RUN_PRE_MS * (float)(I_MAX / 32768.0);
@@ -1611,6 +1644,7 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
                 if (gIdent.accRpmSPerA > 0) { p.accRpmSPerA = gIdent.accRpmSPerA; m |= 16u; }
                 if (!Param_ApplyNow(&p)) Param_Offer(&p, m);
             }
+            gEst.pll.s32AccFF = 0;
             gIdent.state = IDENT_DONE;
             s_rnSt = RN_DONE;
         }
@@ -1623,52 +1657,122 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
 #define OLFLUX_SETTLE_MS   300
 #define OLFLUX_AVG_MS      500
 
+/* I/F 开环恒速段测磁链：e = v - R*i - Vdt - jωL*i（拖动坐标系，电流恒定故无 L*di/dt），psi = mean|e| / ω。
+ * I/F 没有阻尼，负载角会以 ω_h = sqrt(p * 最大加速度) 摆动（低磁链 / 大惯量时摆幅可达数十度）：
+ * 摆动时 e 在拖动坐标系中来回转动，若先对矢量求平均再取模，结果按摆幅缩小（摆幅 70° 时约小 40%）。
+ * 因此每拍先做 8 ms 低通（滤掉 PWM / 采样噪声，远快于摆动周期）再取模、对模求平均：
+ * 转子同步时平均转速等于拖动转速，mean|e| = psi * ω 与摆幅无关 */
+static float s_olfF[4], s_olfE, s_olfEd, s_olfEq;
+
+static float olfEmf(float w, float *pd, float *pq)
+{
+    float im, r = (float)gParam.rsOhm, l, vdt = 0, vd = s_olfF[2], vq = s_olfF[3], ed, eq;
+    float vph = (float)gParam.dtEffS * (float)PWM_FREQ * gMeas.vbusAvg * (float)(UDC_MAX / 32768.0);
+    uint16_t j;
+    float id = s_olfF[0], iq = s_olfF[1];
+    im = sqrtf(id * id + iq * iq);
+    l = Param_LqAt(im);
+    for (j = 0; j < 16; j++) {
+        float sn = sinf(((float)j + 0.5f) * (float)(MATH_PI / 32.0)), x = im * sn / (float)INVERTER_DT_I0_A;
+        vdt += (x > 1.0f ? 1.0f : x) * sn;
+    }
+    vdt *= vph / 8.0f;
+    if (im > 0.01f) { vd -= vdt * id / im; vq -= vdt * iq / im; }
+    vd -= r * id;
+    vq -= r * iq;
+    ed = vd + w * l * iq;
+    eq = vq - w * l * id;
+    /* 凸极：电感压降取决于电流在转子 d/q 上的分量，而转子相对拖动坐标的角度未知。
+     * 反电势沿转子 q 轴，故由 e 的方向得转子 d 轴方向 (c, s) = (eq, -ed)/|e|，在转子坐标中重算：
+     *   e_q = v_q' - ω Ld i_d'，并要求 e_d = v_d' + ω Lq i_q' = 0；迭代 3 次（每次误差按 (Ld-Lq)/L 量级缩小） */
+    if ((float)gParam.ldH != l) {
+        float ld = (float)gParam.ldH, m;
+        for (j = 0; j < 3; j++) {
+            float c, sn, vdr, vqr, idr, iqr;
+            m = sqrtf(ed * ed + eq * eq);
+            if (m < 1e-6f) break;
+            c = eq / m;
+            sn = -ed / m;
+            idr = c * id + sn * iq;
+            iqr = -sn * id + c * iq;
+            vdr = c * vd + sn * vq;
+            vqr = -sn * vd + c * vq;
+            /* 转子坐标中的反电势矢量 (vdr + ω Lq iqr, vqr - ω Ld idr)，转回拖动坐标供下一次取方向 */
+            {
+                float a = vdr + w * l * iqr, b = vqr - w * ld * idr;
+                ed = c * a - sn * b;
+                eq = sn * a + c * b;
+            }
+        }
+    }
+    *pd = ed;
+    *pq = eq;
+    return sqrtf(ed * ed + eq * eq);
+}
+
 uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
 {
+    const float ki = (float)(I_MAX / 32768.0), kv = (float)(UDC_MAX / 32768.0);
+    float x[4];
+    uint16_t j;
     if (!Ident_RunActive() || s_olFluxSt == OLF_DONE) return 0;
+    if (s_olFluxSt == OLF_NOSYNC && ol == tgt) return 0;     /* 本次拖动未同步：交给切闭环判据（超时 -> 堵转、加强一档重试），重新加速时再测 */
     if (ol != tgt) {
         s_olFluxSt = OLF_WAIT_STABLE;
         s_olFluxN = 0;
         return 1;
     }
+    x[0] = gFoc.idq.s16D * ki;
+    x[1] = gFoc.idq.s16Q * ki;
+    x[2] = gFoc.vdq.s16D * kv;
+    x[3] = gFoc.vdq.s16Q * kv;
     if (s_olFluxSt == OLF_WAIT_STABLE) {
+        for (j = 0; j < 4; j++) s_olfF[j] = (s_olFluxN == 0) ? x[j] : s_olfF[j] + (x[j] - s_olfF[j]) * 0.125f;
         if (++s_olFluxN < OLFLUX_SETTLE_MS) return 1;
         s_olFluxSt = OLF_AVG;
         s_olFluxN = 0;
-        s_rnId = s_rnIq = 0;
-        s_rnVd = s_rnVq = 0;
+        s_olfE = s_olfEd = s_olfEq = 0;
         return 1;
     }
-    s_rnId += gFoc.idq.s16D;
-    s_rnIq += gFoc.idq.s16Q;
-    s_rnVd += gFoc.vdq.s16D;
-    s_rnVq += gFoc.vdq.s16Q;
-    if (++s_olFluxN < OLFLUX_AVG_MS) return 1;
     {
-        const float ki = (float)(I_MAX / 32768.0) / OLFLUX_AVG_MS, kv = (float)(UDC_MAX / 32768.0) / OLFLUX_AVG_MS;
-        float id = s_rnId * ki, iq = s_rnIq * ki, vd = s_rnVd * kv, vq = s_rnVq * kv;
-        float w = (float)ol * (float)(SPEED_MAX / 2147483648.0 * 2.0 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS);
-        float im = sqrtf(id * id + iq * iq), r = (float)gParam.rsOhm, l = Param_LqAt(im), vdt = 0, ed, eq;
-        float vph = (float)gParam.dtEffS * (float)PWM_FREQ * gMeas.vbusAvg * (float)(UDC_MAX / 32768.0);
-        uint16_t j;
-        for (j = 0; j < 16; j++) {
-            float s = sinf(((float)j + 0.5f) * (float)(MATH_PI / 32.0)), x = im * s / (float)INVERTER_DT_I0_A;
-            vdt += (x > 1.0f ? 1.0f : x) * s;
-        }
-        vdt *= vph / 8.0f;
-        if (im > 0.01f) { vd -= vdt * id / im; vq -= vdt * iq / im; }
-        ed = vd - r * id + w * l * iq;
-        eq = vq - r * iq - w * l * id;
+        float w = (float)ol * (float)(SPEED_MAX / 2147483648.0 * 2.0 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS), ed, eq;
         if (w < 0) w = -w;
+        for (j = 0; j < 4; j++) s_olfF[j] += (x[j] - s_olfF[j]) * 0.125f;
+        s_olfE += olfEmf((float)ol < 0 ? -w : w, &ed, &eq);
+        s_olfEd += ed;
+        s_olfEq += (ol < 0) ? -eq : eq;
+        if (++s_olFluxN < OLFLUX_AVG_MS) return 1;
+        /* 同步判据（与 psi 无关）：转子同步时反电势沿转子 q 轴、在拖动坐标中只随负载角摆动，
+         *   1. 不旋转：矢量平均的模 / 模的平均 > 0.3（摆幅 90° 时约 0.47；失步时 e 以滑差频率旋转，平均趋于 0）；
+         *   2. 方向在拖动 q 轴（按转向）±60° 内（恒速段负载角小；转子停滞时只剩沿电流方向的 R / 死区残差）。
+         * 不满足则本次不测，交给切闭环判据（超时 -> 堵转、加强一档重试），重新加速时再测 */
+        if (!(sqrtf(s_olfEd * s_olfEd + s_olfEq * s_olfEq) > 0.3f * s_olfE && s_olfEq > 0.5f * sqrtf(s_olfEd * s_olfEd + s_olfEq * s_olfEq))) {
+            s_olFluxSt = OLF_NOSYNC;
+            return 0;
+        }
         if (w > 1.0f) {
             MotorParam_TypeDef p = gParam;
-            gIdent.psiOpenLoopWb = sqrtf(ed * ed + eq * eq) / w;
+            gIdent.psiOpenLoopWb = s_olfE / OLFLUX_AVG_MS / w;
+            /* 加速度系数 ∝ psi / J：惯量未测前按配置惯量换算（运行辨识随后实测加速度系数时覆盖） */
+            if (p.psiWb > 0) p.accRpmSPerA *= gIdent.psiOpenLoopWb / p.psiWb;
             p.psiWb = gIdent.psiOpenLoopWb;
             (void)Param_ApplyNow(&p);
         }
     }
     s_olFluxSt = OLF_DONE;
     return 0;
+}
+
+/* I/F 切闭环失败（堵转超时）：所测磁链可能来自未同步的拖动，下次拖动重新测量 */
+void Ident_OpenLoopFluxRearm(void)
+{
+    if (Ident_RunActive()) s_olFluxSt = OLF_WAIT_STABLE;
+}
+
+/* 运行辨识中、I/F 磁链尚未测得（openloop.c：此时 psi / 加速度系数仍为配置值，冷起动按保守档拖动） */
+uint8_t Ident_OpenLoopFluxPending(void)
+{
+    return (uint8_t)(Ident_RunActive() && s_olFluxSt != OLF_DONE);
 }
 
 uint8_t Ident_Fast(void)

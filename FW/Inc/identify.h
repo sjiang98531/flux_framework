@@ -58,7 +58,7 @@ typedef struct {
                                      * 实测远小于理论说明转子被卡住未摆动；f0 修正量 = K / (2π·f0)^2 */
     float lsSatKneeA, lsSatPerA;    /* 由 lqAt* 拟合的观测器饱和模型（拐点 / 每 A 下降量）-> MOTOR_LS_SAT_KNEE_A / PER_A；
                                      * 拟合同时给出 L0 写入 lqH（-> MOTOR_LQ_H）。无明显饱和时 PER_A = 0、lqH = 0.4 A 档的值 */
-    float psiOpenLoopWb;      /* 转子磁链（运行辨识第一步：I/F 开环中 |v - Ri - Vdt - jωLi| / ω），测得后立即生效再切闭环 */
+    float psiOpenLoopWb;      /* 转子磁链（运行辨识第一步：I/F 开环恒速段 mean|v - Ri - Vdt - jωLi| / ω，凸极按转子坐标），测得后立即生效再切闭环 */
     float psiWb;        /* 转子磁链（运行辨识：零电流滑行 |v|/ω）-> MOTOR_PSI_F_WB */
     float accRpmSPerA;  /* 转矩电流 -> 加速度（运行辨识：滑行减速度 / 滑行前 iq）-> MOTOR_ACC_RPM_S_PER_A */
     float runRpm, runIqA, runIdA;   /* 运行辨识工况：滑行前的转速、iq、id */
@@ -160,6 +160,8 @@ extern IdentTest_TypeDef gIdentTest;
 int16_t Ident_AlignTheta(void);     /* 定位角（Q15 角度，65536 = 一圈） */
 uint8_t Ident_StaticThisStart(void);    /* 本次起动执行静止测量（进入 Align 时、定位结束时查询） */
 uint8_t Ident_RunActive(void);          /* 运行测量进行中（I/F 测磁链、闭环滑行；受控减速停机让位） */
+uint8_t Ident_OpenLoopFluxPending(void); /* 运行辨识中 I/F 磁链尚未测得（psi、加速度系数仍为配置值） */
+void Ident_OpenLoopFluxRearm(void);      /* I/F 切闭环失败：下次拖动重新测磁链 */
 uint8_t Ident_TakeRestart(void);        /* 自动方式：静止测量刚完成，需停机后重新起动（读取后清除） */
 int16_t Ident_SpeedCmd(int16_t cmd);    /* 自动方式运行测量期间的转速指令（不低于 1.1 倍 RUN_MIN_RPM） */
 void    Ident_Reset(void);          /* 进 Align 时（静止测量） */

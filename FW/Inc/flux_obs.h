@@ -22,7 +22,7 @@
 
 typedef struct {
     int16_t s16KRs, s16KLq, s16KTs;          /* 模型常数 Q15（KLs 即 Lq） */
-    int16_t s16NlfoNormQ8;                   /* NLFO 归一化（Q8），上电 = FLUX_NLFO_NORM_Q8（对应 FLUX_NLFO_TAU_S）。
+    int32_t s32NlfoNormQ8;                   /* NLFO 归一化（Q8），上电 = FLUX_NLFO_NORM_Q8（对应 FLUX_NLFO_TAU_S）。
                                               * 时间常数与其成反比（SH 不变时）：
                                               * 768 = 19.2 ms，613 = 24 ms，460 = 32 ms */
     int32_t s32PsiAlF, s32PsiBeF;            /* 定子磁链 Q16.16 */

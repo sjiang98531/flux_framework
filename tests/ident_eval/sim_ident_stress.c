@@ -90,10 +90,10 @@ int main(int argc, char **argv) {
             PendSV_Handler();
         }
         Param_Background();
-        if (getenv("SIM_DIAG_SU") && gSup.mainState == MainState_Run && (k % (long)(0.005 * PWM_FREQ)) == 0 && t < atof(getenv("SIM_DIAG_SU"))) {
-            printf("SU t=%.3f run=%d th=%.1f rotor=%.1f rpm=%.1f id=%d iq=%d olspd=%d\n", t, (int)gSup.runState,
+        if (getenv("SIM_DIAG_SU") && gSup.mainState == MainState_Run && (k % (long)(0.005 * PWM_FREQ)) == 0 && t < atof(getenv("SIM_DIAG_SU")) && t >= (getenv("SIM_DIAG_SU_T0") ? atof(getenv("SIM_DIAG_SU_T0")) : 0)) {
+            printf("SU t=%.3f run=%d th=%.1f rotor=%.1f rpm=%.1f id=%d iq=%d olspd=%d psi=%.4g pll=%d ia=%d,%d v=%d,%d\n", t, (int)gSup.runState,
                    (double)(uint16_t)gFoc.theta * 360.0 / 65536.0, plant_theta_e(&pl) * 180.0 / 3.14159265358979323846,
-                   plant_rpm(&pl), (int)gFoc.idqRef.s16D, (int)gFoc.idqRef.s16Q, (int)gMeas.speed);
+                   plant_rpm(&pl), (int)gFoc.idqRef.s16D, (int)gFoc.idqRef.s16Q, (int)gMeas.speed, (double)gParam.psiWb, (int)(gEst.pll.s32Speed >> 16), gFoc.idq.s16D, gFoc.idq.s16Q, gFoc.vdq.s16D, gFoc.vdq.s16Q);
         }
         if (sens && gSup.mainState == MainState_Run) {
             int rs = (int)gSup.runState;
@@ -159,6 +159,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 5; i++) {
         if (gIdent.lqAtA[i] > id_max_swp) id_max_swp = gIdent.lqAtA[i];
     }
+    if (getenv("SIM_DIAG_TIER")) printf("PSIOL ol=%.5g run=%.5g rej=%u\n", gIdent.psiOpenLoopWb, gIdent.psiWb, (unsigned)gParamStat.rejectMask);
     if (getenv("SIM_DIAG_TIER")) printf("PARAM rs=%.5g ld=%.5g lq=%.5g dt=%.4g psi=%.5g acc=%.5g knee=%.4g per=%.5g lsmax=%.4g src=%u\n",
         gParam.rsOhm, gParam.ldH, gParam.lqH, gParam.dtEffS * 1e6, gParam.psiWb, gParam.accRpmSPerA, gParam.lsKneeA, gParam.lsPerA, gParam.lsMaxA, (unsigned)gParamStat.source);
     if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f nFault=%d boost=%u\n",

@@ -45,7 +45,7 @@ static int8_t sign16(int16_t x)
  * （正常减速在 OPENLOOP_FALLBACK_RPM 已交给 I/F），判为失锁或堵转 */
 static uint8_t spinTooSlow(void)
 {
-    return (uint8_t)((int32_t)sign16(gSpd.cmd) * gMeas.speed < SPIN_LOST_Q15);
+    return (uint8_t)((int32_t)sign16(gSpd.cmd) * gMeas.speed < gGain.spdLostQ15);
 }
 
 static void spinEntered(void);
@@ -128,6 +128,7 @@ void Spin_TrackSlow(void)
     uint8_t want = (uint8_t)(abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && !(IDENT_TEST && Ident_HoldTrack()));
     uint16_t n = s_trackN;
 
+    if (!(IDENT_TEST && Ident_HoldTrack())) gEst.pll.s32AccFF = 0;  /* 加速度前馈只用于运行辨识的滑行段（identify.c） */
     SpeedCtrl_FollowSpeed();            /* 速度环不运行：斜坡、积分器跟随估计转速，id = iq = 0 */
     FocCore_SetIdqRef(0, 0);
     Meas_SlowFilter();
@@ -151,7 +152,7 @@ void Spin_TrackSlow(void)
         SpeedCtrl_OnEnterSpin(0, 0);
         spinBeginChecks();
         s_track = 0;
-    } else if (abs(w) < TRACK_END_Q15) {
+    } else if (abs(w) < gGain.spdTrackEndQ15) {
         HAL_PwmAllOff();
         Sup_SwitchRunStop();
     }
@@ -217,7 +218,7 @@ static uint8_t fallbackBlend(void)
     if (s_fbLim < 0) {
         if (!OpenLoop_WantsFallback()) return 0;
         s_fbLim = abs(d);
-    } else if (cmdSameDir() && abs(gSpd.cmd) >= OPENLOOP_SPIN_MIN_Q15) {
+    } else if (cmdSameDir() && abs(gSpd.cmd) >= gGain.spdSpinMinQ15) {
         /* 开始融合后只依据指令：转速在回退门限附近含噪声，若按转速判断会反复清零、融合无法完成，
          * 导致长时间停留在门限以下的闭环中。仅当指令改回同向时才取消 */
         s_fbLim = -1;
@@ -261,7 +262,7 @@ void Spin_Slow(void)
     } else {
         /* 兜底：指令反向且已低于闭环最低转速仍未回退（正常在 OPENLOOP_FALLBACK_RPM 即开始回退，仅当撤除制动 id 期间
          * 转速已很低时才会进入此分支），立即交给 I/F */
-        if (abs(gMeas.speed) < OPENLOOP_SPIN_MIN_Q15) {
+        if (abs(gMeas.speed) < gGain.spdSpinMinQ15) {
             Sup_SwitchSpinOpenLoop();
         }
     }

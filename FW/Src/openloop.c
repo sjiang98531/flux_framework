@@ -36,6 +36,7 @@ static int32_t s_accStepFull;                         /* 开环电流达到目�
  * OPENLOOP_WARM_MAX_A，加速度每档减半；堵转故障释放后由现有的自动重启（SUP_RESTART_LIMIT 次内）以新档位重试。
  * 学到的档位保留到下次上电（之后的起动直接使用），不影响闭环回退 / 飞车接管进入 I/F。正常电机首次即可起动，行为不变 */
 #define OPENLOOP_BOOST_MAX  3u
+#define OPENLOOP_IDENT_BOOST 2u   /* 运行辨识测得磁链前的冷起动最低档 */
 static uint8_t s_ifBoost;
 
 uint8_t OpenLoop_BoostLevel(void) { return s_ifBoost; }
@@ -49,9 +50,9 @@ int16_t OpenLoop_SpeedQ15(void) { return (int16_t)(s_olSpeed >> 16); }
 static int32_t openLoopTarget(void)
 {
     int32_t c = gSpd.cmd, a = (c < 0 ? -c : c) << 16;
-    if (a < ((int32_t)OPENLOOP_SPIN_MIN_Q15 << 16)) return c << 16;
-    if (a < OPENLOOP_HANDOVER_Q31) a = OPENLOOP_HANDOVER_Q31;
-    if (a > OPENLOOP_FALLBACK_Q31) a = OPENLOOP_FALLBACK_Q31;
+    if (a < ((int32_t)gGain.spdSpinMinQ15 << 16)) return c << 16;
+    if (a < gGain.spdHandoverQ31) a = gGain.spdHandoverQ31;
+    if (a > gGain.spdFallbackQ31) a = gGain.spdFallbackQ31;
     return c > 0 ? a : -a;
 }
 
@@ -75,9 +76,9 @@ uint8_t OpenLoop_WantsFallback(void)
 {
     int32_t filt = gMeas.speed, cmd = gSpd.cmd;
     int32_t af = filt < 0 ? -filt : filt;
-    if (af >= OPENLOOP_FALLBACK_Q15) return 0;
+    if (af >= gGain.spdFallbackQ15) return 0;
     /* 指令反向，或指令低于闭环最低转速：交给 I/F */
-    return (uint8_t)((cmd > 0) != (filt > 0) || (cmd < 0 ? -cmd : cmd) < OPENLOOP_SPIN_MIN_Q15);
+    return (uint8_t)((cmd > 0) != (filt > 0) || (cmd < 0 ? -cmd : cmd) < gGain.spdSpinMinQ15);
 }
 
 /* 从闭环回退到 I/F 时的开环电流：至少为 OPENLOOP_CURRENT_A；需能提供此刻的 iq 且负载角不超过 δmax（|iq| / sin(δmax)）；
@@ -104,8 +105,12 @@ int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
 static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
 {
     int32_t cur = OPENLOOP_IQ_Q15;
-    if (!warm && s_ifBoost && OPENLOOP_WARM_IMAX_Q15 > OPENLOOP_IQ_Q15)
-        cur += ((int32_t)s_ifBoost * (OPENLOOP_WARM_IMAX_Q15 - OPENLOOP_IQ_Q15)) / (int32_t)OPENLOOP_BOOST_MAX;
+    uint8_t boost = s_ifBoost;
+    /* 运行辨识中磁链尚未测得：加速度系数（∝ psi / J）仍为配置值，可能偏大数倍，冷起动至少按 OPENLOOP_IDENT_BOOST 档拖动
+     * （加速度 1/4、电流加大），留出参数未知时的负载角余量。辨识允许耗时，测得 psi 后恢复正常档 */
+    if (IDENT_TEST && !warm && boost < OPENLOOP_IDENT_BOOST && Ident_OpenLoopFluxPending()) boost = OPENLOOP_IDENT_BOOST;
+    if (!warm && boost && OPENLOOP_WARM_IMAX_Q15 > OPENLOOP_IQ_Q15)
+        cur += ((int32_t)boost * (OPENLOOP_WARM_IMAX_Q15 - OPENLOOP_IQ_Q15)) / (int32_t)OPENLOOP_BOOST_MAX;
     e->warm = warm;
     e->thetaOffset = 0;
     if (warm) {
@@ -130,8 +135,8 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
          * PLL 瞬时转速噪声较大，若开环转速初值偏差过大，进入 I/F 后易失步。
          * 飞车接管时二者相同（Est_OnCatch 均设为测得的转速） */
         sp = (int32_t)speedQ15 << 16;
-        if (sp > OPENLOOP_WARM_MAX_Q31) sp = OPENLOOP_WARM_MAX_Q31;      /* 仅防止异常值，正常情况 <= 回退转速 */
-        if (sp < -OPENLOOP_WARM_MAX_Q31) sp = -OPENLOOP_WARM_MAX_Q31;
+        if (sp > gGain.spdWarmMaxQ31) sp = gGain.spdWarmMaxQ31;      /* 仅防止异常值，正常情况 <= 回退转速 */
+        if (sp < -gGain.spdWarmMaxQ31) sp = -gGain.spdWarmMaxQ31;
         e->olSpeed = sp;
     } else {
         e->olSpeed = 0;
@@ -145,7 +150,7 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
      * （按"所需 iq"增加的那部分电流用于已有转矩需求，不用于加速）。冷起动 / 同向 = 1 */
     e->accScaleQ12 = (warm && revAcc) ? (int32_t)(((int64_t)OPENLOOP_REV_IQ_Q15 << 12) / OPENLOOP_IQ_Q15) : 4096;
     e->accStepFull = (int32_t)(((int64_t)gGain.openLoopAccStepQ31 * e->accScaleQ12) >> 12);
-    if (!warm) e->accStepFull >>= s_ifBoost;     /* 失速自适应：加速度每档减半 */
+    if (!warm) e->accStepFull >>= boost;         /* 失速自适应：加速度每档减半 */
     /* 开环加速度与开环电流成正比：电流仍按 CURRENT_SLEW_A_S 向目标上升时，可产生的转矩相应受限，
      * 加速度按同一比例给出，负载角余量（OPENLOOP_ACC_RPM_S 取最大加速度的 1/3）全程保持不变。
      * accStepFull * 电流 < 2^31 由配置检查 OPENLOOP_ACC_STEP_FITS 保证（32 位乘除） */
@@ -167,8 +172,8 @@ void OpenLoop_PrepareSwing(int16_t speedQ15, OpenLoopEntry_TypeDef *e)
     prepareOpenLoop(0, 0, 0, 0, 0, e);
     e->olCur = ALIGN_ID_Q15;
     e->olSpeed = (int32_t)speedQ15 << 16;
-    if (e->olSpeed > OPENLOOP_WARM_MAX_Q31) e->olSpeed = OPENLOOP_WARM_MAX_Q31;      /* 仅防止异常值 */
-    if (e->olSpeed < -OPENLOOP_WARM_MAX_Q31) e->olSpeed = -OPENLOOP_WARM_MAX_Q31;
+    if (e->olSpeed > gGain.spdWarmMaxQ31) e->olSpeed = gGain.spdWarmMaxQ31;      /* 仅防止异常值 */
+    if (e->olSpeed < -gGain.spdWarmMaxQ31) e->olSpeed = -gGain.spdWarmMaxQ31;
     e->accStep = (e->accStepFull * e->olCur) / e->olCurTarget;
 }
 
@@ -208,8 +213,8 @@ void OpenLoop_CommitCatch(int16_t spd)
 {
     OpenLoopEntry_TypeDef e = s_catchIf[(openLoopTarget() > 0) != (spd > 0)];
     int32_t sp = (int32_t)spd << 16;
-    if (sp > OPENLOOP_WARM_MAX_Q31) sp = OPENLOOP_WARM_MAX_Q31;
-    if (sp < -OPENLOOP_WARM_MAX_Q31) sp = -OPENLOOP_WARM_MAX_Q31;
+    if (sp > gGain.spdWarmMaxQ31) sp = gGain.spdWarmMaxQ31;
+    if (sp < -gGain.spdWarmMaxQ31) sp = -gGain.spdWarmMaxQ31;
     e.olSpeed = sp;
     OpenLoop_Commit(&e);
 }
@@ -328,8 +333,8 @@ void OpenLoop_Slow(void)
         Sup_CountRestart();
     } else if (IDENT_TEST && Ident_OpenLoopFluxSlow(ol, s_olTarget)) {
         /* 运行辨识：在开环中先测磁链（identify.c），测得后生效，再按下述一致性判据切闭环 */
-    } else if ((s_olTarget >= OPENLOOP_HANDOVER_Q31 && ol >= OPENLOOP_HANDOVER_Q31) ||
-               (s_olTarget <= -OPENLOOP_HANDOVER_Q31 && ol <= -OPENLOOP_HANDOVER_Q31)) {
+    } else if ((s_olTarget >= gGain.spdHandoverQ31 && ol >= gGain.spdHandoverQ31) ||
+               (s_olTarget <= -gGain.spdHandoverQ31 && ol <= -gGain.spdHandoverQ31)) {
         /* 已超过切换转速且与目标同向（反转时开环需先过零）：边拖动边检查。PLL 滤波 16 ms 在 I/F 加速度下
          * 仅滞后约 2 rpm，远小于 OPENLOOP_AGREE_RATIO 的容差，无需补偿 */
         int64_t d = (int64_t)s_pllFilt - ol;
@@ -340,6 +345,7 @@ void OpenLoop_Slow(void)
             openLoopHandover();
         } else if (++s_hold > OPENLOOP_TIMEOUT_TICKS) {
             if (s_ifBoost < OPENLOOP_BOOST_MAX) s_ifBoost++;    /* 失速自适应：下一次冷起动加强一档 */
+            if (IDENT_TEST) Ident_OpenLoopFluxRearm();      /* 运行辨识：本次磁链可能测自未同步的拖动，下次重测 */
             Sup_RaiseFault(MC_FAULT_ROTOR_BLOCKED);
             Sup_CountRestart();
         }

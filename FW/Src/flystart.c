@@ -19,8 +19,8 @@ FlyStart_TypeDef gFly;
  * 可能导致失步。因此反向且低于 FLY_REV_SPIN_MIN_RPM 时，直接按飞车测得的转速 / 角度进入 I/F（测量值准确），由 I/F 减速过零。 */
 static int32_t flySpinMin(uint8_t sameDir)
 {
-    if (!sameDir) return FLY_REV_SPIN_MIN_Q15;
-    return FLY_CATCH_Q15;
+    if (!sameDir) return gGain.spdFlyRevMinQ15;
+    return gGain.spdFlyCatchQ15;
 }
 
 /* ===========================================================================
