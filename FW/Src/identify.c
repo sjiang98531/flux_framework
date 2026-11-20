@@ -136,15 +136,10 @@ static float dtGeomFactor(int16_t thetaQ15)
 static void dtFit(void)
 {
     const IdentTest_TypeDef *t = &gIdentTest;
-    /* 板级校准后残余零偏的规格上界（A），用于扩展死区过渡带边界。
-     * 取 2%FS 与 0.5×I0 的较小者：高 I_MAX 板（如 vac48 I_MAX=39A）的 2%FS=0.78A
-     * 远大于 I0=0.5A，此时用 0.5×I0=0.25A 即可覆盖残余零偏而不误拦正常电机 */
-    #define DT_OFF_BOUND_A  (0.02f * (float)I_MAX < 0.5f * (float)INVERTER_DT_I0_A ? \
-                             0.02f * (float)I_MAX : 0.5f * (float)INVERTER_DT_I0_A)
-    /* 拟合下限：2.6×I0 + 2×off_bound（含 1.3x 配置偏差 + 零偏余量） */
-    #define DT_FIT_FLOOR    (2.6f * (float)INVERTER_DT_I0_A + 2.0f * DT_OFF_BOUND_A)
-    /* 可辨识性边界：最高档至少 3.9×I0 + 2×off_bound */
-    #define DT_XMAX_MIN     (3.9f * (float)INVERTER_DT_I0_A + 2.0f * DT_OFF_BOUND_A)
+    /* 静态门限回归三相退出死区过渡带的物理边界（2.0×I0 / 3.5×I0），
+     * 不再将 ±2%FS 零偏余量硬叠加到静态下限，改由低端自适应剥离与斜率一致性拦截 */
+    #define DT_FIT_FLOOR    (2.0f * (float)INVERTER_DT_I0_A)
+    #define DT_XMAX_MIN     (3.5f * (float)INVERTER_DT_I0_A)
     float sx = 0, sy = 0, sxx = 0, sxy = 0, n = 0, g, vbus, vd0, sse = 0, xMin = 1e9f, xMax = 0.0f;
     uint16_t i, fitDrop = 0, totDrop = 0;
     float xArr[IDENT_DT_N], yArr[IDENT_DT_N];
@@ -174,55 +169,69 @@ static void dtFit(void)
     }
     gIdent.rsOhm = (n * sxy - sx * sy) / (n * sxx - sx * sx);
     vd0 = (sy - gIdent.rsOhm * sx) / n;
-    /* 分半斜率一致性检查：低半与高半各拟一条斜率，差异过大说明仍受过渡带污染 */
-    {
-        float sLo = 0, sHi = 0;
-        uint16_t half = nFit / 2;
-        if (half >= 2 && nFit - half >= 2) {
-            float sxL=0, syL=0, sxxL=0, sxyL=0, sxH=0, syH=0, sxxH=0, sxyH=0;
-            for (i = 0; i < half; i++) { sxL+=xArr[i]; syL+=yArr[i]; sxxL+=xArr[i]*xArr[i]; sxyL+=xArr[i]*yArr[i]; }
-            for (i = half; i < nFit; i++) { sxH+=xArr[i]; syH+=yArr[i]; sxxH+=xArr[i]*xArr[i]; sxyH+=xArr[i]*yArr[i]; }
-            { float dL = (float)half*sxxL - sxL*sxL; sLo = (dL > 1e-12f) ? ((float)half*sxyL - sxL*syL) / dL : 0.0f; }
-            { float dH = (float)(nFit-half)*sxxH - sxH*sxH; sHi = (dH > 1e-12f) ? ((float)(nFit-half)*sxyH - sxH*syH) / dH : 0.0f; }
+    /* 低端自适应剥离：若最低电流段局部斜率明显高于前 nFit-1 点 OLS 斜率，说明最低点仍受过渡带污染 */
+    while (nFit >= 4u) {
+        float dxTail = xArr[nFit - 2u] - xArr[nFit - 1u];
+        float sTail, sxH = 0, syH = 0, sxxH = 0, sxyH = 0, dH, rsHi;
+        float nH = (float)(nFit - 1u);
+        if (dxTail <= 1e-6f) break;
+        sTail = (yArr[nFit - 2u] - yArr[nFit - 1u]) / dxTail;
+        for (i = 0; i < nFit - 1u; i++) {
+            float x = xArr[i], y = yArr[i];
+            sxH += x; syH += y; sxxH += x * x; sxyH += x * y;
         }
-        /* 阈值：两半斜率相对差异 > 50% 视为低电流半段受过渡带污染；
-         * 若高电流半段（xArr[0..half-1]）点数 >= 3，丢弃受污染的低半段重拟合，否则报不稳定 */
-        if (sLo > 0.0f && sHi > 0.0f) {
-            float ratio = (sLo > sHi) ? sLo / sHi : sHi / sLo;
-            if (ratio > 1.5f) {
-                if (half >= 3u) {
-                    nFit = half;
-                    n = (float)nFit;
-                    sx = sy = sxx = sxy = 0.0f;
-                    xMin = 1e9f; xMax = 0.0f;
-                    for (i = 0; i < nFit; i++) {
-                        float x = xArr[i], y = yArr[i];
-                        if (x < xMin) xMin = x;
-                        if (x > xMax) xMax = x;
-                        sx += x; sy += y; sxx += x * x; sxy += x * y;
-                    }
-                    gIdent.rsOhm = (n * sxy - sx * sy) / (n * sxx - sx * sx);
-                    vd0 = (sy - gIdent.rsOhm * sx) / n;
-                } else {
-                    gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
-                    gIdent.rsOhm = 0.0f;
-                    gIdent.deadVoltV = 0.0f;
-                    gIdent.deadTimeS = 0.0f;
-                    return;
-                }
-            }
+        dH = nH * sxxH - sxH * sxH;
+        if (dH <= 1e-12f) break;
+        rsHi = (nH * sxyH - sxH * syH) / dH;
+        if (rsHi > 0.0f && sTail > 1.35f * rsHi) {
+            nFit--;
+            n = (float)nFit;
+            sx = sxH; sy = syH; sxx = sxxH; sxy = sxyH;
+            xMin = xArr[nFit - 1u];
+            xMax = xArr[0];
+            gIdent.rsOhm = rsHi;
+            vd0 = (sy - gIdent.rsOhm * sx) / n;
+        } else {
+            break;
         }
     }
-    /* 残差：口径与拟合窗统一（直接遍历最终保留的 xArr/yArr） */
+    /* 斜率一致性检查：nFit >= 4 做分半斜率比，nFit == 3 做上下两段斜率比 */
+    if (nFit >= 4u) {
+        float sLo = 0, sHi = 0;
+        uint16_t half = nFit / 2u;
+        float sxL=0, syL=0, sxxL=0, sxyL=0, sxH=0, syH=0, sxxH=0, sxyH=0;
+        for (i = 0; i < half; i++) { sxL+=xArr[i]; syL+=yArr[i]; sxxL+=xArr[i]*xArr[i]; sxyL+=xArr[i]*yArr[i]; }
+        for (i = half; i < nFit; i++) { sxH+=xArr[i]; syH+=yArr[i]; sxxH+=xArr[i]*xArr[i]; sxyH+=xArr[i]*yArr[i]; }
+        { float dL = (float)half*sxxL - sxL*sxL; sLo = (dL > 1e-12f) ? ((float)half*sxyL - sxL*syL) / dL : 0.0f; }
+        { float dH = (float)(nFit-half)*sxxH - sxH*sxH; sHi = (dH > 1e-12f) ? ((float)(nFit-half)*sxyH - sxH*syH) / dH : 0.0f; }
+        if (sLo <= 0.0f || sHi <= 0.0f || ((sLo > sHi) ? sLo / sHi : sHi / sLo) > 1.45f) {
+            gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
+            gIdent.rsOhm = 0.0f;
+            gIdent.deadVoltV = 0.0f;
+            gIdent.deadTimeS = 0.0f;
+            return;
+        }
+    } else if (nFit == 3u) {
+        float dx01 = xArr[0] - xArr[1], dx12 = xArr[1] - xArr[2];
+        float s01 = (dx01 > 1e-6f) ? (yArr[0] - yArr[1]) / dx01 : 0.0f;
+        float s12 = (dx12 > 1e-6f) ? (yArr[1] - yArr[2]) / dx12 : 0.0f;
+        if (s01 <= 0.0f || s12 <= 0.0f || ((s01 > s12) ? s01 / s12 : s12 / s01) > 1.45f) {
+            gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
+            gIdent.rsOhm = 0.0f;
+            gIdent.deadVoltV = 0.0f;
+            gIdent.deadTimeS = 0.0f;
+            return;
+        }
+    }
+    /* 残差：口径与拟合窗统一，按纯电阻压降跨度归一化 */
     for (i = 0; i < nFit; i++) {
         float e = yArr[i] - (gIdent.rsOhm * xArr[i] + vd0);
         sse += e * e;
     }
     {
         float rmse = sqrtf(sse / n);
-        float vSpan = fabsf(gIdent.rsOhm * (xMax - xMin)) + fabsf(vd0);
-        /* 去掉 vSpan>0.1 跳过逻辑，统一用相对+绝对双门限 */
-        if (gIdent.rsOhm <= 0.0f || rmse > 0.12f * vSpan + 0.05f) {   /* 0.05V 绝对噪声下限 */
+        float vDropSpan = fabsf(gIdent.rsOhm * (xMax - xMin));
+        if (gIdent.rsOhm <= 0.0f || rmse > 0.12f * vDropSpan + 0.08f) {
             gIdent.warn |= IDENT_WARN_DT_UNSTABLE;
             gIdent.rsOhm = 0.0f;
             gIdent.deadVoltV = 0.0f;
