@@ -5,6 +5,11 @@
         10 motor families x 36 initial rotor angles, controller parameters = plant truth (no identification,
         IDENT_MODE_RUN).  Isolates the startup sequence (FlyCheck -> Align/SWING -> I/F -> Spin) from identification.
 
+    python3 run_startup.py identalign [--ref WORKTREE] [--work /tmp/dir]
+        10 motor families x 36 initial angles, IDENT_MODE_STATIC: rotor angle at the start of the dead-time
+        stairs relative to the align axis (sim convention: controller angle 0 = plant electrical 120 deg),
+        blocked runs and unblocked runs with |Rs| or |Lq| error > 15%.
+
     python3 run_startup.py e2e --seed <seed> [--n 120] [--ref WORKTREE] [--work /tmp/dir]
         Random healthy motors from the blind distribution (run_blind.gen_healthy_jobs) x random initial angle,
         full IDENT_MODE_AUTO flow (static identification -> restart -> run measurement -> run).
@@ -56,6 +61,42 @@ def angles(wd):
     return res
 
 
+AXIS_DEG = 120.0     # plant electrical angle of the controller's 0 deg axis (measured: 120.6..123.2 deg incl. friction)
+
+
+def identalign(wd):
+    def one(job):
+        k, th = job
+        env = dict(os.environ)
+        env.update({"SIM_PWMDLY": "1", "SIM_NOISE": "2", "SIM_DSAT": "0", "SIM_TH0_DEG": str(th),
+                    "SIM_DIAG_TIER": "1", "SIM_DIAG_DT": "100"})
+        out = subprocess.run([os.path.join(wd, "exe_" + k), "35", "1", "1100"], env=env, capture_output=True, text=True).stdout.splitlines()
+        dt = [l for l in out if l.startswith("TRACE") and " ph=1 " in l]
+        t = [l for l in out if l.startswith("TRUE")]
+        r = [l for l in out if l.startswith("RES")]
+        if not (dt and t and r):
+            return k, th, None, None, True, 0.0, 0.0
+        rotor = float(dt[0].split("rotor=")[1].split()[0])
+        t_dt = float(dt[0].split()[1][2:])
+        T = run_eval.parse_kv(t[0]); R = run_eval.parse_kv(r[0])
+        blk = bool(int(R["warn"], 16) & 0x10)
+        rs = (float(R["rs"]) / float(T["rs"]) - 1) * 100 if float(R["rs"]) > 0 else -100.0
+        lq = (float(R["lq"]) / float(T["lq"]) - 1) * 100 if float(R["lq"]) > 0 else -100.0
+        return k, th, ((rotor - AXIS_DEG + 180) % 360) - 180, t_dt, blk, rs, lq
+
+    jobs = [(k, th) for k in CMD for th in range(0, 360, 10)]
+    with concurrent.futures.ThreadPoolExecutor(WORKERS) as ex:
+        res = list(ex.map(one, jobs))
+    for k in CMD:
+        r = [x for x in res if x[0] == k and x[2] is not None]
+        off = [(x[1], round(x[2])) for x in r if abs(x[2]) >= 15]
+        blk = [x[1] for x in r if x[4]]
+        bad = [x[1] for x in r if not x[4] and (abs(x[5]) > 15 or abs(x[6]) > 15)]
+        ts = sorted(x[3] for x in r)
+        print(f"  {k:6s} align time median {ts[len(ts) // 2] - 0.25 if ts else -1:.2f} s | off axis >=15 deg {off} | blocked {blk} | unblocked |Rs|/|Lq| > 15% {bad}")
+    return res
+
+
 def e2e(wd, seed, n):
     jobs = run_blind.gen_healthy_jobs(seed, n)
     rng = random.Random(seed + 7)
@@ -97,7 +138,7 @@ def e2e(wd, seed, n):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("test", choices=["angles", "e2e"])
+    ap.add_argument("test", choices=["angles", "identalign", "e2e"])
     ap.add_argument("--ref", default="WORKTREE")
     ap.add_argument("--work", default="/tmp/ff_startup")
     ap.add_argument("--seed", type=int, default=None)
@@ -110,6 +151,9 @@ def main():
     if a.test == "angles":
         print(f"=== initial-angle sweep ({a.ref}) ===")
         res = angles(a.work)
+    elif a.test == "identalign":
+        print(f"=== identification align, initial-angle sweep ({a.ref}) ===")
+        res = identalign(a.work)
     else:
         if a.seed is None:
             ap.error("e2e needs --seed")

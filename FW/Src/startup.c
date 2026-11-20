@@ -31,6 +31,8 @@ static int32_t s_dampRunQ8;                /* 实际使用的阻尼（检测到�
 static int32_t s_dampPrevIq;               /* 上一拍阻尼电流指令（颤振检测用） */
 static uint8_t s_dampFlips;                /* 阻尼指令连续大幅换向的计数 */
 static uint16_t s_still;                   /* 定位第二段：连续"静止"的拍数 */
+/* 辨识定位分两步（避免死点，见 Startup_AlignSlow）：0 = 预定位轴（目标轴 + 90°）等停稳，1 = 按扫掠角速度转到目标轴，2 = 目标轴等停稳 */
+static uint8_t s_identStage;
 #endif
 static int32_t s_emfFilt;                  /* 定位时 q 轴反电势（滤波），Q15 电压 << ALIGN_EMF_FILT_SH */
 static int32_t s_dtFilt;                   /* 同一滤波器滤波的逆变器电压误差分量（摆动伪峰值参考） */
@@ -86,7 +88,8 @@ void Startup_OnEnterAlign(void)
     s_dampPrevIq = 0;
     s_dampFlips = 0;
     if (Ident_StaticThisStart()) {
-        s_alignTheta = Ident_AlignTheta();
+        s_alignTheta = (int16_t)(Ident_AlignTheta() + ANGLE_90_Q15);
+        s_identStage = 0;
         Ident_Reset();
         return;
     }
@@ -327,8 +330,9 @@ static void alignSwingSlow(void)
 /* Align 慢环：
  *   摆动中起动：见 alignSwingSlow；
  *   IPD 中：推进检测（Ipd_Slow），完成后判定，可信 -> 从 N 极角直接进入 I/F；不可信 -> 退回摆动中起动；
- *   参数辨识（IDENT_TEST = 1）：d 轴电流按斜坡升至 ALIGN_A，q 轴按反电势施加阻尼，
- *     达到最短时间且反电势持续低于门限（已停稳），或超过最长时间 -> 开始静止测量（Ident_Begin） */
+ *   参数辨识（IDENT_TEST = 1）：d 轴电流按斜坡升至 ALIGN_A，q 轴按反电势施加阻尼；两步定位：
+ *     先在目标轴 + 90° 上等停稳，再按扫掠角速度转到目标轴等停稳（避免死点）；停稳计时从电流升满后开始。
+ *     达到最短时间且反电势持续低于门限（已停稳），或超过最长时间 -> 进入下一步 / 开始静止测量（Ident_Begin） */
 void Startup_AlignSlow(void)
 {
     if (IDENT_TEST && Ident_Active()) {
@@ -361,7 +365,7 @@ void Startup_AlignSlow(void)
         return;
     }
 #if IDENT_TEST
-    {
+    do {   /* 辨识定位（break 跳出后仍执行下方慢环滤波） */
         int32_t id = (int32_t)gFoc.idqRef.s16D + ALIGN_STEP_Q15;
         int32_t emf, iq;
         if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
@@ -399,6 +403,26 @@ void Startup_AlignSlow(void)
             iq = iqCmd;
         }
         FocCore_SetIdqRef((int16_t)id, (int16_t)iq);
+        /* 两步定位：固定一个轴定位时，转子停在该轴背面（死点，转矩 ≈ 0）会被静摩擦卡住、照样判为停稳；
+         * 先定位到目标轴 + 90°，再按摆动起动的扫掠角速度转到目标轴：无论在哪一步遇到死点，下一步都偏 90°（转矩最大）。
+         * 停稳计时从定位电流升满后开始（摆动周期很短的电机 1.6T 可能短于电流上升时间，转子未动即判停稳） */
+        if (id < ALIGN_ID_Q15) {
+            s_alignTicks = 0;
+            s_still = 0;
+            break;
+        }
+        if (s_identStage == 1u) {
+            int32_t d = (int32_t)(int16_t)(Ident_AlignTheta() - s_alignTheta);
+            int32_t st = ((int32_t)ALIGN_STEP_Q15 * ALIGN_SWING_SWEEP_K_Q16) >> 16;
+            if (st < 1) st = 1;
+            if (d > st) d = st;
+            if (d < -st) d = -st;
+            s_alignTheta = (int16_t)(s_alignTheta + d);
+            if (s_alignTheta == Ident_AlignTheta()) s_identStage = 2;
+            s_alignTicks = 0;
+            s_still = 0;
+            break;
+        }
         ++s_alignTicks;
         {   /* 参数辨识：停稳判据取 |vq_filt| + |focKrs * iq|（|eq| 的保守上界），静止时两者同时归零 */
             int32_t e = s_emfFilt >> ALIGN_EMF_FILT_SH;
@@ -411,14 +435,22 @@ void Startup_AlignSlow(void)
             } else {
                 s_still = 0;
             }
-            if ((s_alignTicks >= s_alignMinTicks && s_still >= s_alignStillTicks) || s_alignTicks >= s_alignMaxTicks) {
-                if (s_alignTicks >= s_alignMaxTicks && s_still < s_alignStillTicks)
+            /* 停稳持续时间与最长等待均放宽到 3 倍（辨识阶段不在乎时间）：摆动周期 T 按配置惯量计算，实际惯量偏大时
+             * 真实周期更长、阻尼比更低，大摆幅转子在摆幅端点附近低速停留的时间可超过 ALIGN_STILL_T，会被误判为停稳 */
+            if ((s_alignTicks >= s_alignMinTicks && s_still >= 3u * (uint32_t)s_alignStillTicks) || s_alignTicks >= 3u * (uint32_t)s_alignMaxTicks) {
+                if (s_identStage == 0u) {      /* 预定位完成：转向目标轴 */
+                    s_identStage = 1;
+                    s_alignTicks = 0;
+                    s_still = 0;
+                    break;
+                }
+                if (s_still < 3u * (uint32_t)s_alignStillTicks)
                     gIdent.warn |= IDENT_WARN_SWING_CLAMP;   /* 超时未停稳：用 SWING_CLAMP 记录（不在 trustedPre 掩码，不阻断；
                                                                 * 后续子窗静止监测会兜底检测转子是否仍在动） */
                 Ident_Begin();
             }
         }
-    }
+    } while (0);
 #endif
     Meas_SlowFilter();
     Meas_SpeedHoldZero();
