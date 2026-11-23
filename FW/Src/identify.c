@@ -681,6 +681,12 @@ static void jRow(float w)
     s_sN = 0; s_sIq = s_sX = s_sX2 = 0; s_sW = w;
 }
 
+/* 指令"不变"的容差：约 1.5%（电位器 / 通讯指令的小抖动不算改指令） */
+static int16_t jTol(int16_t c)
+{
+    return (int16_t)(abs(c) / 64 + 2);
+}
+
 void Ident_RunSlow(uint8_t spin)
 {
     const float ks = (float)(SPEED_MAX / 32768.0), ka = (float)(SPEED_MAX * SLOWLOOP_FREQ / 2147483648.0);
@@ -690,13 +696,12 @@ void Ident_RunSlow(uint8_t spin)
     sg = (s_jCmd < 0) ? -1.0f : 1.0f;
     w = sg * (float)gMeas.speedRaw * ks;                                                /* 按指令转向取正方向；用未滤波转速（滤波滞后会使段首尾转速有误差） */
     if (s_jSt == J_WAIT) {
-        /* 指令不变、斜坡已停、转速跟上指令（速度环未饱和）后再稳 J_STABLE_MS */
-        if (gSpd.rampAcc != 0 || gSpd.cmd != s_jCmd) { s_jCmd = gSpd.cmd; s_jT = s_jTs = 0; return; }
-        if (fabsf((float)(gMeas.speed - s_jCmd)) > 0.03f * fabsf((float)s_jCmd)) {
-            s_jT = 0;
-            if (++s_jTs > 10u * SLOWLOOP_FREQ) jFinish(0);                              /* 指令下一直跟不上（电流受限）：不测 */
-            return;
-        }
+        /* 指令稳定（允许电位器 / 通讯的小抖动）、斜坡到位、转速跟上指令（速度环未饱和）后再稳 J_STABLE_MS；
+         * 斜坡到达指令后累计 15 s 仍不满足（指令来回变、电流受限等）则不测，辨识结束 */
+        if (abs(gSpd.cmd - s_jCmd) > jTol(s_jCmd)) { s_jCmd = gSpd.cmd; s_jT = 0; return; }
+        if (abs(gSpd.ramp - gSpd.cmd) > jTol(s_jCmd)) { s_jT = 0; return; }             /* 还在升降速 */
+        if (++s_jTs > 15u * SLOWLOOP_FREQ) { jFinish(0); return; }
+        if (fabsf((float)(gMeas.speed - s_jCmd)) > 0.03f * fabsf((float)s_jCmd)) { s_jT = 0; return; }
         if (++s_jT >= J_STABLE_MS) {
             float wc = fabsf((float)s_jCmd * ks), dw = 0.15f * wc, a = 0.3f * (float)MOTOR_I_RATED_A * (float)gParam.accRpmSPerA;
             uint16_t i, j;
@@ -716,7 +721,7 @@ void Ident_RunSlow(uint8_t spin)
         }
         return;
     }
-    if (gSup.speedCmd != s_jCmd) { s_jSt = J_WAIT; s_jT = 0; return; }                 /* 指令被改：重来 */
+    if (abs(gSup.speedCmd - s_jCmd) > jTol(s_jCmd)) { s_jSt = J_WAIT; s_jT = s_jTs = 0; return; }   /* 指令被改：重来 */
     if (++s_jT > 20u * SLOWLOOP_FREQ) { jFinish(0); return; }                           /* 到不了目标（电流受限等）：放弃 */
     {
         float x = (w - s_jW0) / s_jDwRpm;
@@ -731,8 +736,7 @@ void Ident_RunSlow(uint8_t spin)
         if (s_jSt == J_BOT) { jFinish(1); return; }
         s_jSt++; s_jT = 0; s_jTs = 0;
     } else {                                                                            /* 升 / 降速段：斜坡到位后再稳定 J_SEG_MS */
-        int16_t tgt = (s_jSt == J_DN) ? s_jCmd : (int16_t)(s_jCmd + s_jDw);
-        if (gSpd.rampAcc != 0 || abs(gSpd.ramp - tgt) > abs(s_jDw) / 16) { s_jTs = 0; return; }
+        if (abs(gSpd.ramp - gSpd.cmd) > abs(s_jDw) / 16) { s_jTs = 0; return; }            /* 斜坡到达当前指令（含抖动） */
         if (++s_jTs < J_SEG_MS) return;
         jRow(w);
         s_jSt++; s_jT = 0;

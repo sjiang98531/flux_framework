@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
         double t = k * dt;
         int done = (gIdent.state == IDENT_DONE) || (mode == IDENT_MODE_STATIC && gIdentTest.phase == IDENT_PH_DONE);
         int stopNow = (t < 0.2 || (mode == IDENT_MODE_STATIC && done) || (abort_mode == 2 && aborted));
-        gSup.speedCmd = stopNow ? 0 : (int16_t)(cmd_rpm / SPEED_MAX * 32768.0);
+        gSup.speedCmd = stopNow ? 0 : (int16_t)(cmd_rpm / SPEED_MAX * 32768.0 + (getenv("SIM_CMD_JIT") ? atof(getenv("SIM_CMD_JIT")) * (double)((k / (long)(0.02 * PWM_FREQ)) % 3 - 1) : 0.0));   /* SIM_CMD_JIT：指令每 20 ms 抖动 ±LSB（模拟电位器） */
         sim_TIM3.TIM_CNT = (uint32_t)(k * 7u) & 0xffffu;
         plant_step(&pl, dt);
         sim_ADC.ADC_STS = ADC_Flag_EOSIF0;
