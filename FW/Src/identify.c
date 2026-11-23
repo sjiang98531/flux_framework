@@ -752,7 +752,7 @@ static int16_t jTol(int16_t c)
 
 void Ident_RunSlow(uint8_t spin)
 {
-    const float ks = (float)(SPEED_MAX / 32768.0), ka = (float)(SPEED_MAX * SLOWLOOP_FREQ / 2147483648.0);
+    const float ks = (float)(SPEED_MAX / 32768.0);
     float sg, w;
     if (s_jSt == 0xFF) return;
     if (!spin || gIdentCfg.mode != IDENT_MODE_AUTO || gIdent.state != IDENT_RUNNING) { s_jSt = J_WAIT; s_jT = s_jTs = 0; return; }
