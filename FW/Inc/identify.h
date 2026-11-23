@@ -5,15 +5,17 @@
  * 目的：更换电机时不必手工测量参数，上电执行一次辨识得到 cfg_motor.h / cfg_board.h 中的主要参数，
  * 再由 param.c 自动算出全部增益。前提：辨识开始时转子静止（由操作者保证）。各项方法：
  *   R/L    ：α 轴正弦电压注入（不用电流环），幅值自适应，得到粗略 R、L，先整定电流环
- *   Rs、死区：定位轴上 d 轴多档直流电流，走出死区过渡带（>= 2 倍过渡带宽度）的档位直线拟合：斜率 Rs，截距为死区电压
- *   Ld / Lq：d 轴、q 轴正弦电压注入（同 R/L 方法，频率按 R/L 自适应），L = Im(Z)/ω
+ *   Rs、死区：定位轴上 d 轴多档直流电流，上半段（走出死区过渡带）的档位直线拟合：斜率 Rs，截距为死区电压
+ *   Ld / Lq：d 轴、q 轴正弦电压注入（同 R/L 方法，频率按 R/L 自适应），L = Im(Z)/ω；
+ *            q 轴按 0.5 / 1 / 1.5 / 2 倍额定电流测量，按描述函数直线拟合饱和模型 L(i) = L0 * (1 - per * |i|)
  *   psi_f  ：I/F 恒速段 mean|v - Ri - Vdt - jωLi| / ω（凸极按转子坐标）
- * 不辨识：电感饱和曲线 L(i) 沿用 cfg_motor.h；惯量沿用配置值，加速度系数（∝ psi / J）随实测磁链换算。
+ *   J      ：闭环中转速小幅升高再降回，iq = 负载(ω，二次式) + 斜坡加速度 / acc 最小二乘，负载与加速项分开
  * 结果写入 gIdent 并交给 param.c，停机回到 Stop 时生效（仅存于 RAM）；长期使用需将 gParam 抄回配置文件。
  *
  * 使用（IDENT_TEST = 1，cfg_board.h）：给出转速指令即自动完成（gIdentCfg.mode = IDENT_MODE_AUTO，默认）：
  *   1. 静止测量：R/L -> 定位 -> 死区阶梯 -> Ld / Lq -> 收尾定位（等停稳），约十几秒；结果提交后自动停机、装入参数、重新起动；
- *   2. 运行测量：正常起动；I/F 到达目标转速时测磁链并立即生效，再切闭环，随后按指令运行；gIdent.state = IDENT_DONE。
+ *   2. 运行测量：正常起动；I/F 到达目标转速时测磁链并立即生效，再切闭环；闭环稳速后转速升高约 15% 再降回，测加速度系数，
+ *      随后按指令运行；gIdent.state = IDENT_DONE。
  *   只有保护性条件（测不出正的 R / L、参数被 param.c 拒绝）阻止提交与自动重起动（IDENT_WARN_AUTO_BLOCKED）。
  *   中途停机或故障：下次起动从未完成的步骤继续。重新辨识：停机后将 gIdent.state 写 0。
  * 只执行其中一步：IDENT_MODE_STATIC（仅静止测量，回到 Stop 时生效）/ IDENT_MODE_RUN（每次起动都在 I/F 中测磁链）。
@@ -38,10 +40,14 @@ typedef enum {
 typedef struct {
     float rlR, rlL;     /* R/L 粗测（200 Hz，R 含死区偏大）：仅用于先整定电流环；-1 = 未测得 */
     float rsOhm;        /* 相电阻 -> MOTOR_RS_OHM */
-    float ldH, lqH;     /* d / q 轴电感（injHz、INJ 电流幅值下）-> MOTOR_LD_H / LQ_H */
+    float ldH, lqH;     /* d 轴电感（0.5 倍额定电流幅值）/ q 轴零电流电感 L0（饱和拟合截距）-> MOTOR_LD_H / LQ_H */
+    float lqAtA[4], lqAtH[4];   /* q 轴各档实际电流基波幅值（A）与基波电感（H），档数 lsN */
+    float lsPerA, lsMaxA;   /* 饱和拟合：每 A 相对下降量（拐点取 0）-> MOTOR_LS_SAT_PER_A；最大测量电流（0 = 拟合不成立） */
+    uint8_t lsN;
     float injHz;        /* Ld / Lq 注入频率 */
     float psiWb;        /* 磁链（I/F 恒速段），测得后立即生效再切闭环 -> MOTOR_PSI_F_WB */
-    float accRpmSPerA;  /* 加速度系数（配置值按磁链换算）-> MOTOR_ACC_RPM_S_PER_A */
+    float accRpmSPerA;  /* 加速度系数（升降速实测；未测得时为配置值按磁链换算）-> MOTOR_ACC_RPM_S_PER_A */
+    float jAccRef, jIqAcc;  /* 惯量测量：参考加速度 rpm/s、该加速度所需电流 A（最小二乘拟合）；acc = jAccRef / jIqAcc */
     float deadVoltV;    /* 死区等效电压（每相，测量时母线电压下） */
     float deadTimeS;    /* 等效死区时间 = deadVoltV / (PWM_FREQ * Vbus) -> INVERTER_DT_EFF_S */
     IdentState_TypeDef state;
@@ -104,5 +110,10 @@ uint8_t Ident_Fast(void);               /* 1 = 本拍调制已由辨识输出（
 uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt);
 void    Ident_OpenLoopFluxRearm(void);      /* I/F 切闭环失败：下次拖动重新测磁链 */
 uint8_t Ident_OpenLoopFluxPending(void);    /* 自动辨识运行段磁链尚未测得（openloop.c 冷起动用保守加速度） */
+/* 惯量测量（自动辨识，闭环）：supervisor 的 Run 慢环每拍调用 Ident_RunSlow；测量期间 Ident_SpeedCmd 在指令上叠加小幅升速，
+ * Ident_RampQ31 给出测量用斜坡加速度（0 = 不改，speed_ctrl.c） */
+void    Ident_RunSlow(uint8_t spin);
+int16_t Ident_SpeedCmd(int16_t cmd);
+int32_t Ident_RampQ31(void);
 
 #endif

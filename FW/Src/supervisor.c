@@ -377,13 +377,14 @@ static uint8_t stopRampSlow(void)
 static void runSlow(void)
 {
     uint8_t stopReq;
-    gSpd.cmd = gSup.speedCmd;
+    gSpd.cmd = IDENT_TEST ? Ident_SpeedCmd(gSup.speedCmd) : gSup.speedCmd;
     stopReq = (uint8_t)(abs(gSpd.cmd) < Q15(RUN_TO_STOP_SPEED / SPEED_MAX));
     if (IDENT_TEST && Ident_TakeRestart()) {    /* 自动辨识：静止测量完成，停机（参数在 Stop 中装入）后自动重新起动执行运行测量 */
         HAL_PwmAllOff();
         Sup_SwitchRunStop();
         return;
     }
+    if (IDENT_TEST) Ident_RunSlow((uint8_t)(gSup.runState == RunState_Spin && !s_softStop && !Spin_Tracking()));
     if (Spin_Tracking()) { Spin_TrackSlow(); return; }
     if (stopReq && stopRampSlow()) stopReq = 0;     /* 受控减速停机：本拍照常执行速度环，目标 = 同向 TRACK_END_RPM */
     if (runStopSlow(stopReq)) return;

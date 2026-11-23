@@ -17,6 +17,7 @@
 #include "id_ref.h"
 #include <stdlib.h>
 #include "param.h"
+#include "identify.h"
 
 SpeedCtrl_TypeDef gSpd;
 
@@ -208,6 +209,12 @@ void SpeedCtrl_SpinSlow(void)
             int32_t st = gSpd.speedRampSt.s32State;
             gSpd.speedRampSt.s32RampUp   = (st < 0 && gSpd.cmd > 0) ? RAMP_REV_Q31 : RAMP_UP_Q31;
             gSpd.speedRampSt.s32RampDown = (st > 0 && gSpd.cmd < 0) ? RAMP_REV_Q31 : RAMP_DOWN_Q31;
+#if IDENT_TEST
+            {   /* 参数辨识惯量测量期间：升降速斜坡用测量加速度（identify.c Ident_RampQ31） */
+                int32_t r = Ident_RampQ31();
+                if (r > 0) { gSpd.speedRampSt.s32RampUp = r; gSpd.speedRampSt.s32RampDown = r; }
+            }
+#endif
             /* 以上每拍重设运行速率；下面两步按需要再压低减速一侧的步长（直接改 s32RampUp / s32RampDown） */
             approachFallback();     /* 回退 I/F 时刻的减速度 = I/F 过零的减速度 */
             busVdcLimit();          /* 减速侧步长按允许回馈功率限制（给定始终可实现） */
