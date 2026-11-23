@@ -160,7 +160,7 @@ extern IdentTest_TypeDef gIdentTest;
 int16_t Ident_AlignTheta(void);     /* 定位角（Q15 角度，65536 = 一圈） */
 uint8_t Ident_StaticThisStart(void);    /* 本次起动执行静止测量（进入 Align 时、定位结束时查询） */
 uint8_t Ident_RunActive(void);          /* 运行测量进行中（I/F 测磁链、闭环滑行；受控减速停机让位） */
-uint8_t Ident_OpenLoopFluxPending(void); /* 运行辨识中 I/F 磁链尚未测得（psi、加速度系数仍为配置值） */
+uint8_t Ident_OpenLoopFluxPending(void); /* 自动辨识运行段 I/F 磁链尚未测得（psi、加速度系数仍为配置值） */
 void Ident_OpenLoopFluxRearm(void);      /* I/F 切闭环失败：下次拖动重新测磁链 */
 uint8_t Ident_TakeRestart(void);        /* 自动方式：静止测量刚完成，需停机后重新起动（读取后清除） */
 int16_t Ident_SpeedCmd(int16_t cmd);    /* 自动方式运行测量期间的转速指令（不低于 1.1 倍 RUN_MIN_RPM） */

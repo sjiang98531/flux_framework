@@ -1769,10 +1769,11 @@ void Ident_OpenLoopFluxRearm(void)
     if (Ident_RunActive()) s_olFluxSt = OLF_WAIT_STABLE;
 }
 
-/* 运行辨识中、I/F 磁链尚未测得（openloop.c：此时 psi / 加速度系数仍为配置值，冷起动按保守档拖动） */
+/* 自动辨识（AUTO）的运行段、I/F 磁链尚未测得（openloop.c：此时 psi / 加速度系数仍为配置值，冷起动按保守加速度拖动）。
+ * IDENT_MODE_RUN 属正常起动（参数按配置 / 已辨识），不放慢 */
 uint8_t Ident_OpenLoopFluxPending(void)
 {
-    return (uint8_t)(Ident_RunActive() && s_olFluxSt != OLF_DONE);
+    return (uint8_t)(gIdentCfg.mode == IDENT_MODE_AUTO && Ident_RunActive() && s_olFluxSt != OLF_DONE);
 }
 
 uint8_t Ident_Fast(void)

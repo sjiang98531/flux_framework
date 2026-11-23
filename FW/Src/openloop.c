@@ -36,7 +36,7 @@ static int32_t s_accStepFull;                         /* 开环电流达到目�
  * OPENLOOP_WARM_MAX_A，加速度每档减半；堵转故障释放后由现有的自动重启（SUP_RESTART_LIMIT 次内）以新档位重试。
  * 学到的档位保留到下次上电（之后的起动直接使用），不影响闭环回退 / 飞车接管进入 I/F。正常电机首次即可起动，行为不变 */
 #define OPENLOOP_BOOST_MAX  3u
-#define OPENLOOP_IDENT_BOOST 2u   /* 运行辨识测得磁链前的冷起动最低档 */
+#define OPENLOOP_IDENT_BOOST 2u   /* 自动辨识运行段测得磁链前，冷起动加速度的最低档 */
 static uint8_t s_ifBoost;
 
 uint8_t OpenLoop_BoostLevel(void) { return s_ifBoost; }
@@ -105,12 +105,14 @@ int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
 static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
 {
     int32_t cur = OPENLOOP_IQ_Q15;
-    uint8_t boost = s_ifBoost;
-    /* 运行辨识中磁链尚未测得：加速度系数（∝ psi / J）仍为配置值，可能偏大数倍，冷起动至少按 OPENLOOP_IDENT_BOOST 档拖动
-     * （加速度 1/4、电流加大），留出参数未知时的负载角余量。辨识允许耗时，测得 psi 后恢复正常档 */
-    if (IDENT_TEST && !warm && boost < OPENLOOP_IDENT_BOOST && Ident_OpenLoopFluxPending()) boost = OPENLOOP_IDENT_BOOST;
-    if (!warm && boost && OPENLOOP_WARM_IMAX_Q15 > OPENLOOP_IQ_Q15)
-        cur += ((int32_t)boost * (OPENLOOP_WARM_IMAX_Q15 - OPENLOOP_IQ_Q15)) / (int32_t)OPENLOOP_BOOST_MAX;
+    uint8_t accBoost = s_ifBoost;
+    /* 自动辨识的运行段、磁链尚未测得：加速度系数（∝ psi / J）仍为配置值，可能偏大数倍，冷起动加速度至少按
+     * OPENLOOP_IDENT_BOOST 档（1/4），所需转矩随之减为 1/4，留出参数未知时的负载角余量。只降加速度、不加电流：
+     * 内嵌式电机 Ld < Lq 时，磁阻转矩使 d 轴附近的刚度按 psi - (Lq - Ld) * i 下降，电流越大越容易失步。
+     * 辨识允许耗时，测得 psi 后恢复正常档 */
+    if (IDENT_TEST && !warm && accBoost < OPENLOOP_IDENT_BOOST && Ident_OpenLoopFluxPending()) accBoost = OPENLOOP_IDENT_BOOST;
+    if (!warm && s_ifBoost && OPENLOOP_WARM_IMAX_Q15 > OPENLOOP_IQ_Q15)
+        cur += ((int32_t)s_ifBoost * (OPENLOOP_WARM_IMAX_Q15 - OPENLOOP_IQ_Q15)) / (int32_t)OPENLOOP_BOOST_MAX;
     e->warm = warm;
     e->thetaOffset = 0;
     if (warm) {
@@ -150,7 +152,7 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
      * （按"所需 iq"增加的那部分电流用于已有转矩需求，不用于加速）。冷起动 / 同向 = 1 */
     e->accScaleQ12 = (warm && revAcc) ? (int32_t)(((int64_t)OPENLOOP_REV_IQ_Q15 << 12) / OPENLOOP_IQ_Q15) : 4096;
     e->accStepFull = (int32_t)(((int64_t)gGain.openLoopAccStepQ31 * e->accScaleQ12) >> 12);
-    if (!warm) e->accStepFull >>= boost;         /* 失速自适应：加速度每档减半 */
+    if (!warm) e->accStepFull >>= accBoost;      /* 失速自适应：加速度每档减半 */
     /* 开环加速度与开环电流成正比：电流仍按 CURRENT_SLEW_A_S 向目标上升时，可产生的转矩相应受限，
      * 加速度按同一比例给出，负载角余量（OPENLOOP_ACC_RPM_S 取最大加速度的 1/3）全程保持不变。
      * accStepFull * 电流 < 2^31 由配置检查 OPENLOOP_ACC_STEP_FITS 保证（32 位乘除） */
