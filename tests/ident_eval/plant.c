@@ -42,6 +42,14 @@ static double dtSign(const Plant *p, double i)
     return x > 1 ? 1.0 : (x < -1 ? -1.0 : x);
 }
 
+static double s_psiQsat = 0.0, s_iGainV = 1.0;   /* SIM_PSI_QSAT：磁钢磁链随 iq 交叉饱和 psi*(1-k*iq^2)；SIM_IGAIN_V：V 相电流采样增益（相对 U 相） */
+/* 磁钢交链磁链（交叉饱和：q 轴电流大时铁心饱和，磁链变小） */
+static double plant_psiEff(const Plant *p)
+{
+    double m = 1.0 - s_psiQsat * p->iq * p->iq;
+    return p->psi * (m > 0.6 ? m : 0.6);
+}
+
 static double urand(Plant *p) { p->rng = p->rng * 1664525u + 1013904223u; return (p->rng >> 8) / 16777216.0; }
 
 double g_sim_iEd = 0.0, g_sim_iEq = 0.0;
@@ -72,6 +80,8 @@ void plant_init(Plant *p, int ipm)
         if ((e = getenv("SIM_OFF"))) { p->adcOff[0] = 2048 + atoi(e); p->adcOff[1] = 2048 - atoi(e); }
         s_offRun = (e = getenv("SIM_OFF_RUN")) ? atoi(e) : 0;
         s_iGain = (e = getenv("SIM_IGAIN")) ? atof(e) : 1.0;
+        s_iGainV = (e = getenv("SIM_IGAIN_V")) ? atof(e) : 1.0;
+        s_psiQsat = (e = getenv("SIM_PSI_QSAT")) ? atof(e) : 0.0;
         s_vbusGain = (e = getenv("SIM_VBUS_GAIN")) ? atof(e) : 1.0;
         s_cogAmp = (e = getenv("SIM_COGGING")) ? atof(e) : 0.0;
         s_cogHarm = (e = getenv("SIM_COG_HARM")) ? atof(e) : 6.0;
@@ -177,10 +187,10 @@ void plant_step(Plant *p, double dt)
                 p->id = ia * c + ib * s; p->iq = -ia * s + ib * c;
                 pin = (vp[x] - vp[y]) * i + p->pstby;
             } else {
-                double ldInc = p->lD, psiD = p->lD * p->id + p->psi, did, diq;
+                double psiF = plant_psiEff(p), ldInc = p->lD, psiD = p->lD * p->id + psiF, did, diq;
                 if (p->dSatI > 0 && p->id > 0) {
                     ldInc = p->lD / (1.0 + p->id / p->dSatI);
-                    psiD = p->psi + p->lD * p->dSatI * log(1.0 + p->id / p->dSatI);
+                    psiD = psiF + p->lD * p->dSatI * log(1.0 + p->id / p->dSatI);
                 }
                 static int s_extInit = 0; static double s_smI0 = 0, s_crossNl = 0, s_eddyF = 0;
                 if (!s_extInit) {
@@ -228,7 +238,7 @@ void plant_step(Plant *p, double dt)
             double ia = p->id * c - p->iq * s, ib = p->id * s + p->iq * c;
             p->iu = ia; p->iv = -0.5 * ia + sqrt(3.0) / 2 * ib; p->iw = -p->iu - p->iv;
         }
-        p->te = 1.5 * p->pp * (p->psi * p->iq + (p->lD - p->lQ) * p->id * p->iq);
+        p->te = 1.5 * p->pp * (plant_psiEff(p) * p->iq + (p->lD - p->lQ) * p->id * p->iq);
         {
             double im = sqrt(p->id * p->id + p->iq * p->iq);
             if (im > p->ipk) p->ipk = im;
@@ -257,7 +267,7 @@ void plant_step(Plant *p, double dt)
         int offRunU = (p->tNow > 0.22) ? s_offRun : 0;
         int offRunV = (p->tNow > 0.22) ? -s_offRun : 0;
         int u = (int)lround(p->adcOff[0] + offRunU - p->iu * kAdc + (urand(p) - 0.5) * 2.0 * p->noise);
-        int v = (int)lround(p->adcOff[1] + offRunV - p->iv * kAdc + (urand(p) - 0.5) * 2.0 * p->noise);
+        int v = (int)lround(p->adcOff[1] + offRunV - p->iv * kAdc * s_iGainV + (urand(p) - 0.5) * 2.0 * p->noise);
         int vb = (int)lround(p->vbus * s_vbusGain / (double)UDC_MAX * 4096.0);
         if (u < 0) u = 0; if (u > 4095) u = 4095;
         if (v < 0) v = 0; if (v > 4095) v = 4095;

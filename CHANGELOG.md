@@ -13,6 +13,10 @@
   （仿真打开 d 轴饱和 SIM_DSAT=0.93 后风机 0.1326 / 真值 0.141；台架 0.133，旧版 0.142、配置 0.141）。回归测试一直 SIM_DSAT=0，所以没暴露。
   自动辨识闭环稳速后、测惯量前，用同一公式（olfEmf，ω 取估计转速）平均 500 ms 细测：id = 0，没有增磁饱和，电感项与 e 垂直只有二阶影响；
   细测值替换 I/F 值（gIdent.psiClWb 记录），加速度系数按比例换算。仿真（d 轴饱和打开）10 类电机误差 0.3% 以内，vac16 -3%。
+- **闭环细测磁链加过载限制**：psi_f 指零电流磁链，负载电流超过额定时铁心饱和（交叉饱和）使实际磁链变小（台架风机 10000 时 2.1 A、约 3 倍额定，测得 0.12）。
+  细测时 |i| > MOTOR_I_RATED_A 不采用，保留 I/F 粗测值，置 IDENT_WARN_PSI_LOAD（0x20），应在较低转速下辨识。
+- 仿真模型（tests/ident_eval/plant.c，仅测试用）：SIM_PSI_QSAT 磁钢磁链随 iq 交叉饱和，SIM_IGAIN_V V 相电流采样增益。
+  物理效应矩阵（6 类电机 x 9 种效应单独打开）：起动全部正常；涡流（SIM_EDDY_HZ）使 1 kHz 注入测得的 Ld / Lq 偏小约 10%，待台架确认。
 - **IDENT_TEST = 0 链接错误**：identify.c 始终参与编译、调用 Startup_IdentHold，而该函数只在 IDENT_TEST = 1 时定义（L6218E）；IDENT_TEST = 0 时补一个空函数。
 - **栈 1 KB -> 2 KB**（`CMSIS/startup_sc32M156xx .s`）：辨识中 PendSV 里 Ident_Slow -> Param_ApplyNow -> computeGain（double 软浮点）叠加主循环与快环中断，
   估算最深约 1.0~1.5 KB，超过 1 KB 栈；台架上辨识卡住时 gMeas.speedFilt.u16Sh（紧挨栈底）被改写为 0xFD78 / 0xFC42，符合栈溢出。

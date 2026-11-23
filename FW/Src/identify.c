@@ -707,7 +707,8 @@ static void jStart(void)
 
 /* 闭环细测磁链。I/F 中电流沿转子 d 轴（增磁）且转速低，d 轴饱和使 psi 偏小（约 5%）、电阻与死区误差占比大；
  * 闭环 id = 0、转速更高时 e = v - R i - Vdt - jωL i 中电感项垂直于 e（只有二阶影响），电阻 / 死区误差占比按转速成比例减小。
- * 与 I/F 同一计算（olfEmf），ω 取估计转速。闭环转速不低于 I/F 切换转速，测得即替换 I/F 值 */
+ * 与 I/F 同一计算（olfEmf），ω 取估计转速。闭环转速不低于 I/F 切换转速，测得即替换 I/F 值；
+ * 负载电流超过额定时不采用（IDENT_WARN_PSI_LOAD，应在较低转速下辨识） */
 #define PSI_CL_SETTLE_MS   100
 #define PSI_CL_AVG_MS      500
 static float s_pclW;                /* 平均电角速度累加 */
@@ -729,7 +730,9 @@ static void psiClSlow(void)
     {
         float wm = s_pclW / PSI_CL_AVG_MS, psi = s_olfE / PSI_CL_AVG_MS / wm;
         gIdent.psiClWb = psi;
-        if (psi > 0.0f) {
+        /* psi_f 指零电流（空载）磁链：电流超过额定时铁心饱和（交叉饱和）使实际磁链变小，测得值偏低，不采用、保留 I/F 值 */
+        if (sqrtf(s_olfF[0] * s_olfF[0] + s_olfF[1] * s_olfF[1]) > (float)MOTOR_I_RATED_A) gIdent.warn |= IDENT_WARN_PSI_LOAD;
+        else if (psi > 0.0f) {
             MotorParam_TypeDef p = gParam;
             if (p.psiWb > 0) p.accRpmSPerA *= psi / p.psiWb;
             gIdent.accRpmSPerA = (float)p.accRpmSPerA;

@@ -35,6 +35,7 @@ typedef enum {
 #define IDENT_WARN_SWING_CLAMP  (1u << 1)   /* 辨识定位超时仍未停稳（startup.c，只记录） */
 #define IDENT_WARN_L_FAIL       (1u << 3)   /* Ld / Lq 注入未得到正的电感（终止） */
 #define IDENT_WARN_AUTO_BLOCKED (1u << 4)   /* 保护性条件或参数不合理，未提交 / 未自动重起动 */
+#define IDENT_WARN_PSI_LOAD     (1u << 5)   /* 闭环细测磁链时负载电流超过额定（饱和使磁链偏小）：未采用，保留 I/F 粗测值 */
 #define IDENT_WARN_DT_UNSTABLE  (1u << 9)   /* 死区阶梯最高档未走出过渡带或 Rs 非正：Rs 与死区为 0、不提交 */
 
 typedef struct {
