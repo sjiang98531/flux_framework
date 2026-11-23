@@ -62,7 +62,6 @@ typedef struct {
     int32_t s32Theta;    /* 电角度 Q16.16（>> 16 得 Q15 角度，65536 = 一圈） */
     int32_t s32Speed;    /* 转速 Q31（0x7FFFFFFF ≈ SPEED_MAX） */
     int32_t s32I_1;    /* 积分器（转速的稳态部分） */
-    int32_t s32AccFF;  /* 加速度前馈：每拍加到积分器的 Q31 转速增量（已知转矩阶跃时使用，平时为 0） */
     int16_t s16IGain;    /* 积分增益：每 1 LSB 误差每拍的 Q31 转速增量 */
     int16_t s16PGain;    /* 比例增益：每 1 LSB 误差的 Q31 转速增量 */
     int16_t s16ThGain;    /* 转速 -> 每拍角度增量（SPEED_TO_THETA） */

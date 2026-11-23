@@ -55,5 +55,6 @@ void Startup_AlignSlow(void);    /* IPD 推进与判定 / 摆动起动 / 辨识�
 
 /* 子状态切换时由 supervisor 调用 */
 void Startup_OnEnterAlign(void);
+void Startup_IdentHold(void);   /* 参数辨识：收尾定位（定位轴上等转子停稳，停稳后 Ident_Begin） */
 
 #endif

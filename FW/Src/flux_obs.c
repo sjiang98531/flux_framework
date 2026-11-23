@@ -343,7 +343,6 @@ void FluxPLL_Init(PLL_TypeDef *p)
     p->s32Theta    = 0;
     p->s32Speed    = 0;
     p->s32I_1      = 0;
-    p->s32AccFF    = 0;
 }
 
 RAMFUNC int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta)
@@ -366,7 +365,7 @@ FORCE_INLINE int32_t angleStep(int32_t speed, int16_t kTheta)
 
 FORCE_INLINE int16_t advance(PLL_TypeDef *p, int32_t kpTerm, int32_t kiTerm)
 {
-    p->s32I_1   = speedClamp(QMath_AddSat32(p->s32I_1, kiTerm + p->s32AccFF));
+    p->s32I_1   = speedClamp(QMath_AddSat32(p->s32I_1, kiTerm));
     p->s32Speed = speedClamp(QMath_AddSat32(p->s32I_1, kpTerm));
     p->s32Theta = (int32_t)((uint32_t)p->s32Theta + (uint32_t)angleStep(p->s32Speed, p->s16ThGain));
     return (int16_t)(p->s32Theta >> 16);
@@ -415,7 +414,6 @@ void Est_OnEnterOpenLoopCold(void)
     gEst.pll.s32Theta = gFoc.theta << 16;
     gEst.pll.s32Speed = 0;
     gEst.pll.s32I_1 = 0;
-    gEst.pll.s32AccFF = 0;
     Meas_SpeedReset();
     FluxObs_BeginOpenLoop();
 }
@@ -424,7 +422,6 @@ void Est_ResetRun(void)
 {
     gEst.pll.s32I_1 = 0;
     gEst.pll.s32Speed = 0;
-    gEst.pll.s32AccFF = 0;
 }
 
 void Est_OnCatch(int16_t theta, int16_t spd)

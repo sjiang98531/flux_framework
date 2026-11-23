@@ -21,10 +21,8 @@ CFG_CHECK(MOTOR_PARAMS_POSITIVE, MOTOR_POLE_PAIRS >= 1 && MOTOR_RS_OHM > 0 && MO
 /* 铭牌额定值：0 < MOTOR_I_RATED_A < I_MAX，0 < MOTOR_SPEED_RATED_RPM < SPEED_MAX，MOTOR_P_RATED_W > 0 */
 CFG_CHECK(MOTOR_RATING_SANE, MOTOR_I_RATED_A > 0 && MOTOR_I_RATED_A < I_MAX && MOTOR_P_RATED_W > 0 &&
          MOTOR_SPEED_RATED_RPM > 0 && MOTOR_SPEED_RATED_RPM < SPEED_MAX)
-/* 辨识最大合成激励矢量（2.5 A 档 + 2 倍偏置）不超过 min(0.80 * I_MAX, 0.9 * BOARD_HOCP_A / 1.15)（留 16 LSB 舍入余量） */
-CFG_CHECK(IDENT_VEC_PEAK_FITS, BOARD_HOCP_A > 0 && BOARD_HOCP_A < I_MAX &&
-          (double)IDENT_Q15_I(2.5) * IDENT_Q15_I(2.5) + (double)IDENT_Q15_I(1.25) * IDENT_Q15_I(1.25) <=
-          (IDENT_VEC_MAX_A / I_MAX * 32768.0 + 16.0) * (IDENT_VEC_MAX_A / I_MAX * 32768.0 + 16.0))
+/* 硬件过流比较器阈值在电流量程内；辨识注入电流（IDENT_I_INJ_A）不超过 IDENT_VEC_MAX_A（死区阶梯在 identify.c 中限幅） */
+CFG_CHECK(IDENT_CURRENT_FITS, BOARD_HOCP_A > 0 && BOARD_HOCP_A < I_MAX && IDENT_I_INJ_A <= IDENT_VEC_MAX_A)
 
 /* ---- 速度基准 ------------------------------------------------------------ */
 /* SPEED_MAX 下反电势前馈系数须大于 0（>= UDC_MAX 时由 Q15 宏自动饱和并置 cfgWarn bit3） */

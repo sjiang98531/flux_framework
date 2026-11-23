@@ -100,7 +100,6 @@ typedef struct {
     int16_t spdTrackEndQ15;     /* TRACK_END_RPM：零电流跟踪 / 受控减速结束 */
     int16_t spdFlyCatchQ15;     /* FLY_CATCH_RPM：飞车同向直接接入闭环下限 */
     int16_t spdFlyRevMinQ15;    /* FLY_REV_SPIN_MIN_RPM：飞车反向直接接入闭环下限 */
-    int32_t olDampQ8;           /* I/F 摆动阻尼：拖动角修正（Q15 角度）/ PLL 与开环转速差（Q15 转速），Q8，见 openloop.c */
     /* ---- 保护与告警（protect.c / diag.c） */
     int32_t protectSpeedOcQ15;  /* 超速保护门限（Q15） */
     uint16_t cfgWarn;           /* 增益超出定点范围被封顶：bit1 电流环，bit2 PLL，bit3 反电势前馈超量程 */
@@ -121,8 +120,7 @@ extern ParamStat_TypeDef gParamStat;
 void Param_Init(void);                              /* 上电：按配置标称值计算 gGain。须在各模块 Init 之前调用（Ctrl_Init） */
 void Param_Defaults(MotorParam_TypeDef *p);         /* 将配置标称值填入 p */
 void Param_Offer(const MotorParam_TypeDef *p, uint16_t validMask);  /* 辨识结束时提交结果（validMask 位定义同 rejectMask，标记哪些项有新值），回到 Stop 后才更新 */
-uint8_t Param_ApplyNow(const MotorParam_TypeDef *p);
-double Param_SpeedThScale(void);   /* 观测器可靠性相关转速门限按磁链的换算比例 MOTOR_PSI_F_WB / gParam.psiWb（[0.25, 4]），见 CtrlGain_TypeDef */  /* 辨识模式：辨识过程中立即生效（慢环中调用），参数不合理时返回 0 */
+uint8_t Param_ApplyNow(const MotorParam_TypeDef *p);  /* 辨识模式：辨识过程中立即生效（慢环中调用），参数不合理时返回 0 */
 void Param_Background(void);                        /* 主循环：Stop 状态（PWM 关闭）时更新 Param_Offer 提交的参数 */
 float Param_LqAt(float iAbsA);                      /* 按当前 gParam 的 L(|i|) 饱和模型（含 lsMaxA 钳位）计算电感 H */
 

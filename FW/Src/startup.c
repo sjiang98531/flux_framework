@@ -327,6 +327,24 @@ static void alignSwingSlow(void)
     }
 }
 
+#if IDENT_TEST
+/* 辨识收尾定位（identify.c 测完 Ld / Lq 后调用）：直接在定位轴上执行辨识定位的第二步（同一套阻尼与停稳判据），
+ * 停稳后经 Ident_Begin 结束静止测量 */
+void Startup_IdentHold(void)
+{
+    s_alignTheta = Ident_AlignTheta();
+    s_identStage = 2;
+    s_alignTicks = 0;
+    s_still = 0;
+    s_emfFilt = 0;
+    s_dampRunQ8 = 0;
+    s_dampPrevIq = 0;
+    s_dampFlips = 0;
+    FocCore_PresetPI(0, 0);
+    FocCore_SetIdqRef(0, 0);
+}
+#endif
+
 /* Align 慢环：
  *   摆动中起动：见 alignSwingSlow；
  *   IPD 中：推进检测（Ipd_Slow），完成后判定，可信 -> 从 N 极角直接进入 I/F；不可信 -> 退回摆动中起动；
@@ -445,8 +463,7 @@ void Startup_AlignSlow(void)
                     break;
                 }
                 if (s_still < 3u * (uint32_t)s_alignStillTicks)
-                    gIdent.warn |= IDENT_WARN_SWING_CLAMP;   /* 超时未停稳：用 SWING_CLAMP 记录（不在 trustedPre 掩码，不阻断；
-                                                                * 后续子窗静止监测会兜底检测转子是否仍在动） */
+                    gIdent.warn |= IDENT_WARN_SWING_CLAMP;   /* 超时未停稳：只记录，不阻断 */
                 Ident_Begin();
             }
         }

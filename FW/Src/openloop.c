@@ -25,7 +25,6 @@ static volatile int32_t s_olSpeed;         /* 开环转速 Q31（快环斜坡）
 static volatile int32_t s_olTarget;        /* 目标转速 Q31，带方向（慢环写） */
 static int32_t s_pllFilt;                  /* PLL 转速一阶滤波 Q31（慢环，OPENLOOP_PLL_FILT_TAU_S） */
 static uint16_t s_agree, s_hold;
-static volatile int16_t s_dampTh;     /* 摆动阻尼的拖动角修正（Q15 角度，慢环计算、快环使用） */
 /* 开环加速度按实际开环电流缩放：OPENLOOP_ACC_RPM_S 为 OPENLOOP_CURRENT_A 下最大能力的 1/3，回退 / 反转时电流增大，
  * 保持相同余量时加速度也按电流比例增大，过零更快。s_accScaleQ12 = I / OPENLOOP_CURRENT_A（Q12，冷起动 = 4096） */
 static int32_t s_accScaleQ12 = 4096;
@@ -38,7 +37,6 @@ static int32_t s_accStepFull;                         /* 开环电流达到目�
  * 学到的档位保留到下次上电（之后的起动直接使用），不影响闭环回退 / 飞车接管进入 I/F。正常电机首次即可起动，行为不变 */
 #define OPENLOOP_BOOST_MAX  3u
 #define OPENLOOP_IDENT_BOOST 2u   /* 自动辨识运行段测得磁链前，冷起动加速度的最低档 */
-#define OPENLOOP_DAMP_MAX_Q15 5461   /* 摆动阻尼的拖动角修正限幅（30°） */
 static uint8_t s_ifBoost;
 
 uint8_t OpenLoop_BoostLevel(void) { return s_ifBoost; }
@@ -55,10 +53,6 @@ static int32_t openLoopTarget(void)
     if (a < ((int32_t)gGain.spdSpinMinQ15 << 16)) return c << 16;
     if (a < gGain.spdHandoverQ31) a = gGain.spdHandoverQ31;
     if (a > gGain.spdFallbackQ31) a = gGain.spdFallbackQ31;
-    /* 运行辨识待测磁链（运行测量会把指令抬高到测量转速）：I/F 停在切换转速恒速测磁链（identify.c），不先拖到更高转速。
-     * I/F 转矩能力固定，风机类负载随转速平方增长，拖得越高越容易失步；切换转速按设计已有足够反电势。
-     * 测得后恢复正常目标，边加速边按一致性判据切闭环（观测器较弱的电机在更高转速才锁定） */
-    if (IDENT_TEST && Ident_OpenLoopFluxWanted()) a = gGain.spdHandoverQ31;
     return c > 0 ? a : -a;
 }
 
@@ -211,7 +205,6 @@ void OpenLoop_Commit(const OpenLoopEntry_TypeDef *e)
     s_pllFilt = gEst.pll.s32Speed;
     s_agree = 0;
     s_hold = 0;
-    s_dampTh = 0;
 }
 
 /* 飞车接管进入 I/F（快环中执行）：接管时闭环电流 iq = 0（Sup_SwitchFlyCheckOpenLoop 先清零），入口参数除起始转速外
@@ -246,7 +239,7 @@ static void openLoopHandover(void)
      * 速度斜坡从开环转速、以 I/F 加速度继续，斜率与加速前馈一起过渡到运行值——
      * 角度误差引起的转矩逐渐淡出，由速度环补偿，而非一次性形成冲击。
      * 关中断：控制角（runState）、电流指令、积分器必须在同一快环拍间隙内同时切换。 */
-    int16_t d = (int16_t)((s_olTheta >> 16) - s_dampTh - (gEst.pll.s32Theta >> 16));    /* 实际施加的拖动角（含摆动阻尼修正） */
+    int16_t d = (int16_t)((s_olTheta >> 16) - (gEst.pll.s32Theta >> 16));
     SinCos_TypeDef a = FocMath_SinCos(d);
     int16_t i = gFoc.idqRef.s16D;
     int16_t id0 = QMath_MulQ15(i, a.s16Cos), iq0 = QMath_MulQ15(i, a.s16Sin), iqPi, ff0 = 0;
@@ -308,7 +301,7 @@ void OpenLoop_Fast(void)
     else if (sp > tgt) { sp -= s_accStep; if (sp < tgt) sp = tgt; }
     s_olSpeed = sp;
     step = (sp >> 15) * (int32_t)gEst.pll.s16ThGain;           /* 一拍角度增量 Q16.16 */
-    gFoc.theta = (int16_t)((s_olTheta >> 16) - s_dampTh);
+    gFoc.theta = (int16_t)(s_olTheta >> 16);
     gFoc.thetaInv = gFoc.theta + (int16_t)(((step >> 8) * INVPARK_ADV_Q8) >> 16);
     s_olTheta = (int32_t)((uint32_t)s_olTheta + (uint32_t)step);
     FocCore_CurrentLoop();
@@ -329,20 +322,6 @@ void OpenLoop_Slow(void)
     int32_t ol = s_olSpeed;
     s_olTarget = openLoopTarget();
     s_pllFilt += (gEst.pll.s32Speed >> OPENLOOP_PLL_FILT_SH) - (s_pllFilt >> OPENLOOP_PLL_FILT_SH);
-    /* 摆动阻尼：I/F 本身没有阻尼，参数有偏差（辨识前）或接入误差时负载角持续摆动，转速偏离开环转速，
-     * 切闭环判据无法满足、测磁链也受干扰。按 PLL 转速与开环转速之差修正拖动角（转子快于拖动 -> 拖动角退后、负载角减小），
-     * 系数见 param.c（阻尼比 0.5）。仅在开环转速达到切换转速（观测器按设计可靠）、且 PLL 转速与开环转速相差不到一半
-     * （已大致锁定；接入后的收敛过程和未锁定时不修正）时启用，修正限幅 ±30° */
-    {
-        int32_t a = ol < 0 ? -ol : ol, dth = 0;
-        int64_t e = (int64_t)gEst.pll.s32Speed - ol;
-        if (a >= gGain.spdHandoverQ31 && (e < 0 ? -e : e) < (a >> 1)) {
-            dth = (int32_t)((((gEst.pll.s32Speed - ol) >> 16) * (int64_t)gGain.olDampQ8) >> 8);
-            if (dth > OPENLOOP_DAMP_MAX_Q15) dth = OPENLOOP_DAMP_MAX_Q15;
-            if (dth < -OPENLOOP_DAMP_MAX_Q15) dth = -OPENLOOP_DAMP_MAX_Q15;
-        }
-        s_dampTh = (int16_t)dth;
-    }
     if (s_olCur < s_olCurTarget) {      /* 回退时开环电流升至目标 */
         s_olCur += gGain.currentSlewStepQ15;
         if (s_olCur > s_olCurTarget) s_olCur = s_olCurTarget;

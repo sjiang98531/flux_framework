@@ -125,10 +125,9 @@ void Spin_TrackSlow(void)
 {
     const uint16_t half = FLY_SYNC_TICKS >> 1, first = FLY_SYNC_TICKS - (FLY_SYNC_TICKS >> 1);
     int16_t w = (int16_t)(gEst.pll.s32Speed >> 16);
-    uint8_t want = (uint8_t)(abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && !(IDENT_TEST && Ident_HoldTrack()));
+    uint8_t want = (uint8_t)(abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX));
     uint16_t n = s_trackN;
 
-    if (!(IDENT_TEST && Ident_HoldTrack())) gEst.pll.s32AccFF = 0;  /* 加速度前馈只用于运行辨识的滑行段（identify.c） */
     SpeedCtrl_FollowSpeed();            /* 速度环不运行：斜坡、积分器跟随估计转速，id = iq = 0 */
     FocCore_SetIdqRef(0, 0);
     Meas_SlowFilter();
@@ -137,17 +136,6 @@ void Spin_TrackSlow(void)
     if (Protect_OverSpeed(gMeas.speed)) {
         Sup_RaiseFault(MC_FAULT_SPEED_OC);
         return;
-    }
-    if (IDENT_TEST && want) {
-        int16_t iq;
-        if (Ident_TakeCoastResume(&iq)) {   /* 运行辨识滑行结束：PLL 一直在跟踪（含加速度前馈），按此刻转速和滑行前负载电流闭合 */
-            Meas_SpeedPreset(w);
-            SpeedCtrl_OnEnterSpin(0, iq);
-            FocCore_SetIdqRef(0, iq);
-            spinBeginChecks();
-            s_track = 0;
-            return;
-        }
     }
     if (n < 0xFFFF) s_trackN = n + 1;
     if (n < first) return;              /* PLL 仍在收敛 */
