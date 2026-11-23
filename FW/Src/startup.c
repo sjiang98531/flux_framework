@@ -343,6 +343,8 @@ void Startup_IdentHold(void)
     FocCore_PresetPI(0, 0);
     FocCore_SetIdqRef(0, 0);
 }
+#else
+void Startup_IdentHold(void) {}     /* identify.c 始终参与编译：IDENT_TEST = 0 时不会被调用，留空以便链接 */
 #endif
 
 /* Align 慢环：
