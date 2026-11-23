@@ -160,6 +160,7 @@ extern IdentTest_TypeDef gIdentTest;
 int16_t Ident_AlignTheta(void);     /* 定位角（Q15 角度，65536 = 一圈） */
 uint8_t Ident_StaticThisStart(void);    /* 本次起动执行静止测量（进入 Align 时、定位结束时查询） */
 uint8_t Ident_RunActive(void);          /* 运行测量进行中（I/F 测磁链、闭环滑行；受控减速停机让位） */
+uint8_t Ident_OpenLoopFluxWanted(void);  /* 运行辨识中 I/F 磁链尚未测得（开环目标限在切换转速） */
 uint8_t Ident_OpenLoopFluxPending(void); /* 自动辨识运行段 I/F 磁链尚未测得（psi、加速度系数仍为配置值） */
 void Ident_OpenLoopFluxRearm(void);      /* I/F 切闭环失败：下次拖动重新测磁链 */
 uint8_t Ident_TakeRestart(void);        /* 自动方式：静止测量刚完成，需停机后重新起动（读取后清除） */
@@ -173,6 +174,7 @@ uint8_t Ident_Fast(void);           /* 1 = 本拍调制已由测量输出（快�
 /* 运行辨识：supervisor 的 Run 慢环开头调用；滑行期间 Ident_HoldTrack() = 1，零电流跟踪不接回速度环 */
 void    Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp);
 uint8_t Ident_HoldTrack(void);
+uint8_t Ident_TakeCoastResume(int16_t *iq); /* 运行测量滑行结束：按滑行前负载电流立即闭合速度环（取走一次） */
 /* 运行辨识：I/F 慢环在"切闭环"判断前调用；返回 1 = 正在开环里测磁链，先不切 */
 uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt);
 

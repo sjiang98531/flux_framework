@@ -138,6 +138,17 @@ void Spin_TrackSlow(void)
         Sup_RaiseFault(MC_FAULT_SPEED_OC);
         return;
     }
+    if (IDENT_TEST && want) {
+        int16_t iq;
+        if (Ident_TakeCoastResume(&iq)) {   /* 运行辨识滑行结束：PLL 一直在跟踪（含加速度前馈），按此刻转速和滑行前负载电流闭合 */
+            Meas_SpeedPreset(w);
+            SpeedCtrl_OnEnterSpin(0, iq);
+            FocCore_SetIdqRef(0, iq);
+            spinBeginChecks();
+            s_track = 0;
+            return;
+        }
+    }
     if (n < 0xFFFF) s_trackN = n + 1;
     if (n < first) return;              /* PLL 仍在收敛 */
     if (((uint16_t)(n - first) % half) == 0) { s_syncSum = 0; s_syncN = 0; }    /* 新的一块开始 */

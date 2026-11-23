@@ -110,9 +110,12 @@ void Ident_Reset(void)
     gIdentTest.phase = IDENT_PH_RL;
 }
 
+static void runResumeClear(void);
+
 void Ident_Idle(void)
 {
     gIdentTest.phase = IDENT_PH_NONE;
+    runResumeClear();
     s_olFluxSt = OLF_WAIT_STABLE;
     s_olFluxN = 0;
     FocCore_LoadGains();
@@ -1501,12 +1504,13 @@ void Ident_Slow(void)
 #define RUN_PRE_MS      500
 #define RUN_SKIP_MS     20
 #define RUN_COAST_MS    400
-/* 运行测量最低转速：保证滑行后仍高于零电流跟踪结束转速 TRACK_END（随磁链换算，见 param.h），不超过 0.7 倍额定转速 */
+/* 运行测量最低转速：滑行转速降不超过 30%（见 RN_PRE_AVG），滑行后仍高于零电流跟踪结束转速 TRACK_END
+ * （随磁链换算，见 param.h），不超过 0.7 倍额定转速。不必更高：风机类负载随转速平方增长，滑行减速度也随之增大 */
 static double runMinRpm(void)
 {
     double te = TRACK_END_RPM * Param_SpeedThScale(), r;
     if (te > 0.9 * SPEED_MAX) te = 0.9 * SPEED_MAX;
-    r = te / 0.45;
+    r = te / 0.7;
     return (r < 0.7 * MOTOR_SPEED_RATED_RPM) ? r : 0.7 * MOTOR_SPEED_RATED_RPM;
 }
 #define RUN_MIN_RPM     runMinRpm()
@@ -1519,7 +1523,20 @@ static int32_t  s_rnIq, s_rnId, s_rnW;
 static uint16_t s_rnCoastMs;         /* 本次滑行时长（按预计减速度，见 RN_PRE_AVG） */
 static int16_t  s_rnW0;              /* 滑行前平均转速（Q15） */
 static int32_t  s_rnAccFF;           /* 滑行段 PLL 加速度前馈（Q31 / 拍） */
-static float    s_rnS[7], s_rnX2y, s_rnWs, s_rnVm, s_rnI2;
+static int16_t  s_rnResumeIq;        /* 滑行结束后立即闭合速度环的 iq 预置（Q15，0 = 无） */
+static uint8_t  s_rnResume;
+static float    s_rnVd, s_rnVq, s_rnS[7], s_rnX2y, s_rnWs, s_rnI2;
+
+static void runResumeClear(void) { s_rnResume = 0; }
+
+/* 运行测量滑行结束（spin.c 零电流跟踪中调用，取走一次）：返回 1 时按 *iq 立即闭合速度环 */
+uint8_t Ident_TakeCoastResume(int16_t *iq)
+{
+    if (!s_rnResume) return 0;
+    s_rnResume = 0;
+    *iq = s_rnResumeIq;
+    return 1;
+}
 
 uint8_t Ident_HoldTrack(void)
 {
@@ -1586,7 +1603,7 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
                  * 稳态相位误差为 a / ωn²，重载时可达数十度而跟丢；按已知减速度前馈，残差只剩加速度系数误差的部分 */
                 s_rnAccFF = (int32_t)(-(float)gParam.accRpmSPerA * iqA / (float)PWM_FREQ / (float)SPEED_MAX * 2147483648.0f);
             }
-            s_rnX2y = s_rnWs = s_rnVm = s_rnI2 = 0;
+            s_rnVd = s_rnVq = s_rnX2y = s_rnWs = s_rnI2 = 0;
             for (i = 0; i < 7; i++) s_rnS[i] = 0;
             s_rnT = 0;
             s_rnSt = RN_COAST;
@@ -1604,7 +1621,10 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
         if (++s_rnT > RUN_SKIP_MS) {
             float x = (float)s_rnT * 0.001f, y = (float)w;
             float vd = gFoc.vdq.s16D, vq = gFoc.vdq.s16Q, id = gFoc.idq.s16D, iq = gFoc.idq.s16Q;
-            s_rnVm += sqrtf(vd * vd + vq * vq);      /* 零电流时 v = e，模与跟踪角误差无关 */
+            /* 零电流时 v = e。对矢量求平均（不对模）：电流采样零偏在旋转坐标中以电频率旋转，矢量平均可将其消去；
+             * 滑行段 PLL 有加速度前馈，跟踪角误差很小 */
+            s_rnVd += vd;
+            s_rnVq += vq;
             s_rnI2 += id * id + iq * iq;
             s_rnWs += y;
             s_rnS[0] += 1;
@@ -1626,11 +1646,15 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
             float ks = (float)(SPEED_MAX / 32768.0);
             float wm = s_rnWs / n * ks, we = wm * (float)(2.0 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS);
             float iq = (float)s_rnIq / RUN_PRE_MS * (float)(I_MAX / 32768.0);
-            float vm = s_rnVm / n * (float)(UDC_MAX / 32768.0);
+            float vm = sqrtf(s_rnVd * s_rnVd + s_rnVq * s_rnVq) / n * (float)(UDC_MAX / 32768.0);
             float irms = sqrtf(s_rnI2 / n) * (float)(I_MAX / 32768.0);
-            /* 本测量的前提是滑行段电流为零（v = e、无转矩）：残余电流有效值超过滑行前负载电流的 1/5 时
-             * （零电流跟踪未能保持，例如角度跟丢），psi 与加速度系数均不采用，保留 I/F 中测得的 psi */
-            uint8_t zeroI = (uint8_t)(irms < 0.2f * (iq < 0 ? -iq : iq));
+            /* 本测量的两个前提，任一不成立则 psi 与加速度系数均不采用，保留 I/F 中测得的 psi：
+             *   1. 滑行段电流为零（v = e、无转矩）：残余电流有效值不超过滑行前负载电流的 1/5；
+             *   2. 观测器全程跟住转子：滑行时长按转速降 <= 30% 设计，平均转速应在滑行前的 0.6 倍以上。
+             *      反电势与死区压降同量级的电机（零电流附近死区畸变最大），零电流时观测器可能失锁，PLL 转速塌到零附近 */
+            float w0 = (float)s_rnW0 * ks;
+            uint8_t zeroI = (uint8_t)(irms < 0.2f * (iq < 0 ? -iq : iq) &&
+                                      (wm < 0 ? -wm : wm) > 0.6f * (w0 < 0 ? -w0 : w0));
             if (we < 0) we = -we;
             if (zeroI && we > 1.0f) gIdent.psiWb = vm / we;
             if (zeroI && det != 0 && (iq > 0.02f || iq < -0.02f)) gIdent.accRpmSPerA = -(db / det) * ks / iq;
@@ -1645,6 +1669,10 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
                 if (!Param_ApplyNow(&p)) Param_Offer(&p, m);
             }
             gEst.pll.s32AccFF = 0;
+            /* 滑行结束立即闭合速度环，iq 预置为滑行前的负载电流：负载转矩未变，若从零电流起步并等跟踪块平均，
+             * 重载时转子在这段时间内继续以 acc * iq 减速，可能停转而观测器跟丢 */
+            s_rnResumeIq = (int16_t)(s_rnIq / RUN_PRE_MS);
+            s_rnResume = 1;
             gIdent.state = IDENT_DONE;
             s_rnSt = RN_DONE;
         }
@@ -1663,6 +1691,7 @@ void Ident_RunSlow(uint8_t spin, uint8_t tracking, int16_t cmd, int16_t ramp)
  * 因此每拍先做 8 ms 低通（滤掉 PWM / 采样噪声，远快于摆动周期）再取模、对模求平均：
  * 转子同步时平均转速等于拖动转速，mean|e| = psi * ω 与摆幅无关 */
 static float s_olfF[4], s_olfE, s_olfEd, s_olfEq;
+static double s_olfPrevPsi, s_olfPrevAcc;   /* 测量生效前的磁链 / 加速度系数（切闭环失败时恢复） */
 
 static float olfEmf(float w, float *pd, float *pq)
 {
@@ -1752,6 +1781,8 @@ uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
         }
         if (w > 1.0f) {
             MotorParam_TypeDef p = gParam;
+            s_olfPrevPsi = p.psiWb;
+            s_olfPrevAcc = p.accRpmSPerA;
             gIdent.psiOpenLoopWb = s_olfE / OLFLUX_AVG_MS / w;
             /* 加速度系数 ∝ psi / J：惯量未测前按配置惯量换算（运行辨识随后实测加速度系数时覆盖） */
             if (p.psiWb > 0) p.accRpmSPerA *= gIdent.psiOpenLoopWb / p.psiWb;
@@ -1766,14 +1797,29 @@ uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
 /* I/F 切闭环失败（堵转超时）：所测磁链可能来自未同步的拖动，下次拖动重新测量 */
 void Ident_OpenLoopFluxRearm(void)
 {
-    if (Ident_RunActive()) s_olFluxSt = OLF_WAIT_STABLE;
+    if (!Ident_RunActive()) return;
+    /* 本次测得并已生效的磁链未能通过切闭环验证：恢复测量前的磁链 / 加速度系数（错误的磁链会连带改变切换转速等，越拖越偏） */
+    if (s_olFluxSt == OLF_DONE && s_olfPrevPsi > 0) {
+        MotorParam_TypeDef p = gParam;
+        p.psiWb = s_olfPrevPsi;
+        p.accRpmSPerA = s_olfPrevAcc;
+        (void)Param_ApplyNow(&p);
+    }
+    s_olfPrevPsi = 0;
+    s_olFluxSt = OLF_WAIT_STABLE;
+}
+
+/* 运行辨识中 I/F 磁链尚未测得（openloop.c：开环目标限在切换转速） */
+uint8_t Ident_OpenLoopFluxWanted(void)
+{
+    return (uint8_t)(Ident_RunActive() && s_olFluxSt != OLF_DONE);
 }
 
 /* 自动辨识（AUTO）的运行段、I/F 磁链尚未测得（openloop.c：此时 psi / 加速度系数仍为配置值，冷起动按保守加速度拖动）。
  * IDENT_MODE_RUN 属正常起动（参数按配置 / 已辨识），不放慢 */
 uint8_t Ident_OpenLoopFluxPending(void)
 {
-    return (uint8_t)(gIdentCfg.mode == IDENT_MODE_AUTO && Ident_RunActive() && s_olFluxSt != OLF_DONE);
+    return (uint8_t)(gIdentCfg.mode == IDENT_MODE_AUTO && Ident_OpenLoopFluxWanted());
 }
 
 uint8_t Ident_Fast(void)

@@ -100,6 +100,7 @@ typedef struct {
     int16_t spdTrackEndQ15;     /* TRACK_END_RPM：零电流跟踪 / 受控减速结束 */
     int16_t spdFlyCatchQ15;     /* FLY_CATCH_RPM：飞车同向直接接入闭环下限 */
     int16_t spdFlyRevMinQ15;    /* FLY_REV_SPIN_MIN_RPM：飞车反向直接接入闭环下限 */
+    int32_t olDampQ8;           /* I/F 摆动阻尼：拖动角修正（Q15 角度）/ PLL 与开环转速差（Q15 转速），Q8，见 openloop.c */
     /* ---- 保护与告警（protect.c / diag.c） */
     int32_t protectSpeedOcQ15;  /* 超速保护门限（Q15） */
     uint16_t cfgWarn;           /* 增益超出定点范围被封顶：bit1 电流环，bit2 PLL，bit3 反电势前馈超量程 */

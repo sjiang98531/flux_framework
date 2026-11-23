@@ -12,6 +12,7 @@
  *   Param_Offer        辨识结束：提交参数，待 Stop 后生效
  *   Param_Background   主循环：Stop 状态下生效
  * ==========================================================================*/
+#include <math.h>
 #include "param.h"
 #include "cfg_derived.h"
 #include "hal.h"
@@ -213,6 +214,18 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
         g->spdTrackEndQ15 = Q15(te / SPEED_MAX);
         g->spdFlyCatchQ15 = Q15(fc / SPEED_MAX);
         g->spdFlyRevMinQ15 = Q15(frev / SPEED_MAX);
+    }
+    {
+        /* I/F 摆动阻尼（openloop.c）：负载角绕平衡点摆动的电角频率 ω_h = sqrt(p * a_max)，a_max = 加速度系数 * 开环电流
+         * （机械角加速度）。拖动角 θ = θ_ol - c * (ω_r - ω_ol)，转子偏差 e 满足 e'' + ω_h² c e' + ω_h² e = 0，
+         * 阻尼比 ζ = ω_h c / 2，取 ζ = 0.5 => c = 1 / ω_h。换算：角度（Q15，65536/圈）= c * Δ转速（Q15）* 2 * SPEED_MAX * p / 60 */
+        double amax = p->accRpmSPerA * OPENLOOP_CURRENT_A * (2.0 * MATH_PI / 60.0);
+        double wh = (amax > 0) ? sqrt(MOTOR_POLE_PAIRS * amax) : 0;
+        /* 阻尼信号取自 PLL 转速：摆动频率须明显低于 PLL 带宽，PLL 才能不失相位地跟随转子转速摆动；
+         * 接近或超过带宽时相位滞后使该反馈失去阻尼甚至变为负阻尼，此时不加（这类电机 I/F 刚度大，摆动本就衰减快） */
+        double k = (wh > 0 && wh < 0.7 * 2.0 * MATH_PI * FLUXPLL_WN_HZ) ? (1.0 / wh) * 2.0 * SPEED_MAX * MOTOR_POLE_PAIRS / 60.0 : 0;
+        if (k > 64.0) k = 64.0;
+        g->olDampQ8 = (int32_t)(k * 256.0 + 0.5);
     }
 }
 
