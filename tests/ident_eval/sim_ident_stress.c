@@ -162,10 +162,10 @@ int main(int argc, char **argv) {
                     g_sim_faultCount, (unsigned)(OpenLoop_BoostLevel ? OpenLoop_BoostLevel() : 0));
     printf("TRUE rs=%.6f ld=%.6g lq=%.6g ksat=%.6f i0sat=%.6f psi=%.6g imax=%.4f irun=%.4f imaxhw=%.4f dti0=%.4f iref0=%.4f\n",
            pl.res, pl.lD, pl.lQ, pl.qSatK, pl.qSatI0, pl.psi, imax_swp, i_run, (double)I_MAX, (double)INVERTER_DT_I0_A, imax_swp);
-    printf("RES state=%d phase=%u fail=%u warn=0x%x rs=%.6f dt=%.4f rlR=%.4f rlL=%.6g ld=%.6g lq=%.6g injHz=%.1f knee=0 perA=%.5f psi=%.6g acc=%.2f idMaxA=%.4f jAref=%.1f jIqA=%.4f src=%u rej=%u pLd=%.6g pLq=%.6g pKnee=%.4f pPerA=%.5f pLsMax=%.4f endThe=%.1f ipk=%.3f\n",
+    printf("RES state=%d phase=%u fail=%u warn=0x%x rs=%.6f dt=%.4f rlR=%.4f rlL=%.6g ld=%.6g lq=%.6g injHz=%.1f knee=0 perA=%.5f psi=%.6g acc=%.2f idMaxA=%.4f jAref=%.1f jIqA=%.4f psiCl=%.5g src=%u rej=%u pLd=%.6g pLq=%.6g pKnee=%.4f pPerA=%.5f pLsMax=%.4f endThe=%.1f ipk=%.3f\n",
            (int)gIdent.state, (unsigned)gIdentTest.phase, (unsigned)gFluxDiag.cfgFailLine, (unsigned)gIdent.warn,
            gIdent.rsOhm, gIdent.deadTimeS*1e6, gIdent.rlR, gIdent.rlL, gIdent.ldH, gIdent.lqH, gIdent.injHz, gIdent.lsPerA,
-           gIdent.psiWb, gIdent.accRpmSPerA, imax_swp, gIdent.jAccRef, gIdent.jIqAcc,
+           gIdent.psiWb, gIdent.accRpmSPerA, imax_swp, gIdent.jAccRef, gIdent.jIqAcc, gIdent.psiClWb,
            (unsigned)gParamStat.source, (unsigned)gParamStat.rejectMask,
            gParam.ldH, gParam.lqH, gParam.lsKneeA, gParam.lsPerA, gParam.lsMaxA, end_the_deg, pl.ipk);
     return 0;

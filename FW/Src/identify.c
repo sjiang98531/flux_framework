@@ -609,7 +609,7 @@ uint8_t Ident_OpenLoopFluxPending(void)
 #define J_STABLE_MS     1000
 #define J_SEG_MS        300                 /* 稳速段长度、升降速到位后的稳定时间 */
 #define J_NP            4
-enum { J_WAIT = 0, J_W0, J_UP, J_TOP, J_DN, J_BOT };
+enum { J_WAIT = 0, J_W0, J_UP, J_TOP, J_DN, J_BOT, J_PSI };
 static int16_t  s_jCmd, s_jDw;      /* 基准指令、升速量（Q15） */
 static int32_t  s_jRamp;            /* 测量用斜坡加速度上限（Q31 / 慢环拍） */
 static uint32_t s_jT, s_jTs;
@@ -681,6 +681,66 @@ static void jRow(float w)
     s_sN = 0; s_sIq = s_sX = s_sX2 = 0; s_sW = w;
 }
 
+/* 惯量测量开始：设定升速量、测量加速度，清最小二乘 */
+static void jStart(void)
+{
+    const float ks = (float)(SPEED_MAX / 32768.0), ka = (float)(SPEED_MAX * SLOWLOOP_FREQ / 2147483648.0);
+    {
+        float wc = fabsf((float)s_jCmd * ks), dw = 0.15f * wc, a = 0.3f * (float)MOTOR_I_RATED_A * (float)gParam.accRpmSPerA;
+        uint16_t i, j;
+        if (a * 0.4f > dw) a = dw / 0.4f;
+        if (wc + dw > 0.9f * (float)SPEED_MAX) dw = -dw;                            /* 已接近上限：先降再升 */
+        s_jDw = (int16_t)((s_jCmd < 0 ? -dw : dw) / ks);
+        s_jDwRpm = fabsf(dw);
+        s_jAref = a;
+        gIdent.jAccRef = a;
+        s_jRamp = (int32_t)(a / ka);
+        if (s_jRamp < 1) s_jRamp = 1;
+        s_jW0 = wc;
+        for (i = 0; i < J_NP; i++) { s_jB[i] = 0; for (j = 0; j < J_NP; j++) s_jA[i][j] = 0; }
+        s_sN = 0; s_sIq = s_sX = s_sX2 = 0;
+        s_sW = ((s_jCmd < 0) ? -1.0f : 1.0f) * (float)gMeas.speedRaw * ks;
+        s_jT = 0;
+        s_jSt = J_W0;
+    }
+}
+
+/* 闭环细测磁链。I/F 中电流沿转子 d 轴（增磁）且转速低，d 轴饱和使 psi 偏小（约 5%）、电阻与死区误差占比大；
+ * 闭环 id = 0、转速更高时 e = v - R i - Vdt - jωL i 中电感项垂直于 e（只有二阶影响），电阻 / 死区误差占比按转速成比例减小。
+ * 与 I/F 同一计算（olfEmf），ω 取估计转速。闭环转速不低于 I/F 切换转速，测得即替换 I/F 值 */
+#define PSI_CL_SETTLE_MS   100
+#define PSI_CL_AVG_MS      500
+static float s_pclW;                /* 平均电角速度累加 */
+static void psiClSlow(void)
+{
+    const float ki = (float)(I_MAX / 32768.0), kv = (float)(UDC_MAX / 32768.0);
+    const float kw = (float)(SPEED_MAX / 32768.0 * 2.0 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS);
+    float x[4], w = (float)gMeas.speedRaw * kw, ed, eq;
+    uint16_t j;
+    x[0] = gFoc.idq.s16D * ki;
+    x[1] = gFoc.idq.s16Q * ki;
+    x[2] = gFoc.vdq.s16D * kv;
+    x[3] = gFoc.vdq.s16Q * kv;
+    for (j = 0; j < 4; j++) s_olfF[j] = (s_jT == 1u) ? x[j] : s_olfF[j] + (x[j] - s_olfF[j]) * 0.125f;
+    if (s_jT <= PSI_CL_SETTLE_MS) { s_pclW = 0; return; }
+    s_olfE += olfEmf(w, &ed, &eq);
+    s_pclW += fabsf(w);
+    if (s_jT < PSI_CL_SETTLE_MS + PSI_CL_AVG_MS) return;
+    {
+        float wm = s_pclW / PSI_CL_AVG_MS, psi = s_olfE / PSI_CL_AVG_MS / wm;
+        gIdent.psiClWb = psi;
+        if (psi > 0.0f) {
+            MotorParam_TypeDef p = gParam;
+            if (p.psiWb > 0) p.accRpmSPerA *= psi / p.psiWb;
+            gIdent.accRpmSPerA = (float)p.accRpmSPerA;
+            gIdent.psiWb = psi;
+            p.psiWb = psi;
+            if (!Param_ApplyNow(&p)) Param_Offer(&p, 8u | 16u);
+        }
+    }
+    jStart();
+}
+
 /* 指令"不变"的容差：约 1.5%（电位器 / 通讯指令的小抖动不算改指令） */
 static int16_t jTol(int16_t c)
 {
@@ -703,26 +763,17 @@ void Ident_RunSlow(uint8_t spin)
         if (++s_jTs > 15u * SLOWLOOP_FREQ) { jFinish(0); return; }
         if (fabsf((float)(gMeas.speed - s_jCmd)) > 0.03f * fabsf((float)s_jCmd)) { s_jT = 0; return; }
         if (++s_jT >= J_STABLE_MS) {
-            float wc = fabsf((float)s_jCmd * ks), dw = 0.15f * wc, a = 0.3f * (float)MOTOR_I_RATED_A * (float)gParam.accRpmSPerA;
-            uint16_t i, j;
-            if (a * 0.4f > dw) a = dw / 0.4f;
-            if (wc + dw > 0.9f * (float)SPEED_MAX) dw = -dw;                            /* 已接近上限：先降再升 */
-            s_jDw = (int16_t)((s_jCmd < 0 ? -dw : dw) / ks);
-            s_jDwRpm = fabsf(dw);
-            s_jAref = a;
-            gIdent.jAccRef = a;
-            s_jRamp = (int32_t)(a / ka);
-            if (s_jRamp < 1) s_jRamp = 1;
-            s_jW0 = wc;
-            for (i = 0; i < J_NP; i++) { s_jB[i] = 0; for (j = 0; j < J_NP; j++) s_jA[i][j] = 0; }
-            s_sN = 0; s_sIq = s_sX = s_sX2 = 0; s_sW = w;
+            uint16_t j;
+            for (j = 0; j < 4; j++) s_olfF[j] = 0;
+            s_olfE = 0;
             s_jT = 0;
-            s_jSt = J_W0;
+            s_jSt = J_PSI;              /* 先闭环细测磁链，再测惯量 */
         }
         return;
     }
     if (abs(gSup.speedCmd - s_jCmd) > jTol(s_jCmd)) { s_jSt = J_WAIT; s_jT = s_jTs = 0; return; }   /* 指令被改：重来 */
     if (++s_jT > 20u * SLOWLOOP_FREQ) { jFinish(0); return; }                           /* 到不了目标（电流受限等）：放弃 */
+    if (s_jSt == J_PSI) { psiClSlow(); return; }
     {
         float x = (w - s_jW0) / s_jDwRpm;
         s_sIq += sg * (float)gFoc.idq.s16Q * (float)(I_MAX / 32768.0);

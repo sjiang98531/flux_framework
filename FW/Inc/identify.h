@@ -47,6 +47,7 @@ typedef struct {
     float injHz;        /* Ld / Lq 注入频率 */
     float psiWb;        /* 磁链（I/F 恒速段），测得后立即生效再切闭环 -> MOTOR_PSI_F_WB */
     float accRpmSPerA;  /* 加速度系数（升降速实测；未测得时为配置值按磁链换算）-> MOTOR_ACC_RPM_S_PER_A */
+    float psiClWb;          /* 闭环细测的磁链 Wb（0 = 未测）；测得后替换 I/F 粗测值 psiWb */
     float jAccRef, jIqAcc;  /* 惯量测量：参考加速度 rpm/s、该加速度所需电流 A（最小二乘拟合）；acc = jAccRef / jIqAcc */
     float deadVoltV;    /* 死区等效电压（每相，测量时母线电压下） */
     float deadTimeS;    /* 等效死区时间 = deadVoltV / (PWM_FREQ * Vbus) -> INVERTER_DT_EFF_S */
