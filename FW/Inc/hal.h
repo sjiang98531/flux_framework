@@ -62,6 +62,9 @@ FORCE_INLINE void HAL_ClearOcLatch(void)
 void HAL_InitHardware(void);    /* 外设初始化（Board/Src/SC_Init.c） */
 void HAL_InitParams(void);    /* PWM 周期、慢环分频、短接占空比 */
 void HAL_StartInterrupts(void);    /* 配置中断优先级并开中断 */
+/* 停机中电流零点跟踪（Stop 快环每拍调用）与重新开始（每次起动时调用），说明见 hal_sc32r602.c */
+void HAL_OffsetTrack(void);
+void HAL_OffsetTrackRestart(void);
 /* 驱动板自检（cfg_board.h PWM_DEBUG = 1）：三相固定 25% 占空比，不运行控制，不返回 */
 void HAL_PwmDebugLoop(void);
 

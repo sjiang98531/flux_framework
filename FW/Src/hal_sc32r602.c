@@ -96,6 +96,49 @@ FORCE_INLINE uint8_t acquireSamples(void)
     return 1;
 }
 
+/* 停机中电流零点跟踪（Stop 快环每拍调用）。
+ * 上电校准只做一次；若当时功率部分尚未通电（例如先运行程序、后接母线），模拟前端的偏置与正常工作时不同，零点带误差，
+ * 运行时表现为直流电流误差（开环拖动时 1 倍电频率的转矩波动、辨识结果偏差）。
+ * 停机时 PWM 关闭、电流为零，正是测零点的条件：进入停机后先等 OFFSET_TRK_SETTLE 拍（约 4 ms）让绕组电流衰减到零，
+ * 之后每 OFFSET_N 拍（16 ms）一个窗口重测零点，起动时用的总是最近一次在工作条件下测得的值，不增加起动时间。
+ * 窗口内两相采样峰峰值都不超过上电噪声的约 2 倍才采用（确认电流确实为零：例如转子惯性转动、反电势经二极管导通时不更新） */
+#define OFFSET_TRK_SETTLE   64u
+static uint16_t s_trkN;
+static uint32_t s_trkSum[3];
+static uint16_t s_trkMin[2], s_trkMax[2];
+
+void HAL_OffsetTrackRestart(void)
+{
+    s_trkN = 0;
+}
+
+void HAL_OffsetTrack(void)
+{
+    uint8_t k;
+    if (s_u16Cnt <= OFFSET_END) return;                 /* 上电校准未完成 */
+    if (++s_trkN <= OFFSET_TRK_SETTLE) return;
+    if (s_trkN == OFFSET_TRK_SETTLE + 1u) {             /* 新窗口 */
+        for (k = 0; k < 3; k++) s_trkSum[k] = 0;
+        for (k = 0; k < 2; k++) s_trkMin[k] = s_trkMax[k] = ADC_DMABuff[k];
+    }
+    for (k = 0; k < 2; k++) {
+        uint16_t x = ADC_DMABuff[k];
+        if (x < s_trkMin[k]) s_trkMin[k] = x;
+        if (x > s_trkMax[k]) s_trkMax[k] = x;
+    }
+    for (k = 0; k < 3; k++) s_trkSum[k] += (uint32_t)ADC_DMABuff[k] << 3;
+    if (s_trkN < OFFSET_TRK_SETTLE + OFFSET_N) return;
+    if ((uint16_t)(s_trkMax[0] - s_trkMin[0]) <= 4u * gHal.adcNoisePk &&
+        (uint16_t)(s_trkMax[1] - s_trkMin[1]) <= 4u * gHal.adcNoisePk) {
+        gMeas.iabcOffset.s16A = (int16_t)(s_trkSum[0] >> 8);
+        gMeas.iabcOffset.s16B = (int16_t)(s_trkSum[1] >> 8);
+#if (IBUS_RECONSTRUCTED == 0)
+        s_u16IbusOffset = (uint16_t)(s_trkSum[2] >> 8);
+#endif
+    }
+    s_trkN = OFFSET_TRK_SETTLE;                         /* 下一窗口 */
+}
+
 /* 硬件过流（比较器逐周期保护）中断：母线电流超过比较器门限（DAC 设定）时芯片已自动封锁 PWM，
  * 此处再次关闭输出并置锁存（下一拍快环 faultDetect 转换为故障），清除中断标志。优先级 0（最高） */
 void EPWM_IRQHandler(void)

@@ -228,6 +228,7 @@ void Sup_SwitchRunStop(void)
 static void switchStopRun(void)
 {
     HAL_ClearOcLatch();             /* 停机期间的过流标志不带入新的运行 */
+    HAL_OffsetTrackRestart();       /* 下次停机重新等电流衰减后再测零点 */
     gSup.mainState = MainState_Run;
     gSup.runState = RunState_Charge;
     HAL_FgSetDuty(0);
@@ -254,6 +255,7 @@ static void stopFast(void)
 {
     HAL_PwmAllOff();
     HAL_PwmSetHalfDuty();
+    HAL_OffsetTrack();              /* PWM 关闭、电流为零：持续重测电流零点 */
     Meas_BusFollowSample();
     faultDetect();
     if (gSup.fault) gSup.mainState = MainState_Fault;

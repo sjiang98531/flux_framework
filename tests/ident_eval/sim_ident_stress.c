@@ -79,7 +79,8 @@ int main(int argc, char **argv) {
     for (long k = 0; k < nTicks; k++) {
         double t = k * dt;
         int done = (gIdent.state == IDENT_DONE) || (mode == IDENT_MODE_STATIC && gIdentTest.phase == IDENT_PH_DONE);
-        int stopNow = (t < 0.2 || (mode == IDENT_MODE_STATIC && done) || (abort_mode == 2 && aborted));
+        int stopNow = (t < (getenv("SIM_CMD_T0") ? atof(getenv("SIM_CMD_T0")) : 0.2) ||   /* SIM_CMD_T0：给速度指令的时刻 s */
+                        (mode == IDENT_MODE_STATIC && done) || (abort_mode == 2 && aborted));
         gSup.speedCmd = stopNow ? 0 : (int16_t)(cmd_rpm / SPEED_MAX * 32768.0 + (getenv("SIM_CMD_JIT") ? atof(getenv("SIM_CMD_JIT")) * (double)((k / (long)(0.02 * PWM_FREQ)) % 3 - 1) : 0.0));   /* SIM_CMD_JIT：指令每 20 ms 抖动 ±LSB（模拟电位器） */
         sim_TIM3.TIM_CNT = (uint32_t)(k * 7u) & 0xffffu;
         plant_step(&pl, dt);
@@ -157,9 +158,9 @@ int main(int argc, char **argv) {
     if (getenv("SIM_DIAG_TIER")) printf("PSIOL ol=%.5g run=0 rej=%u\n", gIdent.psiWb, (unsigned)gParamStat.rejectMask);
     if (getenv("SIM_DIAG_TIER")) printf("PARAM rs=%.5g ld=%.5g lq=%.5g dt=%.4g psi=%.5g acc=%.5g knee=%.4g per=%.5g lsmax=%.4g src=%u\n",
         gParam.rsOhm, gParam.ldH, gParam.lqH, gParam.dtEffS * 1e6, gParam.psiWb, gParam.accRpmSPerA, gParam.lsKneeA, gParam.lsPerA, gParam.lsMaxA, (unsigned)gParamStat.source);
-    if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f nFault=%d boost=%u\n",
+    if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f nFault=%d boost=%u offA=%d offB=%d\n",
                     (unsigned)gSup.fault, (int)gSup.mainState, (int)gSup.runState, tOL, tSpin, spinExit, plant_rpm(&pl), rpmErrMax2s,
-                    g_sim_faultCount, (unsigned)(OpenLoop_BoostLevel ? OpenLoop_BoostLevel() : 0));
+                    g_sim_faultCount, (unsigned)(OpenLoop_BoostLevel ? OpenLoop_BoostLevel() : 0), (int)gMeas.iabcOffset.s16A, (int)gMeas.iabcOffset.s16B);
     printf("TRUE rs=%.6f ld=%.6g lq=%.6g ksat=%.6f i0sat=%.6f psi=%.6g imax=%.4f irun=%.4f imaxhw=%.4f dti0=%.4f iref0=%.4f\n",
            pl.res, pl.lD, pl.lQ, pl.qSatK, pl.qSatI0, pl.psi, imax_swp, i_run, (double)I_MAX, (double)INVERTER_DT_I0_A, imax_swp);
     printf("RES state=%d phase=%u fail=%u warn=0x%x rs=%.6f dt=%.4f rlR=%.4f rlL=%.6g ld=%.6g lq=%.6g injHz=%.1f knee=0 perA=%.5f psi=%.6g acc=%.2f idMaxA=%.4f jAref=%.1f jIqA=%.4f psiCl=%.5g src=%u rej=%u pLd=%.6g pLq=%.6g pKnee=%.4f pPerA=%.5f pLsMax=%.4f endThe=%.1f ipk=%.3f\n",
