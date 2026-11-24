@@ -12,8 +12,9 @@
 
 Protect_TypeDef gProt;
 
-/* 母线过 / 欠压需持续的慢环拍数（滤除采样毛刺）。判断对象为 vbusAvg，其本身在慢环中更新 */
+/* 母线过 / 欠压需持续的慢环拍数（滤除采样毛刺）。过压判断 vbusAvg；欠压判断 DCBUS_UV_PEAK_S 窗口内的母线峰值 */
 #define BUS_FILT_TICKS  ((uint16_t)(DCBUS_FILT_S * SLOWLOOP_FREQ + 0.5))
+#define BUS_PEAK_TICKS  ((uint16_t)(DCBUS_UV_PEAK_S * SLOWLOOP_FREQ + 0.5))
 
 /* 上电：过压 / 欠压门限换算为 Q15，清除缺相统计 */
 void Protect_Init(void)
@@ -23,12 +24,15 @@ void Protect_Init(void)
     Protect_PhaseReset();
 }
 
-/* 母线过压 / 欠压（慢环每拍，由 Ctrl_SlowTick 调用）：母线平均值越限持续 DCBUS_FILT_S 后立即关闭 PWM，
+/* 母线过压 / 欠压（慢环每拍，由 Ctrl_SlowTick 调用）：过压看母线平均值、欠压看母线峰值（即输入电压），越限持续 DCBUS_FILT_S 后立即关闭 PWM，
  * 结果写入 gProt.busFlags（PROTECT_BUS_OV / UV 位），由快环 faultDetect 转换为故障 */
 void Protect_BusSlow(void)
 {
-    static uint16_t u16OvCntr, u16UvCntr;
+    static uint16_t u16OvCntr, u16UvCntr, u16PkN;
+    static int16_t s16Pk, s16PkWin = 32767;     /* 当前窗口峰值、上一窗口峰值（未满一个窗口前不判欠压） */
     uint8_t f = 0;
+    if (gMeas.vbus > s16Pk) s16Pk = gMeas.vbus;
+    if (++u16PkN >= BUS_PEAK_TICKS) { s16PkWin = s16Pk; s16Pk = 0; u16PkN = 0; }
     if (gMeas.vbusAvg > gProt.ovpCmd) {
         if (u16OvCntr <= BUS_FILT_TICKS) u16OvCntr++;
         else {
@@ -38,7 +42,7 @@ void Protect_BusSlow(void)
     } else {
         u16OvCntr = 0;
     }
-    if (gMeas.vbusAvg < gProt.uvpCmd) {
+    if (s16PkWin < gProt.uvpCmd) {
         if (u16UvCntr <= BUS_FILT_TICKS) u16UvCntr++;
         else {
             f |= PROTECT_BUS_UV;

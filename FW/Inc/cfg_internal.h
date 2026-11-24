@@ -152,7 +152,8 @@
 
 /* ===================== 保护 ============================================== */
 #define DCBUS_OVER              (BOARD_DCBUS_OVP_V)         /* V，由硬件决定，见 cfg_board.h */
-#define DCBUS_UNDER             (0.0)       /* V */
+#define DCBUS_UNDER             (BOARD_VAC_UV_V * 1.41421356)   /* V，母线峰值欠压门限（本板 176 Vac -> 249 V） */
+#define DCBUS_UV_PEAK_S         0.025       /* s，母线峰值的统计窗口（覆盖 50 / 60 Hz 整流的至少两个半波） */
 #define DCBUS_FILT_S            0.1         /* s，母线越限持续该时间才报故障 */
 #define FAULTRELEASE_TIME       0.0         /* s */
 /* 缺相检测（Spin、I/F 共用，protect.h）：窗口取 PHASELESS_PERIODS 个电周期，最大相均流 > PHASELESS_RATIO 倍最小相判缺相 */
