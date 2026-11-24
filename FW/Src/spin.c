@@ -34,6 +34,14 @@ static int32_t s_syncSum, s_syncN;              /* 当前块的 PLL 转速累加
 static int32_t s_fbLim;                 /* Spin -> I/F 回退前 |id| 的上限（Q15），按电流变化率降到 0；-1 = 未在回退，见 fallbackBlend */
 static int8_t s_spinDir;              /* 进入 Spin 时的指令方向；之后指令反向（需要反转）时清 0 */
 static uint16_t s_spinCheckTicks;     /* Spin 中 spinTooSlow 的轮询分频（SPIN_CHECK_TICKS） */
+/* 直接闭环起动（STARTUP_DIRECT_CL）：s_direct = 1 表示转速尚未达到切换转速（观测器可靠下限），此段不做回退 / 失速 / 失锁判断，
+ * 转速指令至少取切换转速；达到后转为正常闭环。超时未达到 -> 停机并记录失败，下一次起动走 I/F（s_directFail，指令归零时清除） */
+static uint8_t  s_direct, s_directFail;
+static uint16_t s_directTicks;
+static float    s_dirExp, s_dirK;       /* 按 q 轴电流应产生的转速变化（Q15 转速）、每拍每单位 iq 的转速增量 */
+static int16_t  s_dirW0;                /* 进入时的估计转速 */
+#define DIRECT_TMO_TICKS ((uint16_t)(STARTUP_DIRECT_TMO_S * SLOWLOOP_FREQ))
+static void spinLostLockStop(void);
 
 /* 符号：+1 / 0 / -1 */
 static int8_t sign16(int16_t x)
@@ -72,6 +80,7 @@ static void spinBeginChecks(void)
 void Spin_Reset(void)
 {
     s_track = 0;
+    s_direct = 0;
 }
 
 /* 是否处于零电流跟踪中（supervisor.c 据此只执行 Spin_TrackSlow） */
@@ -84,6 +93,54 @@ uint8_t Spin_Tracking(void)
 void Spin_OnEnter(void)
 {
     spinBeginChecks();
+}
+
+/* 摆动起动直接闭环（Sup_SwitchSwingSpin，临界区内） */
+void Spin_OnEnterDirect(void)
+{
+    spinBeginChecks();
+    s_direct = 1;
+    s_directTicks = 0;
+    s_dirExp = 0;
+    s_dirW0 = gMeas.speed;
+    s_dirK = (float)(gParam.accRpmSPerA * I_MAX / ((double)SLOWLOOP_FREQ * SPEED_MAX));
+}
+
+uint8_t Spin_DirectOk(void)
+{
+    return (uint8_t)(STARTUP_DIRECT_CL && !s_directFail);
+}
+
+void Spin_DirectReset(void)
+{
+    s_directFail = 0;
+}
+
+/* 直接闭环的低速段（慢环，速度环之前）：指令至少取切换转速（同向）；达到切换转速 -> 正常闭环；超时 -> 失败停机。
+ * 返回 1 = 本拍已停机 */
+static uint8_t directSlow(void)
+{
+    int8_t s = sign16(gSpd.cmd);
+    if (!s_direct) return 0;
+    if (s != 0 && abs(gSpd.cmd) < (int16_t)(gGain.spdHandoverQ31 >> 16)) gSpd.cmd = (int16_t)(s * (int16_t)(gGain.spdHandoverQ31 >> 16));
+    if (s != 0 && (int32_t)s * gMeas.speed >= (int16_t)(gGain.spdHandoverQ31 >> 16)) {
+        s_direct = 0;
+        spinBeginChecks();              /* 从此按正常闭环判断（记录方向、重新开始失速检查） */
+        return 0;
+    }
+    /* 力学一致性：转矩 Kt*iq 必然产生加速度。按加速度系数累计 q 轴电流应产生的转速变化 s_dirExp，
+     * 已超过切换转速而估计转速的变化还不到其 1/4：控制角是错的（转矩没有作用在转子 q 轴上），或负载远大于转矩
+     * （此时也应由 I/F 拖动）。判失败，不必等满超时（错误角度的电流可能正带着转子反转） */
+    s_dirExp += s_dirK * (float)gFoc.idq.s16Q * (float)s;
+    if (s_dirExp > (float)(gGain.spdHandoverQ31 >> 16) && (float)((int32_t)s * (gMeas.speed - s_dirW0)) < 0.25f * s_dirExp)
+        s_directTicks = DIRECT_TMO_TICKS;
+    if (++s_directTicks > DIRECT_TMO_TICKS || s == 0) {
+        s_direct = 0;
+        s_directFail = 1;
+        spinLostLockStop();
+        return 1;
+    }
+    return 0;
 }
 
 /* 飞车直接接入 Spin 时（Sup_SwitchFlyCheckSpin，快环中）：进入零电流跟踪，速度环由零电流跟踪的慢环跟随转速 */
@@ -237,16 +294,19 @@ static uint8_t fallbackBlend(void)
 void Spin_Slow(void)
 {
     uint8_t fbReady;
+    if (directSlow()) return;
     SpeedCtrl_SpinSlow();
     IdRef_Slow();          /* id 指令（MTPA + 弱磁）与 iq 限幅；功能关闭时为空函数 */
     SpeedCtrl_BlendSlow();  /* I/F 切换融合：切换遗留分量叠加其上并逐渐淡出 */
-    fbReady = fallbackBlend();  /* 需回退 I/F 时，先将 |id| 按变化率降到 0 */
+    fbReady = s_direct ? 0 : fallbackBlend();  /* 需回退 I/F 时，先将 |id| 按变化率降到 0（直接闭环低速段不回退） */
     /* 本拍电流指令一次性发布 */
     FocCore_SetIdqRef(gSpd.idqCmd.s16D, gSpd.idqCmd.s16Q);
 
     /* 低速区（含过零反向）由 I/F 开环负责，在观测器仍锁定的转速即交回；同向降到 SPIN_LOST_EMF_PCT 以下 = 失锁 */
-    if (spinLostLock()) { spinLostLockStop(); return; }
-    if (fbReady) {
+    if (s_direct) {
+        /* 直接闭环低速段：不做失锁 / 回退 / 失速判断（由 directSlow 的超时兜底） */
+    } else if (spinLostLock()) { spinLostLockStop(); return; }
+    else if (fbReady) {
         Sup_SwitchSpinOpenLoop();
     } else if (!cmdOppositeDir()) {    /* 同向，或估计转速恰为 0（指令此处不为 0）：0 也按"转不动"判失锁 */
         if (++s_spinCheckTicks >= SPIN_CHECK_TICKS) {

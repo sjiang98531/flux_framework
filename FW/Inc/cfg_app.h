@@ -28,6 +28,13 @@
 #define STARTUP_MODE_SWING      3
 #define STARTUP_MODE            STARTUP_MODE_SWING
 
+/* 摆动起动后直接闭环（试验，分支 exp/direct-cl-start）：转子过定位轴时的角度、转速已测得，观测器 / PLL 按此预置后直接进入
+ * 闭环（速度环从 0 建立 q 轴电流，定位电流淡出），不经过 I/F。低速段（低于切换转速）观测器反电势小，此时不做回退 / 失速判断；
+ * STARTUP_DIRECT_TMO_S 内未达到切换转速则停机，下一次起动改用 I/F。逆向过轴、自动辨识需在 I/F 中测磁链时仍走 I/F。
+ * 0 = 关闭（一律经 I/F） */
+#define STARTUP_DIRECT_CL       1
+#define STARTUP_DIRECT_TMO_S    3.0     /* s */
+
 /* 停机方式（上电默认值；运行中可修改 gSup.stopMode，立即生效）。停机 = |指令| < RUN_TO_STOP_SPEED：
  *   STOP_MODE_RAMP   受控减速：闭环运行中收到停机指令时，速度环按 SPEED_RAMP_DOWN 减速到 TRACK_END_EMF_PCT，
  *                    再将电流降到 0、关闭 PWM。减速度由斜坡决定，与负载大小、转向无关；

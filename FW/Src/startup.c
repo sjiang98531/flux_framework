@@ -17,6 +17,7 @@
 #include "flystart.h"
 #include "identify.h"
 #include "ipd.h"
+#include "spin.h"
 #include "param.h"
 
 Startup_TypeDef gStartup;
@@ -221,6 +222,16 @@ void Startup_AlignFast(void)
  *     不再等转子摆回来，省去最多一个摆动周期。
  *   无摆动（s_swingQuietTicks 内 |e| 始终低于门限）或等待超过 s_swingMaxTicks：定位轴按扫掠角速度沿转向转 90°，
  *     到达后再等 s_swingQuietTicks，按新轴静止接入（避免转子停在死点时按原定位轴接入而错约 180°）。 */
+/* 摆动起动接入：顺转向过轴（或静止）且本次可直接闭环（STARTUP_DIRECT_CL，上次未失败、自动辨识不需在 I/F 中测磁链）
+ * -> 直接闭环；否则（逆向过轴等）-> I/F */
+static void swingHandover(int16_t th, int16_t w)
+{
+    if (Spin_DirectOk() && (int32_t)w * s_swingDir >= 0 && !(IDENT_TEST && Ident_OpenLoopFluxPending()))
+        Sup_SwitchSwingSpin(th, w, s_alignTheta);
+    else
+        Sup_SwitchSwingOpenLoop(th, w);
+}
+
 /* 峰值确认后的接入计算（慢环，每次起动最多执行一次：三次 32 位除法）。
  * e = 该方向上的 |e_q|，ed = 过轴之后的 d 轴反电势，sign = 该方向的角度 / 转速符号。 */
 static void swingCatch(int32_t e, int32_t ed, int8_t sign)
@@ -233,7 +244,7 @@ static void swingCatch(int32_t e, int32_t ed, int8_t sign)
     th = (((t * 3217) >> 12) + ((((t * 1118) >> 12) * (4096 - t)) >> 12)) * 10430 >> 12;
     w = ((e + (ed * ed) / (2 * e)) << 15) / gGain.decKEmfQ15;   /* sqrt(e^2 + ed^2) 的一阶近似 / 磁链，Q15 转速 */
     th += (w * gGain.swingLagAngQ12) >> 12;
-    Sup_SwitchSwingOpenLoop((int16_t)(sign * th), (int16_t)(sign * w));
+    swingHandover((int16_t)(sign * th), (int16_t)(sign * w));
 }
 static void alignSwingSlow(void)
 {
@@ -266,7 +277,7 @@ static void alignSwingSlow(void)
         if (d < -st) d = -st;
         s_alignTheta = (int16_t)(s_alignTheta + d);
         if (s_alignTheta != s_swingAxis) s_alignTicks = ALIGN_SWING_SETTLE_TICKS;
-        else if (s_alignTicks >= ALIGN_SWING_SETTLE_TICKS + s_swingQuietTicks) Sup_SwitchSwingOpenLoop(s_swingAxis, 0);
+        else if (s_alignTicks >= ALIGN_SWING_SETTLE_TICKS + s_swingQuietTicks) swingHandover(s_swingAxis, 0);
         return;
     }
     e = s_swingDir * (s_emfFilt >> ALIGN_EMF_FILT_SH);
@@ -329,7 +340,7 @@ static void alignSwingSlow(void)
             s_swingAxis = (int16_t)(s_swingDir * ANGLE_90_Q15);
             return;
         }
-        Sup_SwitchSwingOpenLoop(s_swingAxis, 0);
+        swingHandover(s_swingAxis, 0);
     }
 }
 

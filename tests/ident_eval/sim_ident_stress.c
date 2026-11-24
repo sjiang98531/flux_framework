@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
         if ((e = getenv("SIM_PK_LSPER"))) { pk.lsPerA = atof(e); if ((e = getenv("SIM_PK_LSKNEE"))) pk.lsKneeA = atof(e); sens = 1; }
         if (sens && !Param_ApplyNow(&pk, PARAM_CHECK_ALL)) { printf("SENS reject\n"); }
     }
-    double tOL = -1, tSpin = -1; int spinExit = 0, lastRun = -1; double rpmErrMax2s = 0;
+    double tOL = -1, tSpin = -1, t90 = -1; int spinExit = 0, lastRun = -1; double rpmErrMax2s = 0;
     long acStartTick = -1;
     for (long k = 0; k < nTicks; k++) {
         double t = k * dt;
@@ -100,6 +100,7 @@ int main(int argc, char **argv) {
             int rs = (int)gSup.runState;
             if (rs == RunState_OpenLoop && tOL < 0) tOL = t;
             if (rs == RunState_Spin && tSpin < 0) tSpin = t;
+            if (t90 < 0 && fabs(plant_rpm(&pl)) >= 0.9 * cmd_rpm) t90 = t;   /* 起动到 90% 指令转速的时刻 */
             if (lastRun == RunState_Spin && rs != RunState_Spin) spinExit++;
             lastRun = rs;
             if (t > sim_secs - 2.0) { double er = fabs(fabs(plant_rpm(&pl)) - cmd_rpm) / cmd_rpm; if (er > rpmErrMax2s) rpmErrMax2s = er; }
@@ -158,9 +159,9 @@ int main(int argc, char **argv) {
     if (getenv("SIM_DIAG_TIER")) printf("PSIOL ol=%.5g run=0 rej=%u\n", gIdent.psiWb, (unsigned)gParamStat.rejectMask);
     if (getenv("SIM_DIAG_TIER")) printf("PARAM rs=%.5g ld=%.5g lq=%.5g dt=%.4g psi=%.5g acc=%.5g knee=%.4g per=%.5g lsmax=%.4g src=%u\n",
         gParam.rsOhm, gParam.ldH, gParam.lqH, gParam.dtEffS * 1e6, gParam.psiWb, gParam.accRpmSPerA, gParam.lsKneeA, gParam.lsPerA, gParam.lsMaxA, (unsigned)gParamStat.source);
-    if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f nFault=%d boost=%u offA=%d offB=%d\n",
+    if (sens) printf("SENS fault=0x%x main=%d run=%d tOL=%.3f tSpin=%.3f spinExit=%d rpm=%.1f errMax2s=%.3f nFault=%d boost=%u offA=%d offB=%d t90=%.3f\n",
                     (unsigned)gSup.fault, (int)gSup.mainState, (int)gSup.runState, tOL, tSpin, spinExit, plant_rpm(&pl), rpmErrMax2s,
-                    g_sim_faultCount, (unsigned)(OpenLoop_BoostLevel ? OpenLoop_BoostLevel() : 0), (int)gMeas.iabcOffset.s16A, (int)gMeas.iabcOffset.s16B);
+                    g_sim_faultCount, (unsigned)(OpenLoop_BoostLevel ? OpenLoop_BoostLevel() : 0), (int)gMeas.iabcOffset.s16A, (int)gMeas.iabcOffset.s16B, t90);
     printf("TRUE rs=%.6f ld=%.6g lq=%.6g ksat=%.6f i0sat=%.6f psi=%.6g imax=%.4f irun=%.4f imaxhw=%.4f dti0=%.4f iref0=%.4f acc=%.2f\n",
            pl.res, pl.lD, pl.lQ, pl.qSatK, pl.qSatI0, pl.psi, imax_swp, i_run, (double)I_MAX, (double)INVERTER_DT_I0_A, imax_swp,
            1.5 * pl.pp * pl.psi / pl.J * 60.0 / (2.0 * 3.14159265358979));

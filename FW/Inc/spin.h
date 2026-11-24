@@ -11,6 +11,9 @@ void    Spin_Slow(void);            /* 慢环：速度环、MTPA、融合、失�
 void    Spin_Reset(void);           /* 停机 / 故障复位（Ctrl_ResetRunVariables） */
 void    Spin_OnEnter(void);         /* I/F 切闭环时调用（Sup_SwitchOpenLoopSpin，临界区内） */
 void    Spin_OnEnterCatch(void);    /* 飞车直接接管进入 Spin 时调用（先零电流跟踪） */
+void    Spin_OnEnterDirect(void);   /* 摆动起动直接闭环进入 Spin 时调用（低速段不做回退 / 失速判断） */
+uint8_t Spin_DirectOk(void);        /* 1 = 本次起动可直接闭环（上次直接闭环未失败） */
+void    Spin_DirectReset(void);     /* 指令归零时调用：清除直接闭环失败记录 */
 uint8_t Spin_Tracking(void);        /* 1 = 零电流跟踪中 */
 void    Spin_TrackBegin(void);      /* 进入零电流跟踪（闭环中停机、软停电流降到 0 后） */
 void    Spin_TrackSlow(void);       /* 零电流跟踪的慢环 */

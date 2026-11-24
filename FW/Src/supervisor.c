@@ -38,6 +38,7 @@
 #include "identify.h"
 #include "param.h"
 #include "qmath.h"
+#include "foc_math.h"
 #include <stdlib.h>
 #include "compiler.h"
 
@@ -298,7 +299,7 @@ static void stopSlow(void)
     gSpd.cmd = gSup.speedCmd;
     /* 存在待装入的辨识参数（gParamStat.pending）时暂不起动：主循环 Param_Background 仅在 Stop 中装入，装入后再起动 */
     if (abs(gSpd.cmd) > Q15(STOP_TO_RUN_SPEED / SPEED_MAX) && (gSup.faultRestarts < SUP_RESTART_LIMIT) && !gParamStat.pending) switchStopRun();
-    else if (abs(gSpd.cmd) < Q15(STOP_TO_RUN_SPEED / SPEED_MAX)) Sup_ClearRestarts();
+    else if (abs(gSpd.cmd) < Q15(STOP_TO_RUN_SPEED / SPEED_MAX)) { Sup_ClearRestarts(); Spin_DirectReset(); }
     Meas_SlowFilter();
 }
 
@@ -497,6 +498,28 @@ void Sup_SwitchSwingOpenLoop(int16_t theta, int16_t speedQ15)
         SpeedCtrl_UseOpenLoopRamp();
         IRQ_UNLOCK();
     }
+}
+
+/* 摆动中起动 -> 直接闭环（STARTUP_DIRECT_CL）：转子正以 speedQ15 经过 theta。PLL / 观测器按此预置（同飞车接管），
+ * 控制角由定位角 alignTheta 换为估计角：定位电流（沿定位轴）与电流 PI 积分器旋转到估计坐标系，此拍电流、电压矢量不变；
+ * 速度环积分器从 0 开始，定位电流作为融合分量在 OPENLOOP_BLEND_S 内淡出（同 I/F 切闭环），斜坡从此刻转速开始。 */
+void Sup_SwitchSwingSpin(int16_t theta, int16_t speedQ15, int16_t alignTheta)
+{
+    int16_t i = gFoc.idqRef.s16D, id0, iq0;
+    SinCos_TypeDef a;
+    IRQ_LOCK();
+    Est_OnCatch(theta, speedQ15);                       /* PLL 角 / 转速、观测器磁链 |psi_f|∠theta、gFoc.theta = PLL 角 */
+    a = FocMath_SinCos((int16_t)(alignTheta - gFoc.theta));
+    id0 = QMath_MulQ15(i, a.s16Cos);
+    iq0 = QMath_MulQ15(i, a.s16Sin);
+    FocCore_SetIdqRef(id0, iq0);
+    FocCore_RotatePI(a);
+    SpeedCtrl_OnEnterSpin(id0, 0);
+    SpeedCtrl_BlendStart(id0, iq0, (int32_t)speedQ15 << 16, 4096, 0);
+    Spin_OnEnterDirect();
+    gSup.runState = RunState_Spin;
+    FocCore_SetDecouple(1);
+    IRQ_UNLOCK();
 }
 
 /* Align（IPD 成功）-> OpenLoop：在慢环中调用，先在临界区外准备 I/F 入口参数，临界区内只赋值。

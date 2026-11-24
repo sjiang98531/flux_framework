@@ -79,7 +79,8 @@ void Sup_SwitchChargeFlyCheck(void);    /* 预充完成 -> 飞车检测（下桥
 void Sup_SwitchFlyCheckAlign(void);    /* 飞车检测判为静止 -> IPD / 摆动起动（参数辨识：定位） */
 void Sup_SwitchFlyCheckSpin(void);     /* 飞车直接接管进入 Spin */
 void Sup_SwitchFlyCheckOpenLoop(void);       /* 飞车低速，直接进入 I/F */
-void Sup_SwitchSwingOpenLoop(int16_t theta, int16_t speedQ15);    /* 摆动中起动：转子正以 speedQ15 经过 theta，I/F 从该角度和转速接入 */
+void Sup_SwitchSwingOpenLoop(int16_t theta, int16_t speedQ15);
+void Sup_SwitchSwingSpin(int16_t theta, int16_t speedQ15, int16_t alignTheta);    /* 摆动中起动直接闭环（STARTUP_DIRECT_CL） */    /* 摆动中起动：转子正以 speedQ15 经过 theta，I/F 从该角度和转速接入 */
 /* IPD 完成：从 theta（N 极角）冷起动 I/F，开环电流从 1/4 起上升 */
 void Sup_SwitchIpdOpenLoop(int16_t theta);
 void Sup_SwitchOpenLoopSpin(void);    /* I/F 与观测器转速一致 -> 闭环（转矩不变切换） */
