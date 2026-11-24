@@ -7,7 +7,6 @@
  *
  * CTRL_MTPA_ENABLE / CTRL_WEAKEN_ENABLE 均为 0 时，以下函数编译为空函数，
  * 对 gFoc / gSpd 无任何写操作。
- * 内嵌式电机（MOTOR_IPM = 1）同时通知观测器：有效磁链幅值目标随 id 变化。
  * ==========================================================================*/
 #ifndef ID_REF_H
 #define ID_REF_H

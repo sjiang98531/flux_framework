@@ -6,26 +6,20 @@
  * 控制器中所有与电机相关的定点增益均由 cfg_derived.h 根据这些值自动计算。
  * 必填：极对数、铭牌额定电流 / 转速 / 功率、Rs、Ld / Lq、磁链、加速度系数（后五项可先填估计值，
  *       用参数辨识模式 cfg_board.h IDENT_TEST = 1 测量后回填，见 identify.h）。
- * 可选：电感饱和 MOTOR_LS_SAT_*（未知时 PER_A = 0 关闭）、机械允许转速 MOTOR_SPEED_LIMIT_RPM、MOTOR_IPM。
+ * 可选：电感饱和 MOTOR_LS_SAT_*（未知时 PER_A = 0 关闭）、机械允许转速 MOTOR_SPEED_LIMIT_RPM。
  * 当前值对应 5 对极高压风机电机（表贴式）。
  * ==========================================================================*/
 #ifndef CFG_MOTOR_H
 #define CFG_MOTOR_H
 
-/* 0 = 表贴式（SPM，Ld = Lq）；1 = 内嵌式（IPM，Ld != Lq）。
- * 置 1 时观测器使用"有效磁链" psi_s - Lq*i，幅值目标为 psi_f + (Ld-Lq)*id，MTPA 才有意义。
- * 置 0 时 Ld 与 Lq 必须相等（初始化时检查，不等则置 gFluxDiag.cfgWarn 的 bit0）。 */
-#define MOTOR_IPM               0
-
 #define MOTOR_POLE_PAIRS        5.0             /* 极对数 */
 /* 相电阻（星形接法，相电阻 = 线电阻 / 2）。 */
 #define MOTOR_RS_OHM            15.0            /* 相电阻 ohm（线电阻 14.7 / 2） */
-/* 电感（参数辨识模式测得，25 Hz 交流阻抗法，见 identify.h）：
+/* 电感（参数辨识模式测得，25 Hz 交流阻抗法，见 identify.h）。按实测分别填写：Ld != Lq 即凸极，观测器、电流环、
+ * 解耦、MTPA 均直接按 Ld / Lq 计算，Ld = Lq 时各式自然退化为表贴式，不另设电机类型。
  *   Lq：多档电流幅值下的基波电感，外推到零偏置后按 L(i) 模型拟合：L0 = 43.3 mH、拐点 0、0.094/A。
- *   Ld：实测 29.3 mH（Ld/Lq = 0.68）。SPM 模式（MOTOR_IPM = 0）要求 Ld = Lq，故统一填写 Lq。
- *       观测器只需要 Lq（psi_s - Lq*i 的方向在任意 id 下均为转子 d 轴）；d 轴电流环增益按 Lq 计算，
- *       比按真实 Ld 高 1.5 倍，带宽相应提高 1.5 倍，裕度足够。 */
-#define MOTOR_LD_H              0.015          /* d 轴电感 H（真实值 0.0293，见上） */
+ *   Ld：按仿真电机填写。 */
+#define MOTOR_LD_H              0.015          /* d 轴电感 H */
 #define MOTOR_LQ_H              0.015          /* q 轴电感 H */
 
 /* 电感饱和（观测器使用，割线电感 L(i) = psi/i）。|i| <= 拐点时 L = MOTOR_LQ_H；超过后每 A 下降

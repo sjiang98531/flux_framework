@@ -105,9 +105,7 @@ void FluxObs_Reset(void)
     gFluxObs.haveCurrent = 0;
 }
 
-#if MOTOR_IPM
 static void setTarget(int32_t tgt);
-#endif
 
 /* ferr>>12 的限幅：超出 ±ceil(FQ_LIMIT*256/norm) 时 fq 必然饱和，先限幅再乘结果不变且乘积不溢出（norm 可超过 8192） */
 static volatile int32_t s_nlfoELim;
@@ -127,11 +125,7 @@ void FluxObs_LoadModel(void)
     gFluxObs.s16KRs = gGain.fluxKrsQ15;
     gFluxObs.s16KLq = gGain.fluxKlQ15;
     gFluxObs.s32NlfoNormQ8 = gGain.nlfoNormQ8;
-#if !MOTOR_IPM
-    s_nlfoELim = nlfoELim(gGain.nlfoNormQ8);
-#else
     setTarget(FLUX_NOM);
-#endif
 }
 
 /* 上电：装载模型参数、积分步长 KTs、去直流窗口，清除状态 */
@@ -160,6 +154,8 @@ void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg)
     int32_t wc = HPF_WC_Q15SPD, w0 = HPF_COMP_W0_Q15SPD;
     int16_t c, s;
     s_vdt = (gGain.dtKtQ15 > 0 && busAvg > 0) ? (int16_t)(((int32_t)busAvg * gGain.dtKtQ15) >> 15) : 0;
+    /* 凸极（Ld != Lq）：psi_s - Lq*i 的幅值 = psi_f + (Ld-Lq)*id，按实测 id 更新 NLFO 目标（定位撤流、I/F、MTPA、弱磁均适用） */
+    if (gGain.fluxKdlQ15 != 0) setTarget(FLUX_NOM + (((int32_t)gGain.fluxKdlQ15 * gFoc.idq.s16D) >> 15));
     if (w <= w0) {
         s_compCos = 32767;
         s_compSin = 0;
@@ -171,54 +167,42 @@ void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg)
     s_compSin = (int16_t)(spdQ15 < 0 ? -s : s);
 }
 
-#if MOTOR_IPM
-/* 内嵌式：有效磁链幅值目标 = psi_f + (Ld-Lq)*id。快环读取这些量（各为一次 32 位读取，
+/* 有效磁链幅值目标 = psi_f + (Ld-Lq)*id。快环读取这些量（各为一次 32 位读取，
  * 更新时最多有一拍新旧值混用，无害）。 */
-static volatile int32_t s_target2, s_nlfoNorm;     /* |target|^2；256 / |target|^2 的定点（fq 计算见 FluxObs_Run） */
+static volatile int32_t s_target, s_target2, s_nlfoNorm;     /* |target|、|target|^2；256 / |target|^2 的定点（fq 计算见 FluxObs_Run） */
 
-/* 内嵌式：设置 NLFO 幅值目标及对应归一化系数（慢环中执行，允许除法） */
+/* 设置 NLFO 幅值目标及对应归一化系数（慢环中执行，允许除法） */
 static void setTarget(int32_t tgt)
 {
     int32_t t2;
     if (tgt < FLUX_NOM / 2) tgt = FLUX_NOM / 2;   /* 限制 norm <= 4 倍标称值，防止溢出 */
     if (tgt > PSI_LIMIT) tgt = PSI_LIMIT;
     t2 = tgt * tgt;
+    s_target = tgt;
     s_target2 = t2;
     s_nlfoNorm = (int32_t)(((int64_t)gGain.nlfoNormQ8 * FLUX_NOM2) / t2);       /* 慢环，允许除法 */
     s_nlfoELim = nlfoELim(s_nlfoNorm);
 }
 
-/* 内嵌式：id 指令变化时更新有效磁链目标 = psi_f + (Ld - Lq)*id */
-void FluxObs_SetIdRef(int16_t idQ15)
-{
-    setTarget(FLUX_NOM + (((int32_t)gGain.fluxKdlQ15 * idQ15) >> 15));
-}
-#endif
-
 /* 冷起动（IPD / 摆动起动 -> I/F）时调用：磁链初始化为 |psi_f|∠theta（此时转子位于该角度），观测器从正确状态开始 */
 void FluxObs_BeginOpenLoop(void)
 {
     /* 仅在冷起动 Align/IPD -> OpenLoop 时调用（由 Est_OnEnterOpenLoopCold 调用，PLL 与转速清零也在该处） */
-    FluxObs_Reset();
-    /* psi 初值设为 |psi_f|∠theta_hat 而非 0：若从 0 起步，NLFO 需约 30 ms 建立幅值，期间方向受 Rs / 死区误差影响，
-     * PLL 误差接近满量程，可能导致估计角偏转并产生虚假转速。
+    /* psi 初值按转子在 theta_hat 设置（psi_r = 幅值目标∠theta，psi_s = psi_r + Lq*i，定位电流仍在），而非 0：
+     * 若从 0 起步，NLFO 需约 30 ms 建立幅值，期间方向受 Rs / 死区误差影响，PLL 误差接近满量程，可能导致估计角偏转并产生虚假转速。
      * 调用方已设置 gEst.pll.s32Theta = gFoc.theta<<16，因此第一拍 PLL 误差恰好为 0。 */
-    {
-        SinCos_TypeDef a = FocMath_SinCos(gFoc.theta);
-        gFluxObs.s32PsiAlF = (int32_t)QMath_MulQ15(FLUX_NOM, a.s16Cos) << 16;
-        gFluxObs.s32PsiBeF = (int32_t)QMath_MulQ15(FLUX_NOM, a.s16Sin) << 16;
-    }
+    FluxObs_SeedCatch(gFoc.theta);
 }
 
 /* 飞车接管时调用：按测得的转子角初始化磁链。存储的是定子磁链，故 = psi_f∠theta + L*i（短接电流仍存在） */
 void FluxObs_SeedCatch(int16_t theta)
 {
-    /* psi_s = psi_r + Lq*i：短接电流较大（1500 rpm 约 2.8 A），不能只初始化 psi_r */
+    /* psi_s = psi_r + Lq*i：短接电流较大（1500 rpm 约 2.8 A），不能只初始化 psi_r。|psi_r| 取当前幅值目标（凸极时随 id） */
     SinCos_TypeDef a = FocMath_SinCos(theta);
     int16_t kls = lsEff(gMeas.iab.s16Alpha, gMeas.iab.s16Beta);
     FluxObs_Reset();
-    gFluxObs.s32PsiAlF = ((int32_t)QMath_MulQ15(FLUX_NOM, a.s16Cos) + QMath_MulQ15(kls, gMeas.iab.s16Alpha)) << 16;
-    gFluxObs.s32PsiBeF = ((int32_t)QMath_MulQ15(FLUX_NOM, a.s16Sin) + QMath_MulQ15(kls, gMeas.iab.s16Beta)) << 16;
+    gFluxObs.s32PsiAlF = ((int32_t)QMath_MulQ15((int16_t)s_target, a.s16Cos) + QMath_MulQ15(kls, gMeas.iab.s16Alpha)) << 16;
+    gFluxObs.s32PsiBeF = ((int32_t)QMath_MulQ15((int16_t)s_target, a.s16Sin) + QMath_MulQ15(kls, gMeas.iab.s16Beta)) << 16;
 }
 
 /* 观测器一拍（快环）：
@@ -290,20 +274,12 @@ RAMFUNC void FluxObs_Run(void)
         if (g0 < -PSI_LIMIT) g0 = -PSI_LIMIT;
         if (g1 > PSI_LIMIT) g1 = PSI_LIMIT;
         if (g1 < -PSI_LIMIT) g1 = -PSI_LIMIT;
-#if MOTOR_IPM
         /* 目标与归一化系数随 id 变化：fq = ferr/target^2（Q15） */
         ferr = s_target2 - ((int32_t)g0 * g0 + (int32_t)g1 * g1);
-#else
-        ferr = FLUX_NOM2 - ((int32_t)g0 * g0 + (int32_t)g1 * g1);
-#endif
         ferr >>= 12;
         if (ferr > s_nlfoELim) ferr = s_nlfoELim;
         if (ferr < -s_nlfoELim) ferr = -s_nlfoELim;
-#if MOTOR_IPM
         fq = (ferr * s_nlfoNorm) >> 8;
-#else
-        fq = (ferr * gFluxObs.s32NlfoNormQ8) >> 8;
-#endif
         if (fq > FLUX_NLFO_FQ_LIMIT) fq = FLUX_NLFO_FQ_LIMIT;
         if (fq < -FLUX_NLFO_FQ_LIMIT) fq = -FLUX_NLFO_FQ_LIMIT;
         corrA = ((int32_t)g0 * fq) >> FLUX_NLFO_SH;

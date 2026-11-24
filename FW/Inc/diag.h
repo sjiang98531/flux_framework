@@ -10,7 +10,7 @@
 
 typedef struct {
     uint32_t buildTag;                 /* 固件版本标识（= BUILD_TAG） */
-    uint16_t cfgWarn;                  /* 配置警告：bit0 = MOTOR_IPM=0 但 Ld != Lq；bit1 = 电流环增益超 65535 被封顶；
+    uint16_t cfgWarn;                  /* 配置警告：bit0 未用；bit1 = 电流环增益超 65535 被封顶；
                                         * bit2 = PLL 增益 / 角度增益超 int16 被封顶（PLL 带宽太高或 psi_f 太小）；
                                         * bit3 = SPEED_MAX 下反电势超过电压基准（DECOUPLE_K_EMF_Q15 饱和） */
     uint16_t cfgFailLine;              /* 配置检查（cfg_check.h）：第一个不满足项在 cfg_check_list.h 的行号，0 = 全部通过 */

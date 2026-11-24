@@ -351,7 +351,7 @@ static void offerStill(void)
     if (gIdent.rsOhm > 0) { p.rsOhm = gIdent.rsOhm; m |= 1u; }
     if (gIdent.ldH > 0 && gIdent.lqH > 0) {
         p.lqH = gIdent.lqH;
-        p.ldH = MOTOR_IPM ? gIdent.ldH : gIdent.lqH;
+        p.ldH = gIdent.ldH;
         m |= 2u;
     }
     if (gIdent.lsMaxA > 0.0f) {     /* 拟合成立才提交，否则沿用配置的饱和曲线；测量范围以外按同一模型外推（下限 MOTOR_LS_SAT_MIN） */

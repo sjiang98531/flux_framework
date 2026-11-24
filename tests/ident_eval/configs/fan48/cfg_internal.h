@@ -174,7 +174,7 @@
 #define FLUXPLL_ZETA            0.707
 
 /* ===================== MTPA / 弱磁 ======================================= */
-/* 默认均关闭（关闭时 id_ref 模块不编译）；用于 IPM（MOTOR_IPM=1）或高速扩速场合时打开，详见 id_ref.h */
+/* 默认均关闭（关闭时 id_ref 模块不编译）；用于凸极电机（Ld < Lq）或高速扩速场合时打开，详见 id_ref.h */
 #define CTRL_MTPA_ENABLE        0
 #define CTRL_WEAKEN_ENABLE          0
 #define WEAKEN_VOLTAGE_MARGIN       0.08        /* 电压裕量 */

@@ -24,20 +24,17 @@ void IdRef_Init(void)
     gIdRef.fwInteg = 0;
 }
 
-/* 停机 / 回退 I/F：id 归零，恢复 iq 上限（gIdRef.iqLimit），内嵌式观测器的磁链目标恢复为 psi_f */
+/* 停机 / 回退 I/F：id 归零，恢复 iq 上限（gIdRef.iqLimit） */
 void IdRef_Reset(void)
 {
     IdRef_Init();
     gSpd.idqCmd.s16D = 0;
-#if MOTOR_IPM
-    FluxObs_SetIdRef(0);
-#endif
 }
 
 /* MTPA：id = (sqrt(psi_f^2 + (2*(Ld-Lq)*iq)^2) - psi_f) / (2*(Ld-Lq))，慢环计算 */
 static int16_t mtpaId(int16_t iq)
 {
-#if MOTOR_IPM && CTRL_MTPA_ENABLE
+#if CTRL_MTPA_ENABLE
     int32_t psi = gGain.fluxNomQ15, kdl = gGain.fluxKdlQ15;
     int64_t p, q, id;
     uint32_t s;
@@ -75,7 +72,7 @@ static int16_t fwId(void)
 }
 
 /* 慢环每拍（Spin，速度环之后）：id = MTPA id + 弱磁 id + 损耗制动 id，限制在电流上限内；
- * 电流圆剩余部分分配给 iq（sqrt(Imax^2 - id^2)），并交给速度环作为下一拍的 PI 输出限幅；内嵌式电机更新观测器磁链目标 */
+ * 电流圆剩余部分分配给 iq（sqrt(Imax^2 - id^2)），并交给速度环作为下一拍的 PI 输出限幅 */
 void IdRef_Slow(void)
 {
     int32_t imax = gSpd.iqLimit, id, iqLim, iq;
@@ -98,9 +95,6 @@ void IdRef_Slow(void)
     gIdRef.iqLimit = (int16_t)iqLim;
     gSpd.idqCmd.s16D = (int16_t)id;
     gSpd.idqCmd.s16Q = (int16_t)iq;
-#if MOTOR_IPM
-    FluxObs_SetIdRef((int16_t)id);
-#endif
 }
 
 #else   /* !IDREF_ACTIVE：不修改任何控制量 */

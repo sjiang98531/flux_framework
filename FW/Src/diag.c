@@ -18,9 +18,6 @@ void Diag_Init(void)
 
     gFluxDiag.buildTag = BUILD_TAG;
     gFluxDiag.cfgWarn = 0;
-#if !MOTOR_IPM
-    if (MOTOR_LD_H != MOTOR_LQ_H) gFluxDiag.cfgWarn |= 1u;
-#endif
     /* bit1 电流环增益封顶，bit2 PLL 增益超出 int16，bit3 反电势前馈超量程：按当前参数计算（param.c computeGain） */
     gFluxDiag.cfgWarn |= gGain.cfgWarn;
     gFluxDiag.cfgFailLine = 0;

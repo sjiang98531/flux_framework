@@ -7,9 +7,9 @@
  *   psi_s += 2*(e*KTs + corr)       corr = psi_r*(psi_f^2-|psi_r|^2)，纯径向修正
  *   psi_r = psi_s - Lq*i            -> 直接用于 FluxPLL 鉴相
  *
- * 内嵌式（MOTOR_IPM = 1）：psi_s - Lq*i 为"有效磁链"（active flux），方向仍为转子 d 轴，
- * 幅值 = psi_f + (Ld-Lq)*id，因此 NLFO 幅值目标随 id 变化（FluxObs_SetIdRef，慢环调用）。
- * 表贴式 Ld = Lq，目标恒为 psi_f。
+ * 凸极（Ld != Lq）：psi_s - Lq*i 为"有效磁链"（active flux），方向仍为转子 d 轴，
+ * 幅值 = psi_f + (Ld-Lq)*id，因此 NLFO 幅值目标按实测 id 变化（FluxObs_SlowTick）。
+ * Ld = Lq（表贴式）时目标恒为 psi_f。
  *
  * 仅使用测量量与上一拍 PWM 指令。积分对象为定子磁链 psi_s，Lq*i 每拍实时计算，
  * 因此舍入误差和电感误差不会在积分器中累积。
@@ -44,14 +44,10 @@ void FluxObs_BeginOpenLoop(void);
 void FluxObs_SeedCatch(int16_t theta);
 /* 执行本拍模型。调用前须已计算 gMeas.iab（Clarke），且本拍尚未调制（gSvpwm.Alpha/Beta 仍为上一拍指令）。 */
 void FluxObs_Run(void);
-/* 慢环每拍：按转速更新去直流相位补偿，按母线平均值更新死区电压误差幅值 */
+/* 慢环每拍：按转速更新去直流相位补偿，按母线平均值更新死区电压误差幅值，凸极时按实测 id 更新 NLFO 幅值目标 */
 void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg);
 /* 逆变器电压误差（死区 + 管压降）在角 a 的 dq 坐标中的分量，Q15 电压 */
 Dq_TypeDef FluxObs_DtErr(AlphaBeta_TypeDef iab, SinCos_TypeDef a);
-#if MOTOR_IPM
-/* 内嵌式：按 d 轴电流指令更新有效磁链幅值目标（慢环调用，含除法） */
-void FluxObs_SetIdRef(int16_t idQ15);
-#endif
 
 /* ============================================================================
  * 转子磁链锁相环（FluxPLL）与无感角度估计调度（gEst）
