@@ -89,8 +89,8 @@ typedef struct {
     /* ---- 观测器可靠性相关的转速门限（openloop.c / spin.c / speed_ctrl.c / supervisor.c / flystart.c / identify.c）
      * cfg_app.h 中以"反电势占额定母线电压的百分比"给出（观测器是否可靠取决于反电势相对逆变器电压误差的大小），
      * 运行时按极对数与 gParam.psiWb 换算：n = PCT/100 * UDC_RATE * 60 / (2*pi * 极对数 * psi)（EMF_PCT_RPM_OF），
-     * 换算后不超过 0.9 * SPEED_MAX。机械意义上的"静止"门限（FLY_STILL_*、FLY_LOW_MIN）与观测器去直流补偿起点
-     * （FLUX_HPF_COMP_MIN）以 rpm 给出，不随之变化 */
+     * 换算后不超过 0.9 * SPEED_MAX。机械意义上的"静止"门限（FLY_STILL_*、FLY_LOW_MIN）以 rpm 给出，
+     * 不随之变化 */
     int32_t spdHandoverQ31;     /* OPENLOOP_HANDOVER_EMF_PCT：I/F 切入闭环 */
     int32_t spdFallbackQ31;     /* OPENLOOP_FALLBACK_EMF_PCT：闭环交还 I/F */
     int32_t spdWarmMaxQ31;      /* 1.5 * OPENLOOP_FALLBACK_EMF_PCT：回退进 I/F 时开环转速上限 */

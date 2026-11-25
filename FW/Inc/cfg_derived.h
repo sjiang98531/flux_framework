@@ -208,13 +208,10 @@
 #define WEAKEN_VLIM_Q15             Q15(1.0 - WEAKEN_VOLTAGE_MARGIN)    /* 弱磁开始介入的电压利用率（留 WEAKEN_VOLTAGE_MARGIN 的余量） */
 #define WEAKEN_ID_MIN_Q15           Q15(WEAKEN_ID_MIN_A / I_MAX)    /* 弱磁 id 的下限（最负） */
 
-/* 去直流高通的截止角频率 wc = fs / 2^SH（rad/s），换成 Q15 速度单位；补偿起点 */
-/* 去直流窗口 2^SH 拍：最接近 FLUX_HPF_TAU_S * PWM_FREQ 的 2 的幂（对数意义上四舍五入） */
-#define FLUX_HPF_TICKS_         (FLUX_HPF_TAU_S * PWM_FREQ)    /* 去直流时间常数换成快环拍数 */
-#define FLUX_HPF_SH             ((FLUX_HPF_TICKS_) < 1448.0 ? 10 : (FLUX_HPF_TICKS_) < 2896.0 ? 11 : (FLUX_HPF_TICKS_) < 5793.0 ? 12 : \
-                                 (FLUX_HPF_TICKS_) < 11585.0 ? 13 : 14)
-/* 去直流截止角频率，用 Q15 转速表示（相位补偿 atan(wc/w) 里用） */
-#define HPF_WC_Q15SPD           ((int32_t)((double)PWM_FREQ / (double)(1L << FLUX_HPF_SH) / W_EMAX_RAD_S * 32768.0 + 0.5))
+/* 去直流低通系数（Q16 / 拍）a = RATIO * |w_e| * Ts * 65536 = (|w_Q15| * FLUX_HPF_KA_Q15) >> 15；
+ * 实际截止（Q15 转速单位）wc = a * FLUX_HPF_WC_PER_A_Q8 >> 8，用于按 atan(wc/w) 补偿相位（a 取整后与实际滤波器一致） */
+#define FLUX_HPF_KA_Q15         ((int32_t)(FLUX_HPF_RATIO * W_EMAX_RAD_S / PWM_FREQ * 65536.0 + 0.5))
+#define FLUX_HPF_WC_PER_A_Q8    ((int32_t)(256.0 * PWM_FREQ / 65536.0 / W_EMAX_RAD_S * 32768.0 + 0.5))
 /* NLFO（flux_obs.c）：corr = psi * fq >> SH，fq = ((ferr >> 12) * FLUX_NLFO_NORM_Q8) >> 8。
  * fq = ferr / |psi_f|^2（Q15）时径向误差每拍衰减 2 / 2^SH，即 tau = 2^(SH-1) / fs。SH 取 2 * tau * fs 最接近的 2 的幂，
  * 余下的比例 2^(SH-1) / (tau * fs) 乘进归一化，tau 可以连续取值 */
@@ -227,7 +224,6 @@
 /* NLFO 修正的移位位数（取最接近的 2 的幂，余数乘进归一化） */
 #define FLUX_NLFO_SH            ((FLUX_NLFO_TICKS_) < 181.0 ? 7 : (FLUX_NLFO_TICKS_) < 362.0 ? 8 : (FLUX_NLFO_TICKS_) < 724.0 ? 9 : \
                                  (FLUX_NLFO_TICKS_) < 1448.0 ? 10 : 11)
-#define HPF_COMP_W0_Q15SPD      ((int32_t)(FLUX_HPF_COMP_MIN_RPM / SPEED_MAX * 32768.0))    /* 低于这个转速（Q15）不做去直流相位补偿 */
 
 /* ---- 角度时序补偿 --------------------------------------------------------- */
 #define INVPARK_ADV_Q8          ((int32_t)(CTRL_INVPARK_ADVANCE * 256.0 + 0.5))

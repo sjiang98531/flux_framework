@@ -222,11 +222,12 @@ void Startup_AlignFast(void)
  *     不再等转子摆回来，省去最多一个摆动周期。
  *   无摆动（s_swingQuietTicks 内 |e| 始终低于门限）或等待超过 s_swingMaxTicks：定位轴按扫掠角速度沿转向转 90°，
  *     到达后再等 s_swingQuietTicks，按新轴静止接入（避免转子停在死点时按原定位轴接入而错约 180°）。 */
-/* 摆动起动接入：顺转向过轴（或静止）且本次可直接闭环（STARTUP_DIRECT_CL，上次未失败、自动辨识不需在 I/F 中测磁链）
- * -> 直接闭环；否则（逆向过轴等）-> I/F */
+/* 摆动起动接入：本次可直接闭环（STARTUP_DIRECT_CL，上次未失败、自动辨识不需在 I/F 中测磁链）-> 直接闭环，否则 -> I/F。
+ * 逆向过轴同样直接闭环：磁链观测器是电压模型 psi = ∫(v - Rs*i)，不依赖反电势，转速过零时 psi 停转、角度保持，
+ * 由速度环减速过零再加速 */
 static void swingHandover(int16_t th, int16_t w)
 {
-    if (Spin_DirectOk() && (int32_t)w * s_swingDir >= 0 && !(IDENT_TEST && Ident_OpenLoopFluxPending()))
+    if (Spin_DirectOk() && !(IDENT_TEST && Ident_OpenLoopFluxPending()))
         Sup_SwitchSwingSpin(th, w, s_alignTheta);
     else
         Sup_SwitchSwingOpenLoop(th, w);

@@ -169,7 +169,10 @@
 /* ===================== 磁链观测器 ======================================== */
 /* 定点基准 FLUX_V_BASE / FLUX_WN_HZ / FLUX_PSI_N 由电机与驱动板参数自动计算（cfg_derived.h、param.c）。 */
 #define FLUX_BUS_MIN_V          100.0       /* V，母线低于该值时观测器保持复位 */
-#define FLUX_HPF_TAU_S          0.256       /* s，反电势去直流一阶滑动平均时间常数（window 见 cfg_derived.h） */
+/* 反电势去直流：一阶低通估计直流偏置并扣除，截止角频率 = FLUX_HPF_RATIO * |电角速度|。
+ * 直流偏置与反电势只能靠频率区分，故截止频率随转速成比例：相位超前恒为 atan(RATIO)（输出端补偿），
+ * 转速趋于 0 时退化为纯积分（偏置刚在停机时校准过，见 HAL_OffsetTrack），转速过零时角度不丢 */
+#define FLUX_HPF_RATIO          0.1
 /* NLFO 径向修正时间常数：|psi| 偏离 |psi_f| 后按该时间常数拉回（cfg_derived.h 换算为移位 + 归一化） */
 #define FLUX_NLFO_TAU_S         0.01917
 #define FLUX_NLFO_FQ_LIMIT      32768       /* NLFO 修正量防溢出饱和限（Q15） */

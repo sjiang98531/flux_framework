@@ -6,8 +6,9 @@
  *   定子电压方程 v = Rs*i + d(psi_s)/dt  ->  psi_s = ∫(v - Rs*i) dt（定子磁链）
  *   转子磁链 psi_r = psi_s - L*i，其方向即转子 d 轴（N 极），角度由本文件 FluxPLL 锁定。
  * 纯积分存在三个问题，分别对应一项修正：
- *   1. 电压 / 电流中的直流偏置导致积分漂移 -> 积分前对反电势 e = v - Rs*i 去直流（一阶高通，FLUX_HPF_TAU_S）；
- *      高通在低速时引入相位超前 -> 输出时反向旋转对应角度补偿（由 FluxObs_SlowTick 计算 s_compCos / s_compSin）。
+ *   1. 电压 / 电流中的直流偏置导致积分漂移 -> 积分前对反电势 e = v - Rs*i 去直流（一阶高通，截止 = FLUX_HPF_RATIO * |w|：
+ *      直流与反电势只能按频率区分，截止随转速成比例，转速趋于 0 时为纯积分）；
+ *      高通引入相位超前 atan(RATIO) -> 输出时反向旋转补偿（由 FluxObs_SlowTick 计算 s_compCos / s_compSin）。
  *   2. Rs、电压误差使磁链幅值逐渐偏离 -> NLFO：每拍沿 psi_r 方向将 |psi_r| 拉向 psi_f（只修正幅值，不影响角度）。
  *   3. 电压取自调制器指令，逆变器死区 / 管压降带来误差 -> dtComp 按实测模型补偿（cfg_board.h INVERTER_DT_*）。
  *   此外，大电流时电感饱和，L*i 使用随电流下降的 L(i)（lsEff）。
@@ -88,8 +89,8 @@ void FluxObs_Reset(void)
 {
     gFluxObs.s32PsiAlF = 0;
     gFluxObs.s32PsiBeF = 0;
-    gFluxObs.sEalAvgMA.s32Acc = 0;
-    gFluxObs.sEbeAvgMA.s32Acc = 0;
+    gFluxObs.s32EalDc = 0;
+    gFluxObs.s32EbeDc = 0;
     gFluxObs.s16PsiAl = 0;
     gFluxObs.s16PsiBe = 0;
     gFluxObs.s16PsiRAl = 0;
@@ -125,35 +126,32 @@ void FluxObs_Init(void)
 {
     gFluxObs.s16KTs = gGain.fluxKtsQ15;
     FluxObs_LoadModel();
-    gFluxObs.sEalAvgMA.u16Sh = FLUX_HPF_SH;
-    gFluxObs.sEbeAvgMA.u16Sh = FLUX_HPF_SH;
     FluxObs_Reset();
 }
 
-/* 去直流相位补偿：输出前将 psi_s 旋转 -alpha，alpha = sign(w)*atan(wc/|w|)。
- * cos/sin 在慢环中计算：(cos, sin) = (w, wc) 单位化（QMath_NormQ15，无开方和除法）。
- * w0~2w0 之间补偿角从 0 渐变到全值：wc 按 (w - w0)/w0 缩小（乘以编译期常数 wc/w0）。 */
+/* 去直流：低通系数 s_hpfA（Q16 / 拍，随转速，慢环更新）；相位补偿：输出前将 psi_s 旋转 -alpha，alpha = sign(w)*atan(wc/|w|)，
+ * wc 由取整后的 s_hpfA 换算（与实际滤波器一致）；(cos, sin) = (w, wc) 单位化（QMath_NormQ15，无开方和除法）。 */
 static volatile int16_t s_compCos = 32767, s_compSin = 0;
-#define HPF_WC_OVER_W0_Q16      ((int32_t)((double)HPF_WC_Q15SPD * 65536.0 / HPF_COMP_W0_Q15SPD + 0.5))
+static volatile int32_t s_hpfA;
 
 /* 慢环每拍（Ctrl_SlowTick）：
  *   1. 死区电压误差幅值 Vdt = busAvg * KT（母线平均值同样在慢环更新）；
- *   2. 按当前转速计算去直流相位补偿角。补偿对象为高通 wc/(s + wc) 引入的超前角 atan(wc/w)，
- *      低于 w0（HPF_COMP_W0_Q15SPD）不补偿，w0~2w0 之间渐入（避免在门限处角度跳变） */
+ *   2. 按当前转速更新去直流低通系数（截止 = FLUX_HPF_RATIO * |w|）与其相位补偿角 atan(wc/w) */
 void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg)
 {
     int32_t w = spdQ15 < 0 ? -(int32_t)spdQ15 : spdQ15;
-    int32_t wc = HPF_WC_Q15SPD, w0 = HPF_COMP_W0_Q15SPD;
+    int32_t a = (w * FLUX_HPF_KA_Q15) >> 15, wc;
     int16_t c, s;
     s_vdt = (gGain.dtKtQ15 > 0 && busAvg > 0) ? (int16_t)(((int32_t)busAvg * gGain.dtKtQ15) >> 15) : 0;
     /* 凸极（Ld != Lq）：psi_s - Lq*i 的幅值 = psi_f + (Ld-Lq)*id，按实测 id 更新 NLFO 目标（定位撤流、I/F、MTPA、弱磁均适用） */
     if (gGain.fluxKdlQ15 != 0) setTarget(FLUX_NOM + (((int32_t)gGain.fluxKdlQ15 * gFoc.idq.s16D) >> 15));
-    if (w <= w0) {
+    s_hpfA = a;
+    if (a == 0) {
         s_compCos = 32767;
         s_compSin = 0;
         return;
     }
-    if (w < 2 * w0) wc = ((w - w0) * HPF_WC_OVER_W0_Q16) >> 16;
+    wc = (a * FLUX_HPF_WC_PER_A_Q8) >> 8;
     QMath_NormQ15(w, wc, &c, &s);
     s_compCos = c;
     s_compSin = (int16_t)(spdQ15 < 0 ? -s : s);
@@ -243,8 +241,13 @@ RAMFUNC static void FluxObs_Run(void)
 
     ea = inputClamp((int32_t)va - QMath_MulQ15(gFluxObs.s16KRs, ia));
     eb = inputClamp((int32_t)vb - QMath_MulQ15(gFluxObs.s16KRs, ib));
-    ea = inputClamp((int32_t)ea - QMath_LowPass(ea, &gFluxObs.sEalAvgMA.s32Acc, gFluxObs.sEalAvgMA.u16Sh));
-    eb = inputClamp((int32_t)eb - QMath_LowPass(eb, &gFluxObs.sEbeAvgMA.s32Acc, gFluxObs.sEbeAvgMA.u16Sh));
+    {   /* 去直流：e -= dc；dc += a * (e - dc)（|e - dc| <= 32767、a < 32768，乘积不溢出 int32） */
+        int32_t a = s_hpfA;
+        ea = inputClamp((int32_t)ea - (gFluxObs.s32EalDc >> 16));
+        eb = inputClamp((int32_t)eb - (gFluxObs.s32EbeDc >> 16));
+        gFluxObs.s32EalDc += (int32_t)ea * a;
+        gFluxObs.s32EbeDc += (int32_t)eb * a;
+    }
 
     /* ---- NLFO 径向修正 ------------------------------------------------------
      *     corr = Gain * psi_r * (|psi_f|^2 - |psi_r|^2)

@@ -81,7 +81,6 @@
 #define FLY_REV_SPIN_MIN_EMF_PCT 35.34        /* rpm，反向旋转时不低于该值才直接接入闭环（约 2 倍 OPENLOOP_FALLBACK_RPM） */
 
 /* ---- 观测器 / 调制 ---- */
-#define FLUX_HPF_COMP_MIN_RPM   200.0        /* rpm，观测器去直流相位补偿的起始转速（k 约 0.5%），2 倍该转速时补满 */
 #define PWM_5SEG_RPM            5000.0       /* rpm，高于该转速使用五段式 PWM（开关损耗减少 1/3），调制比约 0.26；低速电流畸变大时调高 */
 
 #endif

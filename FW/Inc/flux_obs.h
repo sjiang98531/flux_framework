@@ -23,7 +23,7 @@
 typedef struct {
     int16_t s16KRs, s16KLq, s16KTs;          /* 模型常数 Q15（KLs 即 Lq） */
     int32_t s32PsiAlF, s32PsiBeF;            /* 定子磁链 Q16.16 */
-    LowPass_TypeDef sEalAvgMA, sEbeAvgMA;   /* e 的去直流 */
+    int32_t s32EalDc, s32EbeDc;              /* e 的直流估计 Q16（去直流低通状态） */
     int16_t s16PsiAl, s16PsiBe;              /* 定子磁链 Q15 */
     int16_t s16PsiRAl, s16PsiRBe;            /* 转子磁链 Q15 */
     int16_t previousIa, previousIb;          /* 上一拍 αβ 电流（求两拍平均） */
