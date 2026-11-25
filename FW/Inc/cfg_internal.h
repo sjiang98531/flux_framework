@@ -54,7 +54,7 @@
 #define IBUS_LIMIT_A            3.5         /* A */
 
 /* ===================== 斜坡 ============================================== */
-/* 反转过零前的减速斜率。同向调速见 cfg_app.h；反转先减速到 OPENLOOP_FALLBACK_RPM 再交给 I/F。 */
+/* 反转过零前的减速斜率。同向调速见 cfg_app.h；反转先减速到 OPENLOOP_FALLBACK_EMF_PCT 再交给 I/F。 */
 #define SPEED_RAMP_REV          (2.0 * SPEED_RAMP_DOWN)     /* rpm/s，本电机 400 */
 /* 斜坡圆角：限制给定轨迹的加加速度（jerk），使加速度从 0 升至 SPEED_RAMP_UP 用时 SPEED_RAMP_ROUND_S（S 形曲线）。 */
 #define SPEED_RAMP_ROUND_S      0.1         /* s */
@@ -75,11 +75,20 @@
 /* 定位电流（摆动起动与 IDENT_TEST = 1 静止参数辨识共用）：单摆周期 T = 2*pi*sqrt(J/K) 由 param.c 动态计算。 */
 #define ALIGN_A              (0.8 * MOTOR_I_RATED_A)     /* A，本电机 0.6 A */
 #define ALIGN_RAMP_A_S       (3.8 * (MOTOR_I_RATED_A / 0.75))     /* A/s，定位电流上升斜率（按额定电流缩放，本电机 3.8 A/s） */
-/* 以下三项及阻尼比 ALIGN_ZETA 仅在 IDENT_TEST = 1 静止参数辨识定位等停稳时使用（startup.c） */
-#define ALIGN_MIN_T             1.6         /* T，最短定位时间（等待离开死点） */
-#define ALIGN_STILL_T           0.4         /* T，低于 ALIGN_STILL_RPM 并持续该时间判为停稳 */
-#define ALIGN_MAX_T             4.0         /* T，最长定位时间，到时直接开始测量 */
-#define ALIGN_ZETA           0.75        /* 定位阻尼比（兼顾摆动衰减与 Rs/死区估计误差稳定裕量） */
+/* 以下仅在 IDENT_TEST = 1 静止参数辨识定位时使用（startup.c）。等转子停稳不预测摆动周期（惯量未知），按观测判断：
+ * 反电势持续低于 ALIGN_STILL_EMF_PCT 超过"已观测到的最长半周期 x ALIGN_QUIET_HALF_K"（摆幅超过门限的单摆每半个周期
+ * 必冲过门限一次），且不短于 ALIGN_QUIET_MIN_S（转子尚未开始摆动的时间：周期最长的电机从静止加速到门限之前）。 */
+#define ALIGN_QUIET_MIN_S       2.0         /* s，判停稳的最短静止持续时间 */
+#define ALIGN_QUIET_HALF_K      3           /* 判停稳的静止持续时间 / 已观测到的最长半周期 */
+#define ALIGN_WAIT_MAX_S        30.0        /* s，最长等待，超时记 IDENT_WARN_SWING_CLAMP 后继续 */
+/* 摆动测惯量与磁链（静止测量收尾，identify.c Ident_PendNote / Ident_PendFinish）：定位角阶跃 IDENT_PEND_STEP_DEG、关阻尼，
+ * 由 q 轴反电势的过零时刻得摆动周期、由其积分（q 轴磁链变化）得磁链。先 +IDENT_PEND_STEP_DEG 走一圈再反向走回：
+ * 各相轴起点 x 正反两个方向，静摩擦的影响平均后抵消；摆幅跨过多个齿槽周期，齿槽转矩在一次摆动中平均。
+ *   摆幅须 < 90°：q 轴反电势 = 转速 x 磁链 x cos(偏角)，偏角超过 90° 时其符号与转速相反，过零不再对应转速过零；
+ *   取 60°（整除 360°）：定位轴在相轴上时（gIdentCfg.alignDeg 为 60° 的整数倍）各起点都在相轴上，逆变器死区电压沿电流方向，
+ *   不在 q 轴上产生偏置（死区补偿只在观测器中，不在调制输出中） */
+#define IDENT_PEND_STEP_DEG     60.0        /* 电角度，摆幅（周期按单摆精确公式修正，与摆幅无关） */
+#define IDENT_PEND_SPREAD       1.3         /* 各次周期最大 / 最小超过该值时记 IDENT_WARN_PENDULUM（只记录） */
 /* 摆动中起动（STARTUP_MODE_SWING，详见 startup.c alignSwingSlow）：不加阻尼、不等停稳，
  * 在 d 轴电流升至 ALIGN_A 并扫掠 ALIGN_SWING_SWEEP_DEG 后，利用 |e_q| 过轴峰值及两侧 vd 差值解算位置与转速，
  * 瞬间接入 I/F 平衡点并按顺向 / 逆向过轴对称起动；无明显摆动或超时时按静止在定位轴上接入。 */
@@ -93,7 +102,7 @@
 #define OPENLOOP_WARM_DELTA_DEG       45.0
 #define OPENLOOP_REV_CURRENT_A        (OPENLOOP_CURRENT_A / 0.75)       /* A，本电机 1.0 A */
 #define OPENLOOP_WARM_MAX_A           (2.0 * MOTOR_I_RATED_A)     /* A，本电机 1.5 A */
-/* Spin 失锁检测周期（C 类经验值）：指令同向而估计转速低于 SPIN_LOST_RPM 时每 SPIN_CHECK_S 检查一次 */
+/* Spin 失锁检测周期（C 类经验值）：指令同向而估计转速低于 SPIN_LOST_EMF_PCT 时每 SPIN_CHECK_S 检查一次 */
 #define SPIN_CHECK_S            0.010       /* s */
 /* 切换融合时间：切闭环后 id 从 I/F 分量渐变到 0、加速前馈渐入所用时间，取速度环时间常数 */
 #define OPENLOOP_BLEND_S              (1.0 / (2.0 * 3.14159265359 * SPEED_WN_HZ))     /* 本电机 0.20 s */
@@ -117,7 +126,7 @@
 #define FLYCURRENT_TH_PU        (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB \
                                  / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX）：FLY_STILL_RPM 下的短路电流 */
 #define CALIPWMPERCENT          (0.99)      /* 短接时下桥占空比 */
-#define FLY_CATCH_RPM           OPENLOOP_FALLBACK_RPM   /* rpm，同向直接接入闭环的下限（观测器在此以上可靠） */
+#define FLY_CATCH_EMF_PCT       OPENLOOP_FALLBACK_EMF_PCT  /* 反电势 %，同向直接接入闭环的下限（观测器在此以上可靠） */
 /* 短接后等待电流暂态衰减（约 5 个实际 L/R 时间常数）再开始测量 */
 #define FLY_SETTLE_TAUS         10.0        /* x L/R（本电机 31 ms） */
 #define FLY_STABLE_MS           8           /* 连续该次数（每次 1 ms）转速估计稳定才接管 */

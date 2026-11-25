@@ -15,8 +15,8 @@
 FlyStart_TypeDef gFly;
 
 /* 直接接入 Spin 的转速下限。同向：FLY_CATCH。反向：进入 Spin 仅用于闭环减速，
- * 减速到 OPENLOOP_FALLBACK_RPM 即需回退 I/F；若接管点距回退点太近，Spin 中的 PLL 尚未收敛就要以其转速 / 角度初始化 I/F，
- * 可能导致失步。因此反向且低于 FLY_REV_SPIN_MIN_RPM 时，直接按飞车测得的转速 / 角度进入 I/F（测量值准确），由 I/F 减速过零。 */
+ * 减速到 OPENLOOP_FALLBACK_EMF_PCT 即需回退 I/F；若接管点距回退点太近，Spin 中的 PLL 尚未收敛就要以其转速 / 角度初始化 I/F，
+ * 可能导致失步。因此反向且低于 FLY_REV_SPIN_MIN_EMF_PCT 时，直接按飞车测得的转速 / 角度进入 I/F（测量值准确），由 I/F 减速过零。 */
 static int32_t flySpinMin(uint8_t sameDir)
 {
     if (!sameDir) return gGain.spdFlyRevMinQ15;

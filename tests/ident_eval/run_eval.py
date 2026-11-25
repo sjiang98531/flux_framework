@@ -103,7 +103,31 @@ def export_git_ref(ref, dst_dir):
     if p.returncode != 0:
         raise RuntimeError(f"git archive failed for {ref}")
 
-def build_suite(ref, work_dir, cfgs=None, override_identify=None, override_startup=None, override_identify_h=None):
+# "只填铭牌"：控制器配置中 Rs / Ld / Lq / 饱和 / 磁链 / 加速度系数对所有电机都填同一组占位值（台架风机的值），
+# 仿真电机的真实参数改由 SIMT_* 给出（plant.c）。检验固件在不知道这些参数时能否辨识并起动。
+NAMEPLATE_PLACEHOLDER = {
+    "MOTOR_RS_OHM": ("9.13", "SIMT_RS"), "MOTOR_LD_H": ("0.0363", "SIMT_LD"), "MOTOR_LQ_H": ("0.0548", "SIMT_LQ"),
+    "MOTOR_LS_SAT_KNEE_A": ("0.0", None), "MOTOR_LS_SAT_PER_A": ("0.0", None),
+    "MOTOR_PSI_F_WB": ("0.1418f", "SIMT_PSI"), "MOTOR_ACC_RPM_S_PER_A": ("770.0", "SIMT_ACC"),
+}
+
+def apply_nameplate(path):
+    s = open(path, encoding="utf-8", errors="ignore").read()
+    truth = ""
+    for k, (ph, t) in NAMEPLATE_PLACEHOLDER.items():
+        m = re.search(r"#define\s+%s\s+(\S+)" % k, s)
+        if t:
+            truth += "#define %s (%s)\n" % (t, m.group(1))
+        s = re.sub(r"(#define\s+%s\s+)\S+" % k, lambda mm: mm.group(1) + ph, s)
+    i = s.rindex("#endif")
+    s = s[:i] + truth + s[i:]
+    open(path, "w", encoding="utf-8").write(s)
+
+
+def build_suite(ref, work_dir, cfgs=None, override_identify=None, override_startup=None, override_identify_h=None,
+                nameplate=None):
+    if nameplate is None:
+        nameplate = os.environ.get("IDENT_EVAL_NAMEPLATE", "0") == "1"
     if cfgs is None:
         cfgs = ALL_CFGS
     if os.path.exists(work_dir):
@@ -132,6 +156,8 @@ def build_suite(ref, work_dir, cfgs=None, override_identify=None, override_start
         cfg_ov = os.path.join(SCRIPT_DIR, "configs", k)
         for h in os.listdir(cfg_ov):
             shutil.copy(os.path.join(cfg_ov, h), os.path.join(dst, "FW", "Inc", h))
+        if nameplate:
+            apply_nameplate(os.path.join(dst, "FW", "Inc", "cfg_motor.h"))
         id_path = os.path.join(dst, "FW", "Src", "identify.c")
         id_txt = open(id_path, encoding="utf-8", errors="ignore").read().replace("\r\n", "\n")
         if "g_sim_irated_k" in open(os.path.join(dst, "FW", "Inc", "cfg_motor.h")).read():

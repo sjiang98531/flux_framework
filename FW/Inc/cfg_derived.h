@@ -125,7 +125,6 @@
 #define CURRENT_SLEW_A_S_OF(acc)       (CURRENT_SLEW_JERK_A_S_OF(acc) > CURRENT_SLEW_MIN_A_S ? CURRENT_SLEW_JERK_A_S_OF(acc) : CURRENT_SLEW_MIN_A_S)
 #define CURRENT_SLEW_STEP_Q15_OF(acc)  ((int32_t)(CURRENT_SLEW_A_S_OF(acc) / SLOWLOOP_FREQ / I_MAX * 32768.0 + 0.5))
 #define CURRENT_SLEW_STEP_Q15          CURRENT_SLEW_STEP_Q15_OF(MOTOR_ACC_RPM_S_PER_A)
-#define SOFT_STOP_STEP_Q15             CURRENT_SLEW_STEP_Q15
 /* 斜率前馈：iq_ff(Q15) = 每拍斜坡增量(Q31) * SPEED_FF_K_Q16 >> 16 */
 #define SPEED_FF_K_Q16_OF(acc)  ((int32_t)(SPEED_MAX * SLOWLOOP_FREQ / ((acc) * I_MAX) * 32768.0 / 2147483648.0 * 65536.0 + 0.5))
 #define SPEED_FF_K_Q16          SPEED_FF_K_Q16_OF(MOTOR_ACC_RPM_S_PER_A)
@@ -236,18 +235,22 @@
 /* ---- I/F 开环启动 ---------------------------------------------------------- */
 #define ALIGN_ID_Q15         Q15(ALIGN_A / I_MAX)
 #define ALIGN_STEP_Q15       ((int16_t)(ALIGN_RAMP_A_S / I_MAX / SLOWLOOP_FREQ * 32768.0 + 0.5))   /* 每慢环拍 */
-/* 定位阻尼增益（A/V）：摆的刚度 K = 1.5*p^2*psi_f*I（N·m/rad，机械角），
- * J = 1.5*p*psi_f*60/(2*pi*b)；B = 2*zeta*sqrt(K*J)；iq = -B*w_m/(1.5*p*psi_f)，
- * 反电势 e_q = p*psi_f*w_m  ->  iq = -[B/(1.5*p^2*psi_f^2)] * e_q。换成 Q15 电流/Q15 电压，Q8 */
+/* 定位单摆：刚度 K = 1.5*p^2*psi_f*I（N·m/rad，机械角），J = 1.5*p*psi_f*60/(2*pi*b)（b = 加速度系数），
+ * 周期 T^2 = 4*pi^2*J/K = 120*pi / (b * p * I)：与磁链无关（摆动起动按它计时；参数辨识反过来由测得的 T 求 b） */
 #define ALIGN_K_NM_OF(psi)          (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * (psi) * ALIGN_A)
 #define ALIGN_J_OF(psi, acc)        (1.5 * MOTOR_POLE_PAIRS * (psi) * 60.0 / (2 * MATH_PI * (acc)))
-#define ALIGN_C1_OF(psi)            (2 * ALIGN_ZETA / (1.5 * MOTOR_POLE_PAIRS * MOTOR_POLE_PAIRS * (psi) * (psi)) \
-                                     * UDC_MAX / I_MAX * 256.0)
 #define ALIGN_T2_S2_OF(psi, acc)    (4.0 * MATH_PI * MATH_PI * ALIGN_J_OF(psi, acc) / ALIGN_K_NM_OF(psi))
 #define ALIGN_T2_TICKS2_OF(psi, acc) ((uint64_t)(ALIGN_T2_S2_OF(psi, acc) * SLOWLOOP_FREQ * SLOWLOOP_FREQ + 0.5))
-/* sqrt(K*J) 要开方，在 param.c computeGain() 里算一次：gain_q8 = ALIGN_C1_OF(psi) * sqrt(K*J) */
-/* 定位摆周期的平方 T^2 = 4*pi^2*J/K（s^2），用于配置检查（慢环频率须远高于摆动频率） */
-#define ALIGN_T2_S2          ALIGN_T2_S2_OF(MOTOR_PSI_F_WB, MOTOR_ACC_RPM_S_PER_A)
+/* 参数辨识定位的阻尼：虚拟电阻等于当前 Rs（iq = -vq / Rs，相当于绕组短接制动），只用 R / L 粗测已测得的量，
+ * 不需要磁链与惯量；无源，对任意电机稳定。换成 Q15 电流 / Q15 电压，Q8 */
+#define ALIGN_DAMP_R_Q8_OF(R)       (256.0 * UDC_MAX / (I_MAX * (R)))
+/* 摆动测量阶跃后 q 轴电压不作反电势的时间（慢环拍）：电流环建立（5 个时间常数 1/(2*pi*CURRENT_BW_HZ)）加 1 拍调制延迟，
+ * 再加 3 个电机时间常数 L/R（零极点对消的电流环中被对消的电机极点，积分项预置的残差按它衰减到 5%） */
+#define ALIGN_STEP_BLANK_TICKS_OF(L, R) ((5.0 / (2.0 * MATH_PI * CURRENT_BW_HZ) + 3.0 * (L) / (R)) * SLOWLOOP_FREQ + 1.5)
+/* 参数辨识等停稳（cfg_internal.h）与摆动测量的阶跃角 */
+#define ALIGN_QUIET_MIN_TICKS       ((uint16_t)(ALIGN_QUIET_MIN_S * SLOWLOOP_FREQ + 0.5))
+#define ALIGN_WAIT_MAX_TICKS        ((uint16_t)(ALIGN_WAIT_MAX_S * SLOWLOOP_FREQ + 0.5))
+#define IDENT_PEND_STEP_Q15         ((int16_t)(IDENT_PEND_STEP_DEG / 360.0 * 65536.0 + 0.5))
 /* 定位摆周期的平方换算为慢环拍数的平方（param.c computeGain() 开方得到 T 的拍数，各段为 T 的倍数） */
 #define ALIGN_T2_TICKS2      ALIGN_T2_TICKS2_OF(MOTOR_PSI_F_WB, MOTOR_ACC_RPM_S_PER_A)
 /* 冷起动开环角超前转子的平衡负载角 δ_eq = asin(OPENLOOP_ACC_FRAC)（泰勒级数到 7 次，x <= 0.5 时误差 < 3e-4 rad），Q31 角度（2^32 = 一圈） */
@@ -269,9 +272,10 @@
 /* 可接入的最小峰值转速 = ALIGN_SWING_MIN_DELTA * 平衡负载角 * 摆动角频率（电角速度）；此处为 Q15 转速 * 摆动周期（慢环拍），
  * param.c computeGain() 中除以摆动周期的拍数 */
 #define ALIGN_SWING_MIN_SPD_T    (ALIGN_SWING_MIN_DELTA * OPENLOOP_LEAD_RAD * SLOWLOOP_FREQ * 60.0 / MOTOR_POLE_PAIRS / SPEED_MAX * 32768.0)
-/* "静止"门限：反电势 p*psi_f*w_m（Q15 电压） */
-#define ALIGN_STILL_EMF_Q15_OF(psi) ((int32_t)(ALIGN_STILL_RPM * 2 * MATH_PI / 60.0 * MOTOR_POLE_PAIRS * (psi) / UDC_MAX * 32768.0 + 0.5))
-#define ALIGN_STILL_EMF_Q15  ALIGN_STILL_EMF_Q15_OF(MOTOR_PSI_F_WB)
+/* "静止"门限：反电势（Q15 电压），直接由 ALIGN_STILL_EMF_PCT 给出，与磁链无关 */
+#define ALIGN_STILL_EMF_Q15  ((int32_t)(ALIGN_STILL_EMF_PCT * 0.01 * UDC_RATE / UDC_MAX * 32768.0 + 0.5))
+/* 反电势百分比（cfg_app.h *_EMF_PCT）-> 转速 rpm：n = PCT/100 * UDC_RATE * 60 / (2*pi * p * psi) */
+#define EMF_PCT_RPM_OF(pct, psi)    ((pct) * 0.01 * UDC_RATE * 60.0 / (2.0 * MATH_PI * MOTOR_POLE_PAIRS * (psi)))
 #define OPENLOOP_IQ_Q15               Q15(OPENLOOP_CURRENT_A / I_MAX)
 #define OPENLOOP_REV_IQ_Q15           Q15(OPENLOOP_REV_CURRENT_A / I_MAX)
 #define OPENLOOP_WARM_IMAX_Q15        Q15(OPENLOOP_WARM_MAX_A / I_MAX)

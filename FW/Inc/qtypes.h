@@ -24,6 +24,7 @@
 #define Q15_0P9             29491   /* 0.9（常用作 90% 满量程限幅） */
 
 /* Q15 电角度（int16 回绕，65536 = 一圈） */
+#define ANGLE_60_Q15        10923
 #define ANGLE_90_Q15        16384
 #define ANGLE_180_Q15       32768
 

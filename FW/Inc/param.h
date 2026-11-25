@@ -73,8 +73,8 @@ typedef struct {
     int16_t ipdHfVQ15;          /* IPD 注入电压（Q15）：按注入电流幅值和 Lq 计算，ipd.c */
     uint16_t alignPeriodTicks;  /* 定位单摆周期（慢环拍） */
     int16_t alignSwingMinSpd;   /* 摆动起动最小峰值转速（Q15） */
-    int32_t alignDampQ8;        /* 定位阻尼增益（Q8） */
-    int32_t alignStillEmfQ15;   /* 定位：转速 ALIGN_STILL_RPM 对应的反电势（Q15），低于该值判为静止 */
+    int32_t alignDampRQ8;       /* 参数辨识定位阻尼增益（Q8），ALIGN_DAMP_R_Q8_OF(Rs) */
+    uint16_t alignStepBlank;    /* 参数辨识摆动测量：阶跃后 q 轴电压不作反电势的拍数（ALIGN_STEP_BLANK_TICKS_OF） */
     int32_t swingLagAngQ12;     /* 摆动起动反电势测量延迟角度系数（Q12） */
     int32_t openLoopAccStepQ31; /* I/F 开环每快环拍转速步长（Q31） */
     int16_t openLoopAccFfIq;    /* I/F 开环：按 OPENLOOP_ACC_RPM_S_OF 加速需要的 iq（Q15），切换前馈 */
@@ -87,19 +87,19 @@ typedef struct {
     uint16_t flyStillSpinMs;    /* 测到转动后等待停稳时间（ms） */
     uint32_t flyMayMoveExpireMs;/* 停机后跳过最坏情况等待的过期时间（ms） */
     /* ---- 观测器可靠性相关的转速门限（openloop.c / spin.c / speed_ctrl.c / supervisor.c / flystart.c / identify.c）
-     * cfg_app.h 中以 rpm 给出，其本义是"反电势占额定母线的比例 k"（观测器是否可靠取决于反电势相对逆变器电压误差的大小），
-     * 即 n = k * UDC_RATE * 60 / (2*pi * 极对数 * psi_f)：运行时按 MOTOR_PSI_F_WB / gParam.psiWb 换算，磁链测得与配置不同时随之调整。
-     * 磁链等于配置值时与原编译期常数逐位相同。比例限制在 [0.25, 4]，换算后不超过 0.9 * SPEED_MAX。
-     * 机械意义上的"静止"门限（FLY_STILL_*、FLY_LOW_MIN、ALIGN_STILL）与观测器去直流补偿起点（FLUX_HPF_COMP_MIN）不随之变化 */
-    int32_t spdHandoverQ31;     /* OPENLOOP_HANDOVER_RPM：I/F 切入闭环 */
-    int32_t spdFallbackQ31;     /* OPENLOOP_FALLBACK_RPM：闭环交还 I/F */
-    int32_t spdWarmMaxQ31;      /* 1.5 * OPENLOOP_FALLBACK_RPM：回退进 I/F 时开环转速上限 */
+     * cfg_app.h 中以"反电势占额定母线电压的百分比"给出（观测器是否可靠取决于反电势相对逆变器电压误差的大小），
+     * 运行时按极对数与 gParam.psiWb 换算：n = PCT/100 * UDC_RATE * 60 / (2*pi * 极对数 * psi)（EMF_PCT_RPM_OF），
+     * 换算后不超过 0.9 * SPEED_MAX。机械意义上的"静止"门限（FLY_STILL_*、FLY_LOW_MIN）与观测器去直流补偿起点
+     * （FLUX_HPF_COMP_MIN）以 rpm 给出，不随之变化 */
+    int32_t spdHandoverQ31;     /* OPENLOOP_HANDOVER_EMF_PCT：I/F 切入闭环 */
+    int32_t spdFallbackQ31;     /* OPENLOOP_FALLBACK_EMF_PCT：闭环交还 I/F */
+    int32_t spdWarmMaxQ31;      /* 1.5 * OPENLOOP_FALLBACK_EMF_PCT：回退进 I/F 时开环转速上限 */
     int16_t spdFallbackQ15;
-    int16_t spdSpinMinQ15;      /* OPENLOOP_SPIN_MIN_RPM：闭环最低指令转速 */
-    int16_t spdLostQ15;         /* SPIN_LOST_RPM：闭环失锁判据 */
-    int16_t spdTrackEndQ15;     /* TRACK_END_RPM：零电流跟踪 / 受控减速结束 */
-    int16_t spdFlyCatchQ15;     /* FLY_CATCH_RPM：飞车同向直接接入闭环下限 */
-    int16_t spdFlyRevMinQ15;    /* FLY_REV_SPIN_MIN_RPM：飞车反向直接接入闭环下限 */
+    int16_t spdSpinMinQ15;      /* OPENLOOP_SPIN_MIN_EMF_PCT：闭环最低指令转速 */
+    int16_t spdLostQ15;         /* SPIN_LOST_EMF_PCT：闭环失锁判据 */
+    int16_t spdTrackEndQ15;     /* TRACK_END_EMF_PCT：零电流跟踪 / 受控减速结束 */
+    int16_t spdFlyCatchQ15;     /* FLY_CATCH_EMF_PCT：飞车同向直接接入闭环下限 */
+    int16_t spdFlyRevMinQ15;    /* FLY_REV_SPIN_MIN_EMF_PCT：飞车反向直接接入闭环下限 */
     /* ---- 保护与告警（protect.c / diag.c） */
     int32_t protectSpeedOcQ15;  /* 超速保护门限（Q15） */
     uint16_t cfgWarn;           /* 增益超出定点范围被封顶：bit1 电流环，bit2 PLL，bit3 反电势前馈超量程 */
@@ -119,7 +119,10 @@ extern ParamStat_TypeDef gParamStat;
 
 void Param_Init(void);                              /* 上电：按配置标称值计算 gGain。须在各模块 Init 之前调用（Ctrl_Init） */
 void Param_Offer(const MotorParam_TypeDef *p, uint16_t validMask);  /* 辨识结束时提交结果（validMask 位定义同 rejectMask，标记哪些项有新值），回到 Stop 后才更新 */
-uint8_t Param_ApplyNow(const MotorParam_TypeDef *p);  /* 辨识模式：辨识过程中立即生效（慢环中调用），参数不合理时返回 0 */
+/* 辨识模式：辨识过程中立即生效（慢环中调用）。checkMask（位定义同 rejectMask）为已测得的项：其中有不合理项时返回 0、不生效；
+ * 尚未测得的项是配置占位值，不检查（静止测量时磁链、加速度系数尚未测得） */
+#define PARAM_CHECK_ALL     0x3Fu
+uint8_t Param_ApplyNow(const MotorParam_TypeDef *p, uint16_t checkMask);
 void Param_Background(void);                        /* 主循环：Stop 状态（PWM 关闭）时更新 Param_Offer 提交的参数 */
 float Param_LqAt(float iAbsA);                      /* 按当前 gParam 的 L(|i|) 饱和模型（含 lsMaxA 钳位）计算电感 H */
 

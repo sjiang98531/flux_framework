@@ -48,30 +48,57 @@ static void Param_Defaults(MotorParam_TypeDef *p)
     p->dtEffS = INVERTER_DT_EFF_S;
 }
 
-/* 合理性检查。不与配置标称值比较（新电机可能没有可靠的标称值），只检查"物理上为正"和"定点范围可容纳"
- * （各增益的 Q 格式、观测器磁链量程、NLFO 归一化范围，与 cfg_check_list.h 的编译期检查一致）。
+/* 合理性检查。不与配置标称值比较（新电机可能没有可靠的标称值），只检查"物理上为正"和"定点范围可容纳"，
+ * 条件与 cfg_check_list.h 第二部分逐项对应（那里检查 IDENT_TEST = 0 时的配置值，这里检查任意一组参数，含辨识测得值）。
+ * 同时依赖多个量的条件归入辨识中最后测得的那个量的位（psi、加速度系数在运行测量中才测得），
+ * 使静止测量阶段按位提交 R / L / 死区时不受尚未测得的占位值影响。
  * 返回不合理项的位（位定义同 gParamStat.rejectMask），0 = 全部合理 */
 static uint16_t checkParam(const MotorParam_TypeDef *p)
 {
     uint16_t bad = 0;
     double psiN = (p->psiWb > 0 && p->ldH > 0 && p->lqH > 0) ? FLUX_PSI_N_OF(p->psiWb, p->ldH, p->lqH) : FLUX_PSI_N;
-    /* bit0 Rs：为正，且满量程电流下的电阻压降在观测器电压基准 Q15 量程内 */
-    if (!(p->rsOhm > 0 && p->rsOhm * I_MAX / FLUX_V_BASE < 0.99997)) bad |= 1u;
-    /* bit1 L：为正，且满量程电流下的电感磁链 L*I 在观测器磁链量程内 */
-    if (!(p->lqH > 0 && p->ldH > 0 && p->lqH * I_MAX / psiN < 0.9 && p->ldH * I_MAX / psiN < 0.9)) bad |= 2u;
+    /* bit0 Rs：为正，满量程电流下的电阻压降在观测器电压基准 Q15 量程内，电流环 Ki 不被截断为 0 */
+    if (!(p->rsOhm > 0 && p->rsOhm * I_MAX / FLUX_V_BASE < 0.99997 && CURRENT_KI_OF(p->rsOhm) >= 1)) bad |= 1u;
+    /* bit1 L：为正，满量程电流下的电感磁链 L*I 在观测器磁链量程内，电流环 Kp 非零，解耦系数在 16 位无符号内；
+     * 与 Rs 共同决定的飞车阻抗角系数、短接暂态拍数、摆动滞后角（R / L 同时测得） */
+    if (!(p->lqH > 0 && p->ldH > 0 && p->lqH * I_MAX / psiN < 0.9 && p->ldH * I_MAX / psiN < 0.9 &&
+          CURRENT_KP_OF(p->ldH) >= 1 && CURRENT_KP_OF(p->lqH) >= 1 &&
+          DECOUPLE_K_L_Q12_OF(p->lqH) < 65536 && DECOUPLE_K_L_Q12_OF(p->ldH) < 65536 &&
+          (p->rsOhm <= 0 || (FLY_WLR_Q12_OF(p->lqH, p->rsOhm) >= 1 && FLY_SETTLE_BLOCKS_OF(p->ldH, p->rsOhm) >= 1 &&
+                             ALIGN_SWING_LAG_ANG_Q12_OF(p->lqH, p->rsOhm) < 1000000)))) bad |= 2u;
     /* bit2 L(i)：拐点在电流量程内，斜率非负且 Q12 可容纳，上限电流为 0（不钳）或不低于拐点 */
     if (!(p->lsKneeA >= 0 && p->lsKneeA < I_MAX && p->lsPerA >= 0 && p->lsPerA * I_MAX < 7.0 && (p->lsMaxA == 0 || p->lsMaxA >= p->lsKneeA))) bad |= 4u;
-    /* bit3 psi：最大定子磁链 psi + L*I 在观测器积分器限幅内，磁链定点非零且积分步长在 Q15 内 */
+    /* bit3 psi：最大定子磁链 psi + L*I 在观测器积分器限幅内，磁链定点非零且积分步长在 Q15 内，NLFO 归一化与 PLL 增益非零；
+     * 反电势前馈系数非零；飞车短路电流门限（与 Rs 共同决定）在 (0, 1)；回馈削顶 FULL > START */
     if (!(p->psiWb > 0 && (p->psiWb + p->lqH * I_MAX) / psiN < 0.9 &&
           FLUX_NOMINAL_Q15_AT(p->psiWb, psiN) >= 16 &&
           2.0 * MATH_PI * FLUX_WN_HZ_OF(p->psiWb, p->ldH, p->lqH) / PWM_FREQ < 0.99997)) bad |= 8u;
     else {
         /* NLFO 归一化系数须非零；快环先把 ferr>>12 限在 fq 饱和点内再乘（flux_obs.c），norm < 2^22 即不溢出 int32 */
-        int32_t n = FLUX_NLFO_NORM_Q8_OF(FLUX_NOMINAL_Q15_AT(p->psiWb, psiN));
-        if (n < 1 || n >= FLUX_NLFO_NORM_MAX) bad |= 8u;
+        int32_t nom = FLUX_NOMINAL_Q15_AT(p->psiWb, psiN), n = FLUX_NLFO_NORM_Q8_OF(nom);
+        double th = (p->rsOhm > 0) ? FLYCURRENT_TH_PU_OF(p->psiWb, p->rsOhm) : 0.5;
+        if (n < 1 || n >= FLUX_NLFO_NORM_MAX || FLUXPLL_KP_OF(nom) < 1 || FLUXPLL_KI_OF(nom) < 1 ||
+            DECOUPLE_K_EMF_Q15_OF(p->psiWb) <= 0 || !(th > 0.0 && th < 0.99997) ||
+            BUS_REGEN_FULL_Q15_OF(p->psiWb) <= BUS_REGEN_START_Q15_OF(p->psiWb)) bad |= 8u;
     }
-    /* bit4 加速度系数：为正，且计算出的速度环 Kp、Ki 未被截断为 0 */
-    if (!(p->accRpmSPerA > 0 && SPEED_KP_OF(p->accRpmSPerA) >= 1 && SPEED_KI_OF(p->accRpmSPerA) >= 1)) bad |= 16u;
+    /* bit4 加速度系数：为正；速度环 Kp、Ki 非零且不超 int32；I/F 加速度步长非零且反转放大后在 int32 内；电流变化步长在 Q15 内；
+     * 斜率前馈在位宽内；定位摆周期拍数 >= 1 且平方乘积不溢出；母线电压控制器（与 psi 共同决定）增益与乘积在位宽内 */
+    if (!(p->accRpmSPerA > 0)) bad |= 16u;
+    else {
+        double a = p->accRpmSPerA, st = OPENLOOP_ACC_STEP_Q31_OF(a), t2 = ALIGN_T2_TICKS2_OF(p->psiWb, a);
+        int32_t ks = CURRENT_SLEW_STEP_Q15_OF(a);
+        double ff = SPEED_FF_K_Q16_OF(a), ai = SPEED_ACC_PER_IQ_Q8_OF(a);
+        if (!(SPEED_KP_OF(a) >= 1 && SPEED_KI_OF(a) >= 1 &&
+              (2 * SPEED_ZETA * 2 * MATH_PI * SPEED_WN_HZ * SPD_GAIN_SCALE_OF(a)) < 2147483647.0 &&
+              st >= 1 && st * OPENLOOP_REV_IQ_Q15 / OPENLOOP_IQ_Q15 < 2147483647.0 &&
+              ks >= 1 && ks < 32767 && ff >= 1 && ff < 2147483647.0 && ai >= 1 && ai < 32768.0 * 256 &&
+              t2 >= 1.0 && ALIGN_SWING_MAX_T * ALIGN_SWING_MAX_T * t2 < 32767.0 * 32767.0)) bad |= 16u;
+        else if (p->psiWb > 0) {
+            double kv = BUS_VDC_K_Q8_OF(p->psiWb, a);
+            if (!(kv >= 1 && kv < 2147483647.0 &&
+                  (double)BUS_VDC_REF_SQ_OF(p->psiWb) * kv / 65536.0 * (1073741824.0 / BUS_VDC_SMIN_Q15) < 1.8e19)) bad |= 16u;
+        }
+    }
     /* bit5 死区：非负，且小于 PWM 周期的 10%（超出则判为测量错误） */
     if (!(p->dtEffS >= 0 && p->dtEffS * PWM_FREQ < 0.1)) bad |= 32u;
     return bad;
@@ -80,15 +107,6 @@ static uint16_t checkParam(const MotorParam_TypeDef *p)
 /* 参数 -> 全部增益。公式与 cfg_derived.h 的编译期常量使用同一组宏（*_OF），参数等于配置标称值时结果逐位相同。
  * 被封顶的项在 cfgWarn 中记录一位（目标板上为 gFluxDiag.cfgWarn）。
  * 括号内为本电机配置标称值的计算结果，供对照 */
-/* 观测器可靠性相关转速门限的换算比例 s = MOTOR_PSI_F_WB / psi，限制在 [0.25, 4]（见 param.h） */
-static double spdThScale(const MotorParam_TypeDef *p)
-{
-    double s = (p->psiWb > 0) ? (double)MOTOR_PSI_F_WB / p->psiWb : 1.0;
-    if (s < 0.25) s = 0.25;
-    if (s > 4.0) s = 4.0;
-    return s;
-}
-
 
 static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
 {
@@ -168,9 +186,9 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
         uint32_t t = QMath_Isqrt64(ALIGN_T2_TICKS2_OF(p->psiWb, p->accRpmSPerA));
         g->alignPeriodTicks = (uint16_t)(t > 65535u ? 65535u : t);
         g->alignSwingMinSpd = (int16_t)(ALIGN_SWING_MIN_SPD_T / (double)(t ? t : 1) + 0.5);
-        g->alignDampQ8 = (int32_t)(ALIGN_C1_OF(p->psiWb)
-            * (double)QMath_Isqrt64((uint64_t)(ALIGN_K_NM_OF(p->psiWb) * ALIGN_J_OF(p->psiWb, p->accRpmSPerA) * 1099511627776.0))
-            / 1048576.0);
+        double d = ALIGN_DAMP_R_Q8_OF(p->rsOhm), bl = ALIGN_STEP_BLANK_TICKS_OF(p->lqH, p->rsOhm);
+        g->alignDampRQ8 = (int32_t)(d > 2147483647.0 ? 2147483647.0 : d);
+        g->alignStepBlank = (uint16_t)(bl > 65535.0 ? 65535.0 : bl);
         g->swingLagAngQ12 = ALIGN_SWING_LAG_ANG_Q12_OF(p->lqH, p->rsOhm);
     }
     g->openLoopAccStepQ31 = OPENLOOP_ACC_STEP_Q31_OF(p->accRpmSPerA);
@@ -179,8 +197,6 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->rampOpenLoopRevQ31 = Q31(OPENLOOP_REV_ACC_RPM_S_OF(p->accRpmSPerA) / SPEED_MAX / SLOWLOOP_FREQ);
     /* I/F 开环：按设计加速度 OPENLOOP_ACC_RPM_S_OF 拖动所需的 iq（加速度 / 加速度系数），切闭环时作为前馈（openloop.c） */
     g->openLoopAccFfIq = OPENLOOP_ACC_FF_IQ_OF(p->accRpmSPerA);
-    /* 定位判静止：ALIGN_STILL_RPM 对应的反电势 */
-    g->alignStillEmfQ15 = ALIGN_STILL_EMF_Q15_OF(p->psiWb);
     /* 母线回馈减速与超速保护 */
     g->busRegenStartQ15 = BUS_REGEN_START_Q15_OF(p->psiWb);
     g->busRegenFullQ15 = BUS_REGEN_FULL_Q15_OF(p->psiWb);
@@ -189,16 +205,16 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->busVdcRefSq = BUS_VDC_REF_SQ_OF(p->psiWb);
     g->busVdcKQ8 = BUS_VDC_K_Q8_OF(p->psiWb, p->accRpmSPerA);
     g->protectSpeedOcQ15 = PROTECT_SPEED_OC_Q15_OF(p->psiWb);
-    {   /* 观测器可靠性相关的转速门限随磁链换算（见 param.h）：s = 配置磁链 / 当前磁链；s = 1 时各式与 cfg_derived.h 原宏逐位相同 */
-        double s = spdThScale(p), top = 0.9 * SPEED_MAX;
+    {   /* 观测器可靠性相关的转速门限：反电势百分比按极对数与当前磁链换算（见 param.h），不超过 0.9 * SPEED_MAX */
+        double psi = p->psiWb, top = 0.9 * SPEED_MAX;
         double hand, fb, sm, lost, te, fc, frev, warm;
-        hand = OPENLOOP_HANDOVER_RPM * s;  if (hand > top) hand = top;
-        fb   = OPENLOOP_FALLBACK_RPM * s;  if (fb > top) fb = top;
-        sm   = OPENLOOP_SPIN_MIN_RPM * s;  if (sm > top) sm = top;
-        lost = SPIN_LOST_RPM * s;          if (lost > top) lost = top;
-        te   = TRACK_END_RPM * s;          if (te > top) te = top;
-        fc   = FLY_CATCH_RPM * s;          if (fc > top) fc = top;
-        frev = FLY_REV_SPIN_MIN_RPM * s;   if (frev > top) frev = top;
+        hand = EMF_PCT_RPM_OF(OPENLOOP_HANDOVER_EMF_PCT, psi);  if (hand > top) hand = top;
+        fb   = EMF_PCT_RPM_OF(OPENLOOP_FALLBACK_EMF_PCT, psi);  if (fb > top) fb = top;
+        sm   = EMF_PCT_RPM_OF(OPENLOOP_SPIN_MIN_EMF_PCT, psi);  if (sm > top) sm = top;
+        lost = EMF_PCT_RPM_OF(SPIN_LOST_EMF_PCT, psi);          if (lost > top) lost = top;
+        te   = EMF_PCT_RPM_OF(TRACK_END_EMF_PCT, psi);          if (te > top) te = top;
+        fc   = EMF_PCT_RPM_OF(FLY_CATCH_EMF_PCT, psi);          if (fc > top) fc = top;
+        frev = EMF_PCT_RPM_OF(FLY_REV_SPIN_MIN_EMF_PCT, psi);   if (frev > top) frev = top;
         warm = 1.5 * fb;                   if (warm > 0.95 * SPEED_MAX) warm = 0.95 * SPEED_MAX;
         g->spdHandoverQ31 = (int32_t)(hand / SPEED_MAX * 2147483648.0);
         g->spdFallbackQ31 = (int32_t)(fb / SPEED_MAX * 2147483648.0);
@@ -243,10 +259,10 @@ void Param_Init(void)
  * 在慢环中调用（辨识模式的慢环本身使用浮点），增益计算完成后关中断整体替换。
  * 与 Param_Background 不同，此时电机可能正由辨识程序驱动，因此由辨识程序保证在两段测量之间调用。
  * 参数不合理时返回 0，不更新 */
-uint8_t Param_ApplyNow(const MotorParam_TypeDef *p)
+uint8_t Param_ApplyNow(const MotorParam_TypeDef *p, uint16_t checkMask)
 {
     CtrlGain_TypeDef g;
-    if (checkParam(p)) return 0;
+    if (checkParam(p) & checkMask) return 0;
     computeGain(p, &g);
     {
         IRQ_LOCK();

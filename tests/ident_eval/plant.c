@@ -52,6 +52,16 @@ static double plant_psiEff(const Plant *p)
 
 static double urand(Plant *p) { p->rng = p->rng * 1664525u + 1013904223u; return (p->rng >> 8) / 16777216.0; }
 
+/* 仿真电机的真实参数：默认等于配置值；"只填铭牌"测试（run_eval.build_suite nameplate=True）中配置为占位值，
+ * 真值由构建脚本以 SIMT_* 给出 */
+#ifndef SIMT_RS
+#define SIMT_RS  MOTOR_RS_OHM
+#define SIMT_LD  MOTOR_LD_H
+#define SIMT_LQ  MOTOR_LQ_H
+#define SIMT_PSI MOTOR_PSI_F_WB
+#define SIMT_ACC MOTOR_ACC_RPM_S_PER_A
+#endif
+
 double g_sim_iEd = 0.0, g_sim_iEq = 0.0;
 static double s_vbusGain = 1.0, s_iGain = 1.0;
 static double s_cogAmp = 0.0, s_cogHarm = 6.0, s_rDrift = 0.0;
@@ -59,9 +69,9 @@ static int s_offRun = 0;
 
 void plant_init(Plant *p, int ipm)
 {
-    p->res = MOTOR_RS_OHM; p->pp = MOTOR_POLE_PAIRS; p->psi = (double)MOTOR_PSI_F_WB;
-    if (ipm) { p->lD = 0.040; p->lQ = 0.060; } else { p->lD = MOTOR_LD_H; p->lQ = MOTOR_LQ_H; }
-    p->J = 1.5 * p->pp * p->psi / (MOTOR_ACC_RPM_S_PER_A * TWO_PI / 60.0);
+    p->res = SIMT_RS; p->pp = MOTOR_POLE_PAIRS; p->psi = (double)SIMT_PSI;
+    if (ipm) { p->lD = 0.040; p->lQ = 0.060; } else { p->lD = SIMT_LD; p->lQ = SIMT_LQ; }
+    p->J = 1.5 * p->pp * p->psi / (SIMT_ACC * TWO_PI / 60.0);
     p->kFan = 1.5 * p->pp * p->psi * 0.292 / pow(1172.0 * TWO_PI / 60.0, 2.0);
     p->tFric = 0.01;
     p->vbus = p->vsrc = UDC_RATE; p->tdEff = INVERTER_DT_EFF_S;

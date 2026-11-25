@@ -18,7 +18,7 @@
  *   Ctrl_FastTick / Ctrl_SlowTick        快环 / 慢环入口（在 hal_sc32r602.c 的中断中调用）
  *   <主状态>Fast / <主状态>Slow          各主状态每拍的处理（fault / init / stop / run）
  *   softStopSlow                         软停机：电流矢量按限定速率降到 0
- *   stopRampSlow                         受控减速停机：闭环中收到停机指令时先由速度环减速到 TRACK_END_RPM
+ *   stopRampSlow                         受控减速停机：闭环中收到停机指令时先由速度环减速到 TRACK_END_EMF_PCT
  *   Sup_Switch*                          状态切换
  *   faultDetect                    每拍汇总故障位（硬件过流、配置检查失败、母线过欠压）
  * ==========================================================================*/
@@ -354,12 +354,12 @@ static uint8_t runStopSlow(uint8_t stopReq)
 }
 
 /* 受控减速停机（STOP_MODE_RAMP）：闭环运行中收到停机指令时，不立即软停，而是把速度环的目标改为
- * "同向的 TRACK_END_RPM"，按 SPEED_RAMP_DOWN 减速（与平时同向调速完全相同的路径：S 形斜坡、轨迹前馈、
- * 母线电压控制器限制回馈）。斜坡到达 TRACK_END_RPM 后返回 0，由调用方按原流程软停、关闭 PWM。
- * 目标取同向的 TRACK_END_RPM 而不是 0：闭环（观测器）只在该转速以上可靠，更低的转速不做闭环制动。
+ * "同向的 TRACK_END_EMF_PCT"，按 SPEED_RAMP_DOWN 减速（与平时同向调速完全相同的路径：S 形斜坡、轨迹前馈、
+ * 母线电压控制器限制回馈）。斜坡到达 TRACK_END_EMF_PCT 后返回 0，由调用方按原流程软停、关闭 PWM。
+ * 目标取同向的 TRACK_END_EMF_PCT 而不是 0：闭环（观测器）只在该转速以上可靠，更低的转速不做闭环制动。
  * 返回 1 = 本拍继续闭环减速（gSpd.cmd 已改写为减速目标）。
  * 不适用的情况（返回 0，按原流程软停）：停机方式为滑行、
- * 非闭环子状态（定位、I/F 电流沿开环角，直接软停）、软停已开始、斜坡已不高于 TRACK_END_RPM。 */
+ * 非闭环子状态（定位、I/F 电流沿开环角，直接软停）、软停已开始、斜坡已不高于 TRACK_END_EMF_PCT。 */
 static uint8_t stopRampSlow(void)
 {
     if (gSup.stopMode != STOP_MODE_RAMP) return 0;
@@ -372,7 +372,7 @@ static uint8_t stopRampSlow(void)
 /* Run 慢环，按优先级：
  *   1. 参数辨识模式（IDENT_TEST）的慢环钩子；
  *   2. 零电流跟踪中（闭环中停机后转子仍在转动）：只执行 Spin_TrackSlow；
- *   3. 停机指令（|指令| < RUN_TO_STOP_SPEED）或软停机进行中：闭环且停机方式为受控减速时先减速到 TRACK_END_RPM（stopRampSlow）；
+ *   3. 停机指令（|指令| < RUN_TO_STOP_SPEED）或软停机进行中：闭环且停机方式为受控减速时先减速到 TRACK_END_EMF_PCT（stopRampSlow）；
  *      有电流的子状态软停（电流降到 0），
  *      完成后若处于闭环且转速足够 -> 零电流跟踪，否则关闭 PWM 回到 Stop。闭环软停期间指令恢复 -> 取消软停继续闭环；
  *   4. 正常情况：按子状态分发慢环函数（预充计时、飞车判定、定位、I/F、速度环）。 */
@@ -388,7 +388,7 @@ static void runSlow(void)
     }
     if (IDENT_TEST) Ident_RunSlow((uint8_t)(gSup.runState == RunState_Spin && !s_softStop && !Spin_Tracking()));
     if (Spin_Tracking()) { Spin_TrackSlow(); return; }
-    if (stopReq && stopRampSlow()) stopReq = 0;     /* 受控减速停机：本拍照常执行速度环，目标 = 同向 TRACK_END_RPM */
+    if (stopReq && stopRampSlow()) stopReq = 0;     /* 受控减速停机：本拍照常执行速度环，目标 = 同向 TRACK_END_EMF_PCT */
     if (runStopSlow(stopReq)) return;
     if (stopReq) {                      /* 无电流的子状态（预充、飞车检测）直接停机 */
         HAL_PwmAllOff();
@@ -412,7 +412,9 @@ static void bridgeOnZeroVector(void)
 }
 
 /* Charge -> FlyCheck（预充完成，开始飞车检测）：上桥关闭、下桥导通（三相短接），比较值为零矢量。
- * 清除运行状态与飞车检测状态 */
+ * 清除运行状态与飞车检测状态。
+ * 参数辨识的静止测量不做飞车检测、直接定位：检测门限（短路电流）由磁链与 Rs 决定，此时都还未测得；
+ * 静止测量要求转子静止，由操作者保证（identify.h） */
 void Sup_SwitchChargeFlyCheck(void)
 {
     HAL_PwmAllOff();
@@ -422,6 +424,10 @@ void Sup_SwitchChargeFlyCheck(void)
     HAL_PwmAllOn();
 
     Ctrl_ResetRunVariables();
+    if (IDENT_TEST && Ident_StaticThisStart()) {
+        Sup_SwitchFlyCheckAlign();
+        return;
+    }
     FlyStart_Begin();
     gSup.runState = RunState_FlyCheck;
 }
@@ -525,7 +531,7 @@ void Sup_SwitchOpenLoopSpin(void)
     IRQ_UNLOCK();
 }
 
-/* Spin -> OpenLoop（回退：闭环转速低于 OPENLOOP_FALLBACK_RPM，或正反转需过零）：
+/* Spin -> OpenLoop（回退：闭环转速低于 OPENLOOP_FALLBACK_EMF_PCT，或正反转需过零）：
  * 准备 I/F 入口（开环角延续 PLL 角、开环电流从当前 iq 延续、判断是否反转），临界区内关闭解耦、切换状态 */
 void Sup_SwitchSpinOpenLoop(void)
 {

@@ -35,6 +35,9 @@ IdentTest_TypeDef gIdentTest;
 /* ---- 公共 ---------------------------------------------------------------------- */
 static uint8_t s_autoStage;         /* 自动方式：0 = 静止测量未完成，1 = 静止测量已完成、执行运行测量 */
 static uint8_t s_holdOk;            /* 收尾定位结束后：1 = 自动重起动执行运行测量，0 = 结束 */
+/* 摆动测量（见 Ident_PendNote）：小摆幅周期累计 / 最小 / 最大、磁链累计、步数 */
+static float s_pendT0Sum, s_pendT0Min, s_pendT0Max, s_pendPsiSum;
+static uint8_t s_pendN, s_pendNPsi;
 static uint8_t s_restartReq;        /* 自动方式：静止测量刚完成，请求停机再起动（一次性标志） */
 
 enum { OLF_WAIT_STABLE = 0, OLF_AVG = 1, OLF_DONE = 2, OLF_NOSYNC = 3 };
@@ -243,6 +246,8 @@ static void dtFit(void)
 void Ident_Reset(void)
 {
     memset(&gIdent, 0, sizeof(gIdent));
+    s_pendN = s_pendNPsi = 0;
+    s_pendT0Sum = s_pendPsiSum = 0.0f;
     gIdentTest.idx = 0;
     gIdentTest.cnt = 0;
     gIdent.state = IDENT_RUNNING;
@@ -260,11 +265,39 @@ void Ident_Idle(void)
     FocCore_LoadGains();
 }
 
+/* 静止测量结果（含摆动测量的磁链与加速度系数）提交 param.c */
+static void offerStill(void)
+{
+    MotorParam_TypeDef p = gParam;
+    uint16_t m = 0;
+    if (gIdent.rsOhm > 0) { p.rsOhm = gIdent.rsOhm; m |= 1u; }
+    if (gIdent.ldH > 0 && gIdent.lqH > 0) {
+        p.lqH = gIdent.lqH;
+        p.ldH = gIdent.ldH;
+        m |= 2u;
+    }
+    if (gIdent.lsMaxA > 0.0f) {     /* 拟合成立才提交，否则沿用配置的饱和曲线；测量范围以外按同一模型外推（下限 MOTOR_LS_SAT_MIN） */
+        p.lsKneeA = 0.0;
+        p.lsPerA = gIdent.lsPerA;
+        p.lsMaxA = 0.0;
+        m |= 4u;
+    }
+    if (INVERTER_DT_COMP && gIdent.deadTimeS > 0) { p.dtEffS = gIdent.deadTimeS; m |= 32u; }
+    if (gIdent.pendT0 > 0.0f) { p.psiWb = gIdent.pendPsiWb; p.accRpmSPerA = gIdent.accRpmSPerA; m |= 8u | 16u; }
+    Param_Offer(&p, m);
+}
+
 /* 定位完成时由 startup.c 调用：首次定位后开始死区阶梯；收尾定位（IDENT_PH_HOLD）停稳后结束静止测量 */
 void Ident_Begin(void)
 {
     if (gIdentTest.phase == IDENT_PH_HOLD) {
         FocCore_SetIdqRef(0, 0);
+        offerStill();
+        {
+            uint8_t ok = (uint8_t)(!(gParamStat.rejectMask & 39u) && gParamStat.pending);
+            if (!ok) gIdent.warn |= IDENT_WARN_AUTO_BLOCKED;
+            s_holdOk = (uint8_t)(gIdentCfg.mode == IDENT_MODE_AUTO && ok);
+        }
         if (s_holdOk) {
             s_autoStage = 1;
             s_restartReq = 1;
@@ -362,26 +395,6 @@ static void lsFit(void)
     }
 }
 
-static void offerStill(void)
-{
-    MotorParam_TypeDef p = gParam;
-    uint16_t m = 0;
-    if (gIdent.rsOhm > 0) { p.rsOhm = gIdent.rsOhm; m |= 1u; }
-    if (gIdent.ldH > 0 && gIdent.lqH > 0) {
-        p.lqH = gIdent.lqH;
-        p.ldH = gIdent.ldH;
-        m |= 2u;
-    }
-    if (gIdent.lsMaxA > 0.0f) {     /* 拟合成立才提交，否则沿用配置的饱和曲线；测量范围以外按同一模型外推（下限 MOTOR_LS_SAT_MIN） */
-        p.lsKneeA = 0.0;
-        p.lsPerA = gIdent.lsPerA;
-        p.lsMaxA = 0.0;
-        m |= 4u;
-    }
-    if (INVERTER_DT_COMP && gIdent.deadTimeS > 0) { p.dtEffS = gIdent.deadTimeS; m |= 32u; }
-    Param_Offer(&p, m);
-}
-
 void Ident_Slow(void)
 {
     IdentTest_TypeDef *t = &gIdentTest;
@@ -397,7 +410,7 @@ void Ident_Slow(void)
             if (r <= 0.0f) { staticAbort(IDENT_WARN_RL_TIMEOUT); break; }
             p.rsOhm = r;                    /* 先整定电流环（R 含死区偏大） */
             p.lqH = p.ldH = l;
-            (void)Param_ApplyNow(&p);
+            (void)Param_ApplyNow(&p, 1u | 2u);
             FocCore_ApplyVoltageAB(0, 0);
             FocCore_PresetPI(0, 0);
             t->phase = IDENT_PH_NONE;       /* 交给 startup.c 定位，定位完成后 Ident_Begin */
@@ -423,7 +436,7 @@ void Ident_Slow(void)
                 dtFit();
                 if (gIdent.rsOhm > 0) p.rsOhm = gIdent.rsOhm;
                 if (INVERTER_DT_COMP && gIdent.deadTimeS > 0) p.dtEffS = gIdent.deadTimeS;
-                (void)Param_ApplyNow(&p);
+                (void)Param_ApplyNow(&p, 1u | 2u | 32u);
             }
         }
         break;
@@ -473,14 +486,8 @@ void Ident_Slow(void)
         if (s == 3) {
             FocCore_ApplyVoltageAB(0, 0);
             lsFit();
-            offerStill();
-            {
-                uint8_t ok = (uint8_t)(!(gParamStat.rejectMask & 39u) && gParamStat.pending);
-                if (!ok) gIdent.warn |= IDENT_WARN_AUTO_BLOCKED;
-                s_holdOk = (uint8_t)(gIdentCfg.mode == IDENT_MODE_AUTO && ok);
-            }
-            /* 收尾定位：交还 startup.c 的辨识定位（定位轴上加定位电流与阻尼，等转子停稳），停稳后经 Ident_Begin 结束。
-             * 自动重起动时转子须静止且在已知角度（q 轴大电流档可能推动转子） */
+            /* 收尾定位：交还 startup.c 的辨识定位（定位轴上加定位电流与阻尼，等转子停稳），停稳后做摆动测量（惯量、磁链），
+             * 回到目标轴停稳后经 Ident_Begin 提交并结束。自动重起动时转子须静止且在已知角度（q 轴大电流档可能推动转子） */
             t->cnt = 0;
             t->phase = IDENT_PH_HOLD;
             Startup_IdentHold();
@@ -498,6 +505,103 @@ uint8_t Ident_Fast(void)
     if (gIdentTest.phase != IDENT_PH_RL && gIdentTest.phase != IDENT_PH_LDQ) return 0;
     injFast();
     return 1;
+}
+
+/* ---- 摆动测量：惯量与磁链（静止测量收尾，阶跃与极值检测在 startup.c） ----------------------------------
+ * 定位电流 I（ALIGN_A，沿定位轴）下转子是单摆：转子偏离定位轴 δ（电角度）时转矩 = -1.5 p I sinδ (psi + (Ld - Lq) I cosδ)，
+ * 小摆幅刚度 K = 1.5 p^2 psi_a I（N·m / 机械 rad），psi_a = psi + (Ld - Lq) I（有效磁链）。
+ *   周期 T0^2 = 4 pi^2 J / K。代入加速度系数 b = 1.5 p psi / J（rpm/s / A，此处 J 换算到 rpm）得
+ *       b = 120 pi / (p I T0^2) * psi / psi_a          非凸极时与磁链无关；凸极时只差 psi / psi_a
+ *   摆幅 A（= 阶跃角，从静止释放）：T = T0 * (2/pi) * K(sin(A/2))（第一类完全椭圆积分），由此精确还原 T0。
+ *   q 轴反电势 = w (psi cosδ + (Ld - Lq) I cos2δ)，过轴（δ = 0）时取极值 w_pk psi_a，w_pk = 2 w0 sin(A/2)（能量守恒），
+ *   相邻两个极值间隔 T/2、符号相反：psi_a = 峰峰值 / (2 w_pk)，按一阶滤波在摆动频率处的幅值衰减修正。
+ *   极值时刻与峰峰值都不受恒定偏置影响。只有一个极值时（摩擦使摆动很快停止）：第一个极值在 T/4 + 滤波延迟，只用于周期。
+ *   库仑摩擦只使每半个周期的摆动中心偏移、不改变半周期；使第二个极值略小，磁链略偏小。磁链只需量级正确，I/F 与闭环中再精测。
+ * 各步平均（各相轴起点、两个方向，静摩擦的影响平均后抵消） */
+static float ellipK(float k)
+{
+    float a = 1.0f, b = sqrtf(1.0f - k * k);
+    uint8_t i;
+    for (i = 0; i < 6; i++) {
+        float m = 0.5f * (a + b);
+        b = sqrtf(a * b);
+        a = m;
+    }
+    return (float)MATH_PI / (2.0f * a);
+}
+
+void Ident_PendNote(uint32_t firstQ8, uint32_t lastQ8, uint8_t n, int32_t ppQ15)
+{
+    const float tau = (float)(1u << ALIGN_EMF_FILT_SH) / (float)SLOWLOOP_FREQ, k = 1.0f / (256.0f * (float)SLOWLOOP_FREQ);
+    const float amp = (float)(IDENT_PEND_STEP_DEG * MATH_PI / 180.0), ia = (float)ALIGN_A;
+    float h, t0, w, dl = (gIdent.ldH > 0.0f && gIdent.lqH > 0.0f) ? gIdent.ldH - gIdent.lqH : 0.0f;
+    uint8_t i;
+    if (n == 0u) return;
+    if (n >= 2u) {
+        h = (float)(lastQ8 - firstQ8) * k / (float)(n - 1u);
+    } else {    /* 第一个极值时刻 = T/4 + 一阶滤波在摆动频率处的延迟 atan(w*tau)/w（迭代两次） */
+        float z = (float)firstQ8 * k;
+        h = 2.0f * z;
+        for (i = 0; i < 2u; i++) {
+            w = (float)MATH_PI / h;
+            h = 2.0f * (z - atanf(w * tau) / w);
+        }
+    }
+    if (h <= 0.0f) return;
+    w = (float)MATH_PI / h;
+    t0 = 2.0f * h * (float)MATH_PI / (2.0f * ellipK(sinf(0.5f * amp)));
+    if (s_pendN == 0u || t0 < s_pendT0Min) s_pendT0Min = t0;
+    if (s_pendN == 0u || t0 > s_pendT0Max) s_pendT0Max = t0;
+    s_pendT0Sum += t0;
+    s_pendN++;
+    if (n >= 2u && ppQ15 != 0) {
+        float wpk = 2.0f * (2.0f * (float)MATH_PI / t0) * sinf(0.5f * amp);
+        float pp = fabsf((float)ppQ15) * (float)(UDC_MAX / 32768.0) * sqrtf(1.0f + w * w * tau * tau);
+        s_pendPsiSum += pp / (2.0f * wpk) - dl * ia;
+        s_pendNPsi++;
+    }
+}
+
+/* 摆动测量完成（已回到目标轴并停稳）：惯量与磁链立即生效（后续收尾、自动重起动的摆动起动与 I/F 按实测值），并随静止结果提交 */
+void Ident_PendFinish(void)
+{
+    MotorParam_TypeDef p = gParam;
+    const float ia = (float)ALIGN_A;
+    float t0, psiA, psi, dl;
+    if (s_pendN == 0u || s_pendNPsi == 0u) {
+        gIdent.warn |= IDENT_WARN_PENDULUM;
+        return;
+    }
+    if (s_pendT0Max > (float)IDENT_PEND_SPREAD * s_pendT0Min) gIdent.warn |= IDENT_WARN_PENDULUM;
+    t0 = s_pendT0Sum / (float)s_pendN;
+    psi = s_pendPsiSum / (float)s_pendNPsi;
+    dl = (gIdent.ldH > 0.0f && gIdent.lqH > 0.0f) ? gIdent.ldH - gIdent.lqH : 0.0f;
+    if (psi <= 0.0f) {
+        gIdent.warn |= IDENT_WARN_PENDULUM;
+        return;
+    }
+    psiA = psi + dl * ia;
+    if (psiA <= 0.0f) psiA = psi;
+    gIdent.pendT0 = t0;
+    gIdent.pendPsiWb = psi;
+    gIdent.accRpmSPerA = (float)(120.0 * MATH_PI / MOTOR_POLE_PAIRS) / (ia * t0 * t0) * psi / psiA;
+    p.psiWb = psi;
+    p.accRpmSPerA = gIdent.accRpmSPerA;
+    if (gIdent.ldH > 0.0f && gIdent.lqH > 0.0f) { p.ldH = gIdent.ldH; p.lqH = gIdent.lqH; }
+    (void)Param_ApplyNow(&p, PARAM_CHECK_ALL);
+}
+
+/* 磁链测得新值时的加速度系数：有摆动测量时按 b = 120 pi / (p I T0^2) * psi / psi_a 重算（惯量由周期决定）；
+ * 否则（运行测量方式 IDENT_MODE_RUN）惯量不变，b 与磁链成正比 */
+static double accAtPsi(const MotorParam_TypeDef *p, float psi)
+{
+    if (gIdent.pendT0 > 0.0f) {
+        const float ia = (float)ALIGN_A;
+        float psiA = psi + (float)(p->ldH - p->lqH) * ia;
+        if (psiA <= 0.0f) psiA = psi;
+        return (120.0 * MATH_PI / MOTOR_POLE_PAIRS) / (ia * gIdent.pendT0 * gIdent.pendT0) * psi / psiA;
+    }
+    return (p->psiWb > 0) ? p->accRpmSPerA * psi / p->psiWb : p->accRpmSPerA;
 }
 
 /* ---- 运行测量：I/F 恒速段测磁链 ------------------------------------------------
@@ -597,11 +701,10 @@ uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
         if (w > 1.0f) {
             MotorParam_TypeDef p = gParam;
             gIdent.psiWb = s_olfE / OLFLUX_AVG_MS / w;
-            /* 加速度系数 = 转矩常数 / 惯量 ∝ psi / J：惯量不辨识，按配置惯量随磁链换算 */
-            if (p.psiWb > 0) p.accRpmSPerA *= gIdent.psiWb / p.psiWb;
+            p.accRpmSPerA = accAtPsi(&p, gIdent.psiWb);
             gIdent.accRpmSPerA = (float)p.accRpmSPerA;
             p.psiWb = gIdent.psiWb;
-            if (!Param_ApplyNow(&p)) Param_Offer(&p, 8u | 16u);
+            if (!Param_ApplyNow(&p, PARAM_CHECK_ALL)) Param_Offer(&p, 8u | 16u);
         }
     }
     s_olFluxSt = OLF_DONE;
@@ -691,7 +794,7 @@ static void jFinish(uint8_t ok)
         MotorParam_TypeDef p = gParam;
         gIdent.accRpmSPerA = s_jAref / x[3];
         p.accRpmSPerA = gIdent.accRpmSPerA;
-        if (!Param_ApplyNow(&p)) Param_Offer(&p, 16u);
+        if (!Param_ApplyNow(&p, PARAM_CHECK_ALL)) Param_Offer(&p, 16u);
     }
 }
 
@@ -759,11 +862,11 @@ static void psiClSlow(void)
         if (sqrtf(s_olfF[0] * s_olfF[0] + s_olfF[1] * s_olfF[1]) > (float)MOTOR_I_RATED_A) gIdent.warn |= IDENT_WARN_PSI_LOAD;
         else if (psi > 0.0f) {
             MotorParam_TypeDef p = gParam;
-            if (p.psiWb > 0) p.accRpmSPerA *= psi / p.psiWb;
+            p.accRpmSPerA = accAtPsi(&p, psi);
             gIdent.accRpmSPerA = (float)p.accRpmSPerA;
             gIdent.psiWb = psi;
             p.psiWb = psi;
-            if (!Param_ApplyNow(&p)) Param_Offer(&p, 8u | 16u);
+            if (!Param_ApplyNow(&p, PARAM_CHECK_ALL)) Param_Offer(&p, 8u | 16u);
         }
     }
     jStart();

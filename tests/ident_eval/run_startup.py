@@ -97,7 +97,7 @@ def identalign(wd):
     return res
 
 
-def e2e(wd, seed, n, secs="30"):
+def e2e(wd, seed, n, secs="150"):
     jobs = run_blind.gen_healthy_jobs(seed, n)
     rng = random.Random(seed + 7)
     pre = [(j, rng.randrange(360)) for j in jobs]
@@ -145,9 +145,12 @@ def main():
     ap.add_argument("--n", type=int, default=120)
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--json", default=None)
-    ap.add_argument("--secs", default=None, help="simulated seconds per run (default 10 for angles, 30 for e2e)")
+    ap.add_argument("--secs", default=None, help="simulated seconds per run (default 10 for angles, 150 for e2e: the static identification incl. the pendulum measurement takes 30..90 s)")
     ap.add_argument("--retry", action="store_true", help="keep simulating after a fault (SIM_FAULT_CONTINUE=1) so automatic restarts are exercised")
+    ap.add_argument("--nameplate", action="store_true", help="controller config holds only nameplate data: Rs / L / psi / acc are one placeholder set for every motor (run_eval.apply_nameplate)")
     a = ap.parse_args()
+    if a.nameplate:
+        os.environ["IDENT_EVAL_NAMEPLATE"] = "1"
     if a.retry:
         os.environ["SIM_FAULT_CONTINUE"] = "1"
     if not a.no_build:
@@ -162,7 +165,7 @@ def main():
         if a.seed is None:
             ap.error("e2e needs --seed")
         print(f"=== end-to-end AUTO identification + start, seed={a.seed} n={a.n} ({a.ref}) ===")
-        res = e2e(a.work, a.seed, a.n, a.secs or "30")
+        res = e2e(a.work, a.seed, a.n, a.secs or "150")
     if a.json:
         json.dump(res, open(a.json, "w"))
 

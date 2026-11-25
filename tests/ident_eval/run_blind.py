@@ -97,7 +97,7 @@ def gen_stress_jobs(seed, count=30):
     return jobs
 
 
-SIM_SECS = "60"     # identification with two-step align + final hold can exceed the 35 s default of run_eval.run_case
+SIM_SECS = "150"    # static identification incl. the pendulum measurement takes 30..90 s (exceeds the 35 s default of run_eval.run_case)
 
 
 def run(wd, key, md, rpm, envx):
