@@ -35,7 +35,7 @@ static MotorParam_TypeDef s_offer;          /* Param_Offer 提交、等待生效
 static volatile uint8_t s_offerReq;         /* 1 = s_offer 有效，主循环尚未处理 */
 
 /* 将配置标称值（cfg_motor.h / cfg_board.h）填入 p */
-void Param_Defaults(MotorParam_TypeDef *p)
+static void Param_Defaults(MotorParam_TypeDef *p)
 {
     p->rsOhm = MOTOR_RS_OHM;
     p->ldH = MOTOR_LD_H;

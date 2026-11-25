@@ -83,7 +83,7 @@ uint8_t OpenLoop_WantsFallback(void)
 
 /* 从闭环回退到 I/F 时的开环电流：至少为 OPENLOOP_CURRENT_A；需能提供此刻的 iq 且负载角不超过 δmax（|iq| / sin(δmax)）；
  * 需过零（反转）时至少为 OPENLOOP_REV_CURRENT_A；不超过 OPENLOOP_WARM_MAX_A */
-int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
+static int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
 {
     int32_t cur = OPENLOOP_IQ_Q15, aiq = iq < 0 ? -(int32_t)iq : iq;
     int32_t need = (int32_t)(((int64_t)aiq * OPENLOOP_WARM_KI_Q15) >> 15);      /* |iq| / sin(δmax) */

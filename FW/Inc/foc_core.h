@@ -30,8 +30,6 @@ typedef struct {
 
 extern Svpwm_TypeDef gSvpwm;
 
-void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod);
-void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibusRec);
 
 /* 电流环状态。角度由估计模块（闭环）或起动 / 开环模块（IPD、摆动起动、I/F）每拍写入。 */
 typedef struct {
@@ -68,8 +66,6 @@ void FocCore_CurrentLoop(void);
 /* dq 解耦前馈开关（进入 Spin 时打开、离开时关闭）。切换时将前馈量移入 / 移出积分器，实现无扰切换。
  */
 void FocCore_SetDecouple(uint8_t on);
-/* 停机 / 故障复位用：只关闭开关，不修改积分器 */
-void FocCore_ResetDecouple(void);
 /* 停机 / 故障复位：电流 PI 积分器、电压、电流指令、角度、解耦开关清零 */
 void FocCore_ResetRun(void);
 /* 电流 PI 积分器预置（Q30 电压：qdSum >> 15 = 输出 Q15）。仅在状态切换时使用，其他地方不直接写 gFoc.piD/piQ */

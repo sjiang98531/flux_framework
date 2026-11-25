@@ -19,6 +19,8 @@ Svpwm_TypeDef gSvpwm;
 
 /* ---- SVPWM（扇区法 X/Y/Z，七段式 / 五段式，母线电流重构） -------------------- */
 typedef struct { uint8_t v1, n1, v2, n2, c[3], p1, p2; } SvSector;
+static void FocCore_ResetDecouple(void);
+
 static const SvSector s_svTab[7] = {
     { 0, 0, 0, 0, { 0, 0, 0 }, 0, 0 },
     { 2, 0, 1, 0, { 1, 0, 2 }, 1, 2 },     /* 1：t1 = Z,  t2 = Y  */
@@ -29,7 +31,7 @@ static const SvSector s_svTab[7] = {
     { 1, 1, 2, 1, { 1, 2, 0 }, 2, 1 },     /* 6：t1 = -Y, t2 = -Z */
 };
 
-void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod)
+static void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod)
 {
     u->Alpha = 0;
     u->Beta = 0;
@@ -41,7 +43,7 @@ void Svpwm_Init(Svpwm_TypeDef *u, int16_t halfPeriod)
     u->N_halfPeriod = halfPeriod;
 }
 
-RAMFUNC void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibusRec)
+RAMFUNC static void Svpwm_Calc(Svpwm_TypeDef *u, const Abc_TypeDef *iabc, int16_t *ibusRec)
 {
     int32_t r3 = (u->Alpha * Q15_SQRT3_HALF) >> 15;
     int32_t xyz[3], tt[3], i3[3];
@@ -221,7 +223,7 @@ FORCE_INLINE void applyDecoupleRequest(void)
 }
 
 /* 复位解耦开关（不修改积分器：调用方已清零积分器） */
-void FocCore_ResetDecouple(void) { s_decReq = DEC_REQ_NONE; s_decOn = 0; }
+static void FocCore_ResetDecouple(void) { s_decReq = DEC_REQ_NONE; s_decOn = 0; }
 
 /* gFoc.idqRef 在 FocCore_TypeDef 中 4 字节对齐，可用一条 STR 指令写入 */
 typedef char FocIdqRefAligned[(offsetof(FocCore_TypeDef, idqRef) % 4u == 0u) ? 1 : -1];

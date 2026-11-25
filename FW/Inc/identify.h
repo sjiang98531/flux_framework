@@ -100,7 +100,6 @@ extern IdentTest_TypeDef gIdentTest;
 
 int16_t Ident_AlignTheta(void);         /* 定位角（Q15 角度） */
 uint8_t Ident_StaticThisStart(void);    /* 本次起动执行静止测量（进入 Align 时、定位结束时查询） */
-uint8_t Ident_RunActive(void);          /* 运行测量进行中 */
 uint8_t Ident_TakeRestart(void);        /* 自动方式：静止测量刚完成，需停机后重新起动（读取后清除） */
 void    Ident_Reset(void);              /* 进 Align 时（静止测量） */
 void    Ident_Idle(void);               /* 进 Align 时（不做静止测量，正常起动） */

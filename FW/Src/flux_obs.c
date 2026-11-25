@@ -98,6 +98,7 @@ void FluxObs_Reset(void)
 }
 
 static void setTarget(int32_t tgt);
+static void FluxObs_SeedCatch(int16_t theta);
 
 /* ferr>>12 的限幅：超出 ±ceil(FQ_LIMIT*256/norm) 时 fq 必然饱和，先限幅再乘结果不变且乘积不溢出（norm 可超过 8192） */
 static volatile int32_t s_nlfoELim;
@@ -176,7 +177,7 @@ static void setTarget(int32_t tgt)
 }
 
 /* 冷起动（IPD / 摆动起动 -> I/F）时调用：磁链初始化为 |psi_f|∠theta（此时转子位于该角度），观测器从正确状态开始 */
-void FluxObs_BeginOpenLoop(void)
+static void FluxObs_BeginOpenLoop(void)
 {
     /* 仅在冷起动 Align/IPD -> OpenLoop 时调用（由 Est_OnEnterOpenLoopCold 调用，PLL 与转速清零也在该处） */
     /* psi 初值按转子在 theta_hat 设置（psi_r = 幅值目标∠theta，psi_s = psi_r + Lq*i，定位电流仍在），而非 0：
@@ -186,7 +187,7 @@ void FluxObs_BeginOpenLoop(void)
 }
 
 /* 飞车接管时调用：按测得的转子角初始化磁链。存储的是定子磁链，故 = psi_f∠theta + L*i（短接电流仍存在） */
-void FluxObs_SeedCatch(int16_t theta)
+static void FluxObs_SeedCatch(int16_t theta)
 {
     /* psi_s = psi_r + Lq*i：短接电流较大（1500 rpm 约 2.8 A），不能只初始化 psi_r。|psi_r| 取当前幅值目标（凸极时随 id） */
     SinCos_TypeDef a = FocMath_SinCos(theta);
@@ -203,7 +204,7 @@ void FluxObs_SeedCatch(int16_t theta)
  *   4. NLFO 修正量（沿 psi_r 方向，按 |psi_f|^2 - |psi_r|^2 的比例）；
  *   5. 积分：psi_s += e*KTs + 修正；
  *   6. 输出 psi_r = 相位补偿(psi_s) - L(i)*i，供 PLL 使用。 */
-RAMFUNC void FluxObs_Run(void)
+RAMFUNC static void FluxObs_Run(void)
 {
     AlphaBeta_TypeDef current;
     int16_t va, vb, ea, eb, ia, ib;
@@ -312,7 +313,7 @@ void FluxPLL_Init(PLL_TypeDef *p)
     p->s32I_1      = 0;
 }
 
-RAMFUNC int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta)
+RAMFUNC static int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta)
 {
     SinCos_TypeDef a = FocMath_SinCos(theta);
     return (int16_t)(QMath_MulQ15(psiBeta, a.s16Cos) - QMath_MulQ15(psiAlpha, a.s16Sin));
@@ -338,13 +339,13 @@ FORCE_INLINE int16_t advance(PLL_TypeDef *p, int32_t kpTerm, int32_t kiTerm)
     return (int16_t)(p->s32Theta >> 16);
 }
 
-RAMFUNC int16_t FluxPLL_StepQ15(const PLL_TypeDef *p, int32_t advQ8)
+RAMFUNC static int16_t FluxPLL_StepQ15(const PLL_TypeDef *p, int32_t advQ8)
 {
     int32_t step = angleStep(p->s32Speed, p->s16ThGain);
     return (int16_t)(((step >> 8) * advQ8) >> 16);
 }
 
-RAMFUNC int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p)
+RAMFUNC static int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p)
 {
     int32_t kpTerm = (int32_t)err * p->s16PGain;
     int32_t kiTerm = (int32_t)err * p->s16IGain;

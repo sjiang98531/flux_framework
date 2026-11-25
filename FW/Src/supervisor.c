@@ -111,7 +111,7 @@ void Ctrl_Init(void)
 
 /* 清除运行状态：每次停机、故障、从 Stop 进入 Run（Charge -> FlyCheck）时调用。
  * 积分器、斜坡、观测器、PLL、各计数器恢复初值，保证每次起动都从相同的初始状态开始 */
-void Ctrl_ResetRunVariables(void)
+static void Ctrl_ResetRunVariables(void)
 {
     /* 各模块清除自身状态 */
     SpeedCtrl_ResetRun();

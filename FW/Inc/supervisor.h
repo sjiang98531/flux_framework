@@ -71,7 +71,6 @@ extern Supervisor_TypeDef gSup;
 
 /* ---- 入口 ---- */
 void Ctrl_Init(void);           /* 上电初始化全部模块 */
-void Ctrl_ResetRunVariables(void); /* 停机 / 故障 / 重新起动前复位控制状态 */
 void Ctrl_FastTick(void);       /* 快环：观测器输入快照 + 状态机快环 */
 void Ctrl_SlowTick(void);       /* 慢环：状态机慢环 */
 

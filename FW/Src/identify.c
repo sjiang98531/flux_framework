@@ -58,7 +58,7 @@ uint8_t Ident_StaticThisStart(void)
     return (uint8_t)(gIdent.state != IDENT_DONE && s_autoStage == 0);
 }
 
-uint8_t Ident_RunActive(void)
+static uint8_t Ident_RunActive(void)
 {
     if (gIdentCfg.mode == IDENT_MODE_RUN) return 1;
     return (uint8_t)(gIdentCfg.mode == IDENT_MODE_AUTO && s_autoStage == 1 && gIdent.state == IDENT_RUNNING);

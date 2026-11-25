@@ -35,12 +35,6 @@ extern FluxObs_TypeDef gFluxObs;
 void FluxObs_Init(void);            /* 上电 */
 void FluxObs_LoadModel(void);       /* 从 gGain 重新装载 Rs / L / NLFO 归一化（param.c 更新参数时调用） */
 void FluxObs_Reset(void);           /* 清除全部状态（非 Run 状态时每拍调用） */
-/* Align -> OpenLoop：清除观测器、PLL 速度与转速反馈，将 psi 初始化为 |psi_f|∠gFoc.theta */
-void FluxObs_BeginOpenLoop(void);
-/* 飞车接管：清除观测器，将定子磁链初始化为 psi_f∠theta + Lq*i（theta、i 均为本拍采样时刻） */
-void FluxObs_SeedCatch(int16_t theta);
-/* 执行本拍模型。调用前须已计算 gMeas.iab（Clarke），且本拍尚未调制（gSvpwm.Alpha/Beta 仍为上一拍指令）。 */
-void FluxObs_Run(void);
 /* 慢环每拍：按转速更新去直流相位补偿，按母线平均值更新死区电压误差幅值，凸极时按实测 id 更新 NLFO 幅值目标 */
 void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg);
 
@@ -49,9 +43,6 @@ void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg);
  * ==========================================================================*/
 void FluxPLL_Init(PLL_TypeDef *p);
 void FluxPLL_LoadGains(PLL_TypeDef *p);    /* 仅重新装载 Kp / Ki（param.c 更新参数时调用） */
-int16_t FluxPLL_PhaseError(int16_t psiAlpha, int16_t psiBeta, int16_t theta);
-int16_t FluxPLL_StepQ15(const PLL_TypeDef *p, int32_t advQ8);
-int16_t FluxPLL_Run(int16_t err, PLL_TypeDef *p);
 
 typedef struct {
     PLL_TypeDef pll;            /* 磁链 PLL */
