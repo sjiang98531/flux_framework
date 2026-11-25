@@ -83,17 +83,6 @@ FORCE_INLINE void dtComp(int16_t ia, int16_t ib, int16_t *va, int16_t *vb)
     *vb = (int16_t)(*vb - ((((xb - xc) * Q15_INV_SQRT3) >> 15) * vdt >> 15));
 }
 
-/* 同一误差模型变换到角 a 的 dq 坐标（Q15 电压，指令 = 实际 + 误差）。参数辨识定位判停稳（慢环）与死区拟合（identify.c）使用 */
-Dq_TypeDef FluxObs_DtErr(AlphaBeta_TypeDef iab, SinCos_TypeDef a)
-{
-    int16_t ea = 0, eb = 0;
-    Dq_TypeDef e;
-    dtComp(iab.s16Alpha, iab.s16Beta, &ea, &eb);        /* 从 0 中减去误差：ea、eb = -e_alpha、-e_beta */
-    e.s16D = (int16_t)(-((int32_t)ea * a.s16Cos + (int32_t)eb * a.s16Sin) >> 15);
-    e.s16Q = (int16_t)(((int32_t)ea * a.s16Sin - (int32_t)eb * a.s16Cos) >> 15);
-    return e;
-}
-
 /* 清除全部观测器状态（磁链、去直流滤波器、输出），非 Run 状态时每拍调用 */
 void FluxObs_Reset(void)
 {
@@ -127,7 +116,6 @@ void FluxObs_LoadModel(void)
     gFluxObs.s16KTs = gGain.fluxKtsQ15;
     gFluxObs.s16KRs = gGain.fluxKrsQ15;
     gFluxObs.s16KLq = gGain.fluxKlQ15;
-    gFluxObs.s32NlfoNormQ8 = gGain.nlfoNormQ8;
     setTarget(FLUX_NOM);
 }
 

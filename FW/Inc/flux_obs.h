@@ -22,9 +22,6 @@
 
 typedef struct {
     int16_t s16KRs, s16KLq, s16KTs;          /* 模型常数 Q15（KLs 即 Lq） */
-    int32_t s32NlfoNormQ8;                   /* NLFO 归一化（Q8），上电 = FLUX_NLFO_NORM_Q8（对应 FLUX_NLFO_TAU_S）。
-                                              * 时间常数与其成反比（SH 不变时）：
-                                              * 768 = 19.2 ms，613 = 24 ms，460 = 32 ms */
     int32_t s32PsiAlF, s32PsiBeF;            /* 定子磁链 Q16.16 */
     LowPass_TypeDef sEalAvgMA, sEbeAvgMA;   /* e 的去直流 */
     int16_t s16PsiAl, s16PsiBe;              /* 定子磁链 Q15 */
@@ -46,8 +43,6 @@ void FluxObs_SeedCatch(int16_t theta);
 void FluxObs_Run(void);
 /* 慢环每拍：按转速更新去直流相位补偿，按母线平均值更新死区电压误差幅值，凸极时按实测 id 更新 NLFO 幅值目标 */
 void FluxObs_SlowTick(int16_t spdQ15, int16_t busAvg);
-/* 逆变器电压误差（死区 + 管压降）在角 a 的 dq 坐标中的分量，Q15 电压 */
-Dq_TypeDef FluxObs_DtErr(AlphaBeta_TypeDef iab, SinCos_TypeDef a);
 
 /* ============================================================================
  * 转子磁链锁相环（FluxPLL）与无感角度估计调度（gEst）

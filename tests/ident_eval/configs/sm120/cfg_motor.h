@@ -4,7 +4,7 @@
  *
  * 配置三层中的"电机"层（另两层：cfg_app.h 应用、cfg_internal.h 内部）。更换电机时修改本文件，
  * 控制器中所有与电机相关的定点增益均由 cfg_derived.h 根据这些值自动计算。
- * 必填：极对数、铭牌额定电流 / 转速 / 功率、Rs、Ld / Lq、磁链、加速度系数（后五项可先填估计值，
+ * 必填：极对数、铭牌额定电流 / 转速、Rs、Ld / Lq、磁链、加速度系数（后五项可先填估计值，
  *       用参数辨识模式 cfg_board.h IDENT_TEST = 1 测量后回填，见 identify.h）。
  * 可选：电感饱和 MOTOR_LS_SAT_*（未知时 PER_A = 0 关闭）、机械允许转速 MOTOR_SPEED_LIMIT_RPM。
  * 当前值对应 5 对极高压风机电机（表贴式）。
@@ -45,7 +45,6 @@ extern double g_sim_irated_k;
 #define MOTOR_I_RATED_A ((6.0) * g_sim_irated_k)
 #endif            /* A，额定相电流（峰值） */
 #define MOTOR_SPEED_RATED_RPM   6000.0          /* rpm，额定转速 */
-#define MOTOR_P_RATED_W         200.0           /* W，额定功率 */
 /* 机械允许最高转速（叶轮 / 轴承规格）。超速保护取它与"反电势达到母线兜底门限"转速中的较小值（cfg_internal.h）。 */
 #define MOTOR_SPEED_LIMIT_RPM   12000.0          /* rpm */
 
