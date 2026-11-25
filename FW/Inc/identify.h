@@ -6,7 +6,7 @@
  * 再由 param.c 自动算出全部增益。前提：辨识开始时转子静止（由操作者保证）。各项方法：
  *   R/L    ：α 轴正弦电压注入（不用电流环），幅值自适应，得到粗略 R、L，先整定电流环
  *   Rs、死区：定位轴上 d 轴多档直流电流，上半段（走出死区过渡带）的档位直线拟合：斜率 Rs，截距为死区电压
- *   Ld / Lq：d 轴、q 轴正弦电压注入（同 R/L 方法，频率按 R/L 自适应），L = Im(Z)/ω；
+ *   Ld / Lq：d 轴、q 轴正弦电压注入（同 R/L 方法），Ld 与各档 Lq 共用一个频率（按 q 轴探测值与电压上限自适应）；
  *            q 轴按 0.5 / 1 / 1.5 / 2 倍额定电流测量，按描述函数直线拟合饱和模型 L(i) = L0 * (1 - per * |i|)
  *   psi_f  ：I/F 恒速段 mean|v - Ri - Vdt - jωLi| / ω（凸极按转子坐标）
  *   J      ：闭环中转速小幅升高再降回，iq = 负载(ω，二次式) + 斜坡加速度 / acc 最小二乘，负载与加速项分开
@@ -45,7 +45,7 @@ typedef struct {
     float lqAtA[4], lqAtH[4];   /* q 轴各档实际电流基波幅值（A）与基波电感（H），档数 lsN */
     float lsPerA, lsMaxA;   /* 饱和拟合：每 A 相对下降量（拐点取 0）-> MOTOR_LS_SAT_PER_A；最大测量电流（0 = 拟合不成立） */
     uint8_t lsN;
-    float injHz;        /* Ld / Lq 注入频率 */
+    float injHz;        /* Ld 与各档 Lq 共用的注入频率 */
     float psiWb;        /* 磁链（I/F 恒速段），测得后立即生效再切闭环 -> MOTOR_PSI_F_WB */
     float accRpmSPerA;  /* 加速度系数（升降速实测；未测得时为配置值按磁链换算）-> MOTOR_ACC_RPM_S_PER_A */
     float psiClWb;          /* 闭环细测的磁链 Wb（0 = 未测）；测得后替换 I/F 粗测值 psiWb */

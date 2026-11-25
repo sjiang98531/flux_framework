@@ -81,13 +81,18 @@ uint8_t Ident_TakeRestart(void)
 #define INJ_AVG         16
 #define INJ_V0_V        ((0.5 < 0.01 * UDC_RATE) ? 0.5 : (0.01 * UDC_RATE))
 #define INJ_V0_Q15      (Q15(INJ_V0_V / UDC_MAX) < 1 ? 1 : Q15(INJ_V0_V / UDC_MAX))
-#define INJ_VMAX_Q15    Q15(0.45 * UDC_RATE / 1.7320508 / UDC_MAX)
+/* 注入电压上限：与电流环相同的电压圆 MAX_DUTY * 实测母线 * 2/3（SVPWM 线性区最大相电压幅值），注入开始时按实测母线取值 */
+static int16_t injVmaxQ15(void)
+{
+    int16_t v = QMath_MulQ15(QMath_MulQ15(FOC_DUTY_LIMIT_Q15, gMeas.vbusAvg), Q15(0.6667));
+    return (v > INJ_V0_Q15) ? v : (int16_t)INJ_V0_Q15;
+}
 #define INJ_RL_HZ       200.0
 #define AC_V_DELAY      CTRL_INVPARK_ADVANCE
 
 static uint32_t s_injPhi, s_injInc, s_injDly;
 static uint16_t s_injPer, s_injT, s_injN;
-static int16_t  s_injAmp;
+static int16_t  s_injAmp, s_injVmax;
 static SinCos_TypeDef s_injAx;
 static int32_t  s_injIs, s_injIc, s_injSs, s_injSc;
 static uint8_t  s_injSt;            /* 0 = 调幅值，1..3 = 稳定，4 = 平均 */
@@ -109,6 +114,7 @@ static void injStart(int16_t theta, float hz, float iA)
     s_injN = 0;
     s_injIs = s_injIc = s_injSs = s_injSc = 0;
     s_injAmp = INJ_V0_Q15;
+    s_injVmax = injVmaxQ15();
     s_injSt = 0;
     s_injDone = 0;
 }
@@ -130,6 +136,14 @@ static void injFast(void)
 
 /* 每个注入周期结束时处理一次。返回 0 = 进行中，1 = 完成（*r, *l, *ia 有效：电阻、电感、实际电流基波幅值 A），
  * 2 = 失败（电压到上限仍达不到可用电流，或 200 周期未收敛） */
+/* 注入轴 theta、电流基波幅值 iA 下的等效串联电阻：Rs + 死区等效电阻 (4/π)·Vdt·g/iA，g 为三相在注入轴上的投影系数 */
+static float rEq(int16_t theta, float iA)
+{
+    float th = (float)theta * (float)(2.0 * MATH_PI / 65536.0);
+    float g = (2.0f / 3.0f) * (fabsf(cosf(th)) + fabsf(cosf(th - 2.0943951f)) + fabsf(cosf(th + 2.0943951f)));
+    return gIdent.rsOhm + (float)(4.0 / MATH_PI) * gIdent.deadVoltV * g / iA;
+}
+
 static uint8_t injSlow(float *r, float *l, float *ia)
 {
     float is, ic, i1, v;
@@ -147,18 +161,18 @@ static uint8_t injSlow(float *r, float *l, float *ia)
         i1 = 2.0f * sqrtf(is * is + ic * ic) / (float)s_injPer;
         k = (i1 > 1.0f) ? s_injTgt / i1 : 2.0f;
         if (k > 0.85f && k < 1.15f) { s_injSt = 1; return 0; }
-        if (++s_injN >= 200 || (v >= (float)INJ_VMAX_Q15 && k > 1.0f)) {
+        if (++s_injN >= 200 || (v >= (float)s_injVmax && k > 1.0f)) {
             if (i1 >= 0.15f * s_injTgt) { s_injSt = 1; return 0; }   /* 电流偏小但可用 */
             return 2;
         }
         if (k > 2.0f) k = 2.0f;
         if (k < 0.5f) k = 0.5f;
         v *= 0.5f + 0.5f * k;
-        if (v > (float)INJ_VMAX_Q15) v = (float)INJ_VMAX_Q15;
+        if (v > (float)s_injVmax) v = (float)s_injVmax;
         nv = (int16_t)(v + 0.5f);
         if (nv < 1) nv = 1;
         if (nv == s_injAmp) {
-            if (k > 1.0f && nv < (int16_t)INJ_VMAX_Q15) nv++;
+            if (k > 1.0f && nv < s_injVmax) nv++;
             else if (k < 1.0f && nv > 1) nv--;
         }
         s_injAmp = nv;
@@ -178,9 +192,7 @@ static uint8_t injSlow(float *r, float *l, float *ia)
         *l = -v * cc * n / (2.0f * d) * (float)(UDC_MAX / I_MAX) / (float)(2.0 * MATH_PI) / s_injHz;
         *ia = 2.0f * sqrtf(d) / n * (float)(I_MAX / 32768.0);
         if (gIdent.rsOhm > 0.0f && *ia > 0.0f) {
-            float th = (float)s_injTheta * (float)(2.0 * MATH_PI / 65536.0);
-            float g = (2.0f / 3.0f) * (fabsf(cosf(th)) + fabsf(cosf(th - 2.0943951f)) + fabsf(cosf(th + 2.0943951f)));
-            float rt = gIdent.rsOhm + (float)(4.0 / MATH_PI) * gIdent.deadVoltV * g / *ia;
+            float rt = rEq(s_injTheta, *ia);
             float z = v * (float)(UDC_MAX / 32768.0) / *ia, x2 = z * z - rt * rt;
             *l = (x2 > 0.0f) ? sqrtf(x2) / (2.0f * (float)MATH_PI * s_injHz) : 0.0f;
         }
@@ -304,20 +316,26 @@ static float ldqHz(void)
  * 模型有效上限取最大实测幅值的 1.5 倍（运行中过载可能超出扫到的电流，在此范围内按拟合斜率外推） */
 #define LS_N    4
 static const float s_lsK[LS_N] = { 0.5f, 1.0f, 1.5f, 2.0f };
-static float s_lsF0;                /* Ld 所用的基准频率 */
+static float s_ldqHz;               /* Ld 与各档 Lq 共用的注入频率 */
 
-/* q 轴第 k 档的注入频率：尽量用基准频率（感抗远大于电阻，对电阻 / 死区误差不敏感），但所需电压 2πf·L·I 不超过注入电压上限的
- * 60%（L 取 R/L 粗测值，凸极 q 轴可能更大）；因电压降频时下限为感抗 3 倍电阻、且不低于 50 Hz（更低时 q 轴交变转矩使转子摆动），
- * 仍超压返回 0（该档及更高档不测）。第一档（0.5 倍额定）与 Ld 相同 */
-static float lsHz(float iA)
+/* Ld 与各档 Lq 共用一个注入频率：铁芯涡流使电感随频率升高而降低，饱和使电感随电流升高而降低，二者同时变化时无法分开。
+ * 取最高档电流在电压上限内可达的最高频率：(2πfL)^2 + R^2 = (Vmax/I)^2，L 取探测注入测得的 Lq（低电流，饱和只会使高档
+ * 所需电压更低），R 为该电流下的等效电阻。不高于 ldqHz()（感抗已远大于电阻），不低于感抗 3 倍电阻与 50 Hz（更低时
+ * q 轴交变转矩使转子摆动）；此时高档电流达不到目标，由注入自身的电压限幅处理（偏小但可用，或该档及更高档不测） */
+static float ldqCommonHz(float lq)
 {
-    float vmax = 0.6f * (float)INJ_VMAX_Q15 * (float)(UDC_MAX / 32768.0), l = gIdent.rlL;
-    float r = (gIdent.rsOhm > 0.0f) ? gIdent.rsOhm : gIdent.rlR, f = s_lsF0;
-    float fv = vmax / (2.0f * (float)MATH_PI * l * iA), flo = 3.0f * r / (2.0f * (float)MATH_PI * l);
+    int16_t q = (int16_t)(Ident_AlignTheta() + ANGLE_90_Q15);
+    float iTop = s_lsK[LS_N - 1] * (float)MOTOR_I_RATED_A, r, z, x2, f, fmax = ldqHz(), flo;
+    if (iTop > (float)IDENT_VEC_MAX_A) iTop = (float)IDENT_VEC_MAX_A;
+    r = rEq(q, iTop);
+    z = (float)injVmaxQ15() * (float)(UDC_MAX / 32768.0) / iTop;
+    x2 = z * z - r * r;
+    f = (x2 > 0.0f) ? sqrtf(x2) / (2.0f * (float)MATH_PI * lq) : 0.0f;
+    flo = 3.0f * r / (2.0f * (float)MATH_PI * lq);
     if (flo < 50.0f) flo = 50.0f;
-    if (iA > (float)IDENT_VEC_MAX_A) return 0.0f;
-    if (f <= fv) return f;                  /* 基准频率可用（与 Ld 同频） */
-    return (fv >= flo) ? fv : 0.0f;
+    if (f > fmax) f = fmax;
+    if (f < flo) f = flo;
+    return f;
 }
 
 static void lsFit(void)
@@ -414,32 +432,39 @@ void Ident_Slow(void)
         if (++t->cnt >= ZERO_WAIT_MS) {
             t->cnt = 0;
             t->idx = 0;
-            injStart(Ident_AlignTheta(), ldqHz(), (float)IDENT_I_INJ_A);   /* 先 d 轴 */
-            gIdent.injHz = s_injHz;
+            /* 探测：q 轴低电流档在 ldqHz() 下测一次 Lq，只用于确定共用频率 */
+            injStart((int16_t)(Ident_AlignTheta() + ANGLE_90_Q15), ldqHz(), (float)IDENT_I_INJ_A);
             t->phase = IDENT_PH_LDQ;
         }
         break;
     case IDENT_PH_LDQ: {
-        /* idx 0：d 轴；idx 1..LS_N：q 轴，电流幅值依次为 s_lsK[] 倍额定电流（不超过 IDENT_VEC_MAX_A），同一频率 */
+        /* idx 0：q 轴探测（定共用频率）；idx 1：d 轴；idx 2..LS_N+1：q 轴，电流幅值依次为 s_lsK[] 倍额定电流
+         * （不超过 IDENT_VEC_MAX_A），全部使用同一频率 s_ldqHz */
         float r = 0, l = 0, ia = 0;
         uint8_t s = injSlow(&r, &l, &ia);
         if (s == 2) {
-            if (t->idx <= 1) { staticAbort(IDENT_WARN_L_FAIL); break; }
+            if (t->idx <= 2) { staticAbort(IDENT_WARN_L_FAIL); break; }
             s = 3;                          /* 大电流档达不到：用已测的档位 */
         }
         if (s == 1) {
             if (t->idx == 0) {
+                s_ldqHz = ldqCommonHz(l);
+                injStart(Ident_AlignTheta(), s_ldqHz, (float)IDENT_I_INJ_A);
+                gIdent.injHz = s_injHz;
+                t->idx = 1;
+                break;
+            }
+            if (t->idx == 1) {
                 gIdent.ldH = l;
             } else {
-                gIdent.lqAtA[t->idx - 1] = ia;
-                gIdent.lqAtH[t->idx - 1] = l;
-                gIdent.lsN = (uint8_t)t->idx;
+                gIdent.lqAtA[t->idx - 2] = ia;
+                gIdent.lqAtH[t->idx - 2] = l;
+                gIdent.lsN = (uint8_t)(t->idx - 1);
             }
-            if (t->idx == 0) s_lsF0 = s_injHz;
-            if (++t->idx <= LS_N) {
-                float ia1 = s_lsK[t->idx - 1] * (float)MOTOR_I_RATED_A, f = lsHz(ia1);
-                if (f > 0.0f) {
-                    injStart((int16_t)(Ident_AlignTheta() + ANGLE_90_Q15), f, ia1);
+            if (++t->idx <= LS_N + 1) {
+                float ia1 = s_lsK[t->idx - 2] * (float)MOTOR_I_RATED_A;
+                if (ia1 <= (float)IDENT_VEC_MAX_A) {
+                    injStart((int16_t)(Ident_AlignTheta() + ANGLE_90_Q15), s_ldqHz, ia1);
                     break;
                 }
             }
