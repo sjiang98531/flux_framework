@@ -212,6 +212,7 @@
  *   KT  = INVERTER_DT_EFF_S * PWM_FREQ（Q15，母线的比例），K_I = 32768 / I0_Q15（Q8） */
 #define FLUX_DT_KT_Q15_OF(td)   (INVERTER_DT_COMP ? Q15((td) * PWM_FREQ) : 0)
 #define FLUX_DT_KI_Q8           ((int32_t)(INVERTER_DT_COMP ? 256.0 * I_MAX / INVERTER_DT_I0_A + 0.5 : 0))
+#define FLUX_DT_I0_Q15          ((int32_t)(INVERTER_DT_I0_A / I_MAX * 32768.0 + 0.5))    /* 过渡带宽度（Q15），dtPhase 先按它限幅 */
 /* 电感饱和（cfg_motor.h）：拐点（Q15 电流）、斜率（Q12，每 Q15 满量程电流）、下限（Q15） */
 #define FLUX_LS_KNEE_Q15_OF(k)  Q15((k) / I_MAX)
 #define FLUX_LS_SAT_K_Q12_OF(p) ((int32_t)((p) * I_MAX * 4096.0 + 0.5))
@@ -281,7 +282,7 @@
 #define OPENLOOP_LEAD_Q31    ((int32_t)(OPENLOOP_LEAD_RAD / (2.0 * MATH_PI) * 4294967296.0 + 0.5))
 /* 摆动中起动：扫掠角（Q15 角度，65536 = 一圈）及其与定位电流的比值（Q16：定位角 = (ALIGN_ID_Q15 - id) * 本值 >> 16） */
 #define ALIGN_SWING_SWEEP_Q15    ((int32_t)(ALIGN_SWING_SWEEP_DEG / 360.0 * 65536.0 + 0.5))
-#define ALIGN_SWING_SWEEP_K_Q16  ((int32_t)((double)ALIGN_SWING_SWEEP_Q15 / ALIGN_ID_Q15 * 65536.0 + 0.5))
+#define ALIGN_SWING_SWEEP_K_Q15  ((int32_t)((double)ALIGN_SWING_SWEEP_Q15 / ALIGN_ID_Q15 * 32768.0 + 0.5))   /* Q15：ALIGN_ID_Q15 * K <= 2^30，任意 I_MAX 下不溢出 */
 /* 摆动中起动：扫掠结束后反电势滤波的建立时间（慢环拍），之后开始检测 */
 #define ALIGN_SWING_SETTLE_TICKS ((uint16_t)(4.0 * ALIGN_EMF_FILT_TAU_S * SLOWLOOP_FREQ + 0.5))
 /* 摆动中起动：反电势测量的延迟 = 滤波时间常数 + 电流 PI 积分项跟随扰动的时间常数（L/R + 1/电流环带宽）；

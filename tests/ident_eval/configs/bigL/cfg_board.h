@@ -17,7 +17,7 @@
 #define PWM_FREQ                16000                      /* Hz，快环频率 = PWM 频率 */
 #define DEAD_TIME               (1200)                     /* ns（Hardware_config.h 据此计算死区寄存器） */
 /* 慢环频率（PendSV，快环每 PWM_FREQ/SLOWLOOP_FREQ 拍挂起一次）。必须整除 PWM_FREQ；
- * 下限由配置检查 SLOW_RATE_FITS、BUS_VDC_ABOVE_GRID 确定（本电机约 500 Hz）。 */
+ * 下限：慢环越慢，回馈压升的检测延迟（BUS_DELAY_S）越长，母线门限间距越大，须保证调节点仍高于空载母线（人工保证，本电机约 500 Hz）。 */
 #define SLOWLOOP_FREQ           1000                       /* Hz */
 #define MAX_DUTY                (0.84)                     /* 电流环电压限幅 = MAX_DUTY * Vbus * 2/3 */
 
@@ -56,7 +56,7 @@
 #define BOARD_DCBUS_OVP_V       (424.0)                    /* V */
 /* 输入电压上限（产品规格）：空载母线最高电压 = BOARD_VBUS_IN_MAX_V。
  * 回馈减速的母线调节点必须高于该值：母线由电网经整流桥供电时不会低于电网峰值，调节点若在其下方，
- * 控制器会把"电网把母线抬高"当成"回馈把母线抬高"，减速 / 换向指令不被执行。配置检查 BUS_VDC_ABOVE_GRID 校验。
+ * 控制器会把"电网把母线抬高"当成"回馈把母线抬高"，减速 / 换向指令不被执行（由人工保证）。
  * 交流输入（板上整流）填 sqrt(2) * 输入电压上限有效值；直流输入填直流上限。
  * 本产品输入 176 ~ 264 Vac：264 * sqrt(2) = 373 V（台架 264 Vac 空载实测 372 V）。 */
 #define BOARD_VAC_IN_MAX_V      (264.0)                    /* V rms，交流输入上限 */

@@ -65,7 +65,10 @@ FORCE_INLINE int16_t lsEff(int16_t ia, int16_t ib)
 static volatile int16_t s_vdt;
 FORCE_INLINE int32_t dtPhase(int32_t i)
 {
-    return QMath_Clamp((i * FLUX_DT_KI_Q8) >> 8, 32767);
+    /* 先按过渡带宽度 I0 限幅再乘：|i| < I0 时 |i * KI| < 2^23，任意 I_MAX / I0 下不溢出 */
+    if (i >= FLUX_DT_I0_Q15) return 32767;
+    if (i <= -FLUX_DT_I0_Q15) return -32767;
+    return (i * FLUX_DT_KI_Q8) >> 8;
 }
 FORCE_INLINE void dtComp(int16_t ia, int16_t ib, int16_t *va, int16_t *vb)
 {

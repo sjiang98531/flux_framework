@@ -235,7 +235,7 @@ static void alignSwingSlow(void)
     if (id > ALIGN_ID_Q15) id = ALIGN_ID_Q15;
     FocCore_SetIdqRef((int16_t)id, 0);
     if (s_swingTry == 0u)
-        s_alignTheta = (int16_t)(-s_swingDir * (((ALIGN_ID_Q15 - id) * ALIGN_SWING_SWEEP_K_Q16) >> 16));
+        s_alignTheta = (int16_t)(-s_swingDir * (((ALIGN_ID_Q15 - id) * ALIGN_SWING_SWEEP_K_Q15) >> 15));
     if (id < ALIGN_ID_Q15) return;
     s_emfFilt += (gFoc.piQ.qdSum >> 15) - QMath_MulQ15(gGain.focKrsQ15, gFoc.idq.s16Q) - (s_emfFilt >> ALIGN_EMF_FILT_SH);
     s_dtFilt += (gFoc.piD.qdSum >> 15) - (s_dtFilt >> ALIGN_EMF_FILT_SH);
@@ -254,7 +254,7 @@ static void alignSwingSlow(void)
         /* 换轴：定位轴按首轮扫掠的角速度转到新轴（满电流下突跳会使转子冲过并被齿槽 / 摩擦卡在半途），
          * 到达后再等 s_swingQuietTicks，按新轴接入，不再按峰值接入 */
         int32_t d = (int32_t)(int16_t)(s_swingAxis - s_alignTheta);
-        int32_t st = ((int32_t)ALIGN_STEP_Q15 * ALIGN_SWING_SWEEP_K_Q16) >> 16;
+        int32_t st = ((int32_t)ALIGN_STEP_Q15 * ALIGN_SWING_SWEEP_K_Q15) >> 15;
         if (st < 1) st = 1;
         if (d > st) d = st;
         if (d < -st) d = -st;
@@ -433,7 +433,7 @@ void Startup_AlignSlow(void)
         }
         if (s_identStage == 1u) {
             int32_t d = (int32_t)(int16_t)(Ident_AlignTheta() - s_alignTheta);
-            int32_t st = ((int32_t)ALIGN_STEP_Q15 * ALIGN_SWING_SWEEP_K_Q16) >> 16;
+            int32_t st = ((int32_t)ALIGN_STEP_Q15 * ALIGN_SWING_SWEEP_K_Q15) >> 15;
             if (st < 1) st = 1;
             if (d > st) d = st;
             if (d < -st) d = -st;

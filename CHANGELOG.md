@@ -2,6 +2,21 @@
 
 ## [Unreleased] - 2026-11-23
 
+### 配置检查只保留定点 / 算术硬条件
+- cfg_check_list.h 重写：只检查违反后必然出现确定性算术错误的条件（定点溢出、截断为 0、除零、符号翻转、函数定义域），
+  以及 Q15 饱和使保护永远不动作 / 无法用指令停机的项。门限大小顺序、取值合理性、物理可实现性交给人工。
+  删除：IDENT_CURRENT_FITS、MOTOR_RATING_SANE（额定电流 > 0 并入 MOTOR_PARAMS_POSITIVE）、SPD_LIMIT_FITS、
+  FLUX_BUS_MIN_BELOW_RATED、OPENLOOP_ACC_FEASIBLE、SPEED_OC_FITS、BUS_VDC_ABOVE_GRID、IBUS_LIMIT_FITS、
+  OPENLOOP_CURRENTS_FIT（改为 Q15 >= 1 的 OPENLOOP_CURRENTS_NONZERO）；其余各项去掉顺序 / 范围子条件
+  （起停回差、定位 / 拖动电流顺序、回退电流顺序、飞车分档顺序、过压门限 > 额定母线、各电流 < I_MAX 等）。
+  斜坡位宽改为直接按三种斜率的最大值检查（原为"升降速 <= 反转"间接保证）。
+- 两处定点写法去掉对 I_MAX 的依赖：摆动扫掠系数 Q16 -> Q15（乘积 <= 2^30）；死区电压误差先按过渡带 I0 限幅再乘斜率
+  （原要求 256*I_MAX/I0 < 60000）。
+- 仿真（风机，R_SHUNT 0.4 / 0.2 / 0.1 / 0.05 / 0.025 ohm，即 I_MAX 2～32 A）：原来 0.2 / 0.4（SPD_PI_LIMIT >= I_MAX）
+  与 0.025（扫掠系数溢出）报 MC_FAULT_CFG，现全部完成辨识（Rs / L / psi / 惯量正常）。64 A 时电流分辨率不足（额定 0.75 A
+  约 24 个 ADC 码）运行辨识失败；128 A 时 Rs*I_MAX 超出观测器电压 Q15 量程（FLUX_KRS_FITS）。
+- 回归：初始角 358/360、端到端 108/120，与修改前逐项相同。
+
 ### 删除两项门限顺序检查（OPENLOOP_SPEED_ORDER、TRACK_END_RANGE）
 - 二者只约束配置门限之间的大小顺序，不涉及定点 / 除零：运行时各门限在 param.c 中按 0.9*SPEED_MAX 封顶后换算，
   cfg_derived.h 中对应的编译期 Q15 / Q31 宏无引用。调试"一直开环拖"需要 OPENLOOP_HANDOVER_RPM 高于
