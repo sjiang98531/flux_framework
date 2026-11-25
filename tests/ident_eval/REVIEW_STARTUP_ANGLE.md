@@ -1,5 +1,7 @@
 # 起动按初始角失败：根因与修复（2026-11-20）
 
+> **历史记录（2026-11-25 注）**：本文记录的是 `05337d7` 辨识简化之前的仿真结果；复现命令仍可运行，当前结果见仓库根目录 `REVIEW_STATUS.md`。
+
 > 仿真结论（`tests/ident_eval` 仿真对象）。复现：`python3 run_startup.py angles` / `python3 run_startup.py e2e --seed 964093388`。
 
 ## 1. 现象

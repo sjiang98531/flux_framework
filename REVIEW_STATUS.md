@@ -1,49 +1,72 @@
-# 参数辨识当前状态与验收归档（2026-11-19）
+# 参数辨识当前状态（2026-11-25）
 
-## 仓库与冻结基线
+> 本文描述 `master` 当前的辨识实现与验证方式。2026-11-20 之前的 2-DOF 交流注入 / `acFit` 饱和拟合 / 门控阻断方案已在
+> `05337d7` 删除（1831 -> 508 行），相关审核、盲测、诊断文档只作历史记录保留（见文末"历史文档"）。
 
-`https://github.com/sjiang98531/flux_framework.git`
-功能代码冻结于 commit `eddf075`（`FW/Src/identify.c` 无功能改动）。
+## 目标与原则
 
-raw URL：
-- `https://raw.githubusercontent.com/sjiang98531/flux_framework/eddf075/FW/Src/identify.c`
-- `https://raw.githubusercontent.com/sjiang98531/flux_framework/eddf075/FW/Inc/identify.h`
-- `https://raw.githubusercontent.com/sjiang98531/flux_framework/eddf075/tests/ident_eval/PROTOCOL_V2.md`
-- 最终盲测报告：`tests/ident_eval/BLIND_REPORT_547376626.md`
+辨识出的参数能让电机可靠进入 I/F 和闭环，再逐步提高精度。
 
-## 已完成的关键改进（`b4caac6` → `eddf075`）
+- **拖动本身就是检验**：I/F 中观测器与开环转速一致才切闭环；拖不动超时报堵转，过流有保护。不用经验门限预判参数能否使用。
+- **只有保护性条件阻止提交与自动重起动**（`IDENT_WARN_AUTO_BLOCKED`）：测不出正的 R / L、`param.c` 判定参数物理上不合理。
+- **测试电流造成的转子运动从测量流程上消除**（定位后再测、收尾定位等停稳），外部原因（风扰、上次未停稳）由操作者排除。
+- 凸极是测量结果，不是配置：观测器、NLFO 目标、MTPA 全部由辨识出的 Ld / Lq 决定（`MOTOR_IPM` 已删除）。
 
-1. **R1–R4：饱和拟合与阻断门控闭环**：
-   - `acFit()` 3 次谐波描述函数修正统一采用实测谐波比并限幅，消除低 PWM 频段深饱和系统性高估；
-   - `acCalDelay()` 非整数拍延迟失准拦截（`IDENT_WARN_AC_DRIFT`）；
-   - `acFit()` 扫幅不足 × 深饱和降级为仅 L0（`lRatio < 0.70 && iTop < 0.85*iSwpMax`）。
-2. **R5：小电感强饱和 `vac` 专项校准**：
-   - 交叉饱和偏置外推限幅（最多 20% 修正，防止噪声放大）；
-   - `acCheckAndUpdateFF()` 重测容差收紧至 15%，消除 2-DOF 欠驱动幅度偏低。
-3. **R6：电感反增物理护栏**：
-   - `acFit()` 中 `lTop > 1.10f * gIdent.lqAtH[0]` 置 `IDENT_WARN_AC_DRIFT` 阻断。
-4. **R7：同频往复摆动（$2 f_0$ 正交电压解调）监测**：
-   - `acFast()` / `acSegFinish()` 在 `AC_S_Q10 .. AC_S_Q10+3` 段解调 $2 f_0$ 正交电压 `vqAc2`，当 `vqAc2 > 0.033f * vAmp` 时置 `s_acMotion = 1u` 阻断，捕捉整周期平均 `vqPP` 抵消的大幅往复摆动。
+## 流程（`FW/Src/identify.c`，`IDENT_TEST = 1`）
 
-## 最终全新随机种子盲测验收（`eddf075`, `seed=547376626`）
+静止测量（电机不转，约 15 s）：
 
-| 验收项 | 实测结果 | 验收线 | 判定 |
-|---|---|---|---|
-| 健康误拦 FP | 3/300 (1.00%) | ≤ 3% | ✅ PASS |
-| 压力子集（±2%FS, `seed=547376627`, N=30）静默失败 | 0 (`safe_abort=10, blk=9`) | == 0 | ✅ PASS |
-| 独立坏电机集（`seed=704910903`）召回 | 26/26 (100.0%) | ≥ 90% | ✅ PASS |
-| 冻结坏电机集（`seed=20261188`）召回 | 25/25 (100.0%) | ≥ 90% | ✅ PASS |
-| 高危静默失败（`SwpL > 25%` 且未阻断） | **0** | == 0 | ✅ PASS |
-| `SwpL` 扣除 V/I 增益后纯算法残差 (p50/p95/max) | 1.52% / **7.16%** / 14.25% | p95 ≤ 8% | ✅ PASS |
-| `SwpL` 绝对值（未扣增益, p50/p95/max） | 4.15% / 10.05% / 20.46% | 参考 | - |
-| `RunL` 运行期外推指标（单列, p50/p95/max） | 4.33% / 13.27% / 37.03% | 单列报告 | - |
+| 阶段 | 内容 |
+|---|---|
+| `IDENT_PH_RL` | 定位前正弦注入粗测 R / L（R 含死区等效电阻），只用于整定电流环 |
+| 定位 | `startup.c` 辨识定位（两步定位 + 无源阻尼），等转子停稳 |
+| `IDENT_PH_DT_STEP` / `DT_ZERO` | d 轴电流阶梯，`dtFit()` 线性拟合得 Rs（斜率）与死区电压（截距）；只用走出过渡带的档 |
+| `IDENT_PH_LDQ` | 1) q 轴低电流探测一次 Lq，按 `(2πfL)² + R² = (Vmax/I)²` 取最高档电流在电压上限（`MAX_DUTY·vbus·2/3`）内可达的最高频率；2) Ld 与 4 档 Lq（0.5 / 1 / 1.5 / 2 倍额定电流，不超过 `IDENT_VEC_MAX_A`）全部用这一个频率测；3) `lsFit()` 对 (I, L1) 直线拟合，按描述函数系数 8/(3π) 换算成割线模型 `L(i) = L0·(1 − per·|i|)`，有效上限为最大实测幅值的 1.5 倍 |
+| `IDENT_PH_HOLD` | 收尾定位等转子停稳，AUTO 模式下自动重起动 |
 
-## 编译状态
+运行测量（自动重起动后）：
 
-- Keil 双配置 0 Error（`IDENT_TEST=0` Code=32600；`IDENT_TEST=1` Code=55616）
-- `IDENT_TEST=0` SHA256 = `53453137678B75D54C9303AECD32137E74E46D275C2895517367499A17A6721E`（全程不变）
-- GCC `-Wall -Wextra` 0 Warning，`FW/` 纯 CRLF
+1. **I/F 粗测磁链**：恒速段在拖动坐标中算反电势，先 8 ms 低通再取模平均（与负载角摆幅无关），凸极时由反电势方向迭代转子角。
+2. **闭环细测磁链**（`psiClSlow`）：闭环稳速后在转子坐标中重算；电流超过额定时不采用（`IDENT_WARN_PSI_LOAD`，饱和使磁链偏小），保留 I/F 值。
+3. **加速度系数**：稳速 / 加速 / 减速段的平均电流拟合负载转矩（b0 + b1·ω + b2·ω²）与加速项。
 
-## 下一步：实机台架验证
+结果在 `gIdent`，本次上电期间生效；回填 `cfg_motor.h` 后量产固件设 `IDENT_TEST = 0`。
 
-- 限流电源 + `IDENT_I_SCALE ≈ 0.3` + 已知风机 + LCR/毫欧表对照，首轮先用 `IDENT_MODE_STATIC` 实测板级延迟 `acDlyTicks` 并固化。
+## 板级与配置现状
+
+- 电流采样运放增益 `CURRENT_OPA_GAIN = 4.533`（台架示波器与固件电流指令一致）：`I_MAX = 5.515 A`，HOCP 约 4.03 A；
+  速度环电流上限 `SPD_PI_LIMIT = 4 × MOTOR_I_RATED_A = 3.0 A`。
+- `cfg_motor.h` 为增益更正后的台架辨识值（三次平均）：Rs 9.13 Ω，Ld 36.3 mH，Lq 54.8 mH，饱和 0.074 /A，ψ 0.1418 Wb，
+  加速度系数 770 rpm/s/A。
+- `cfg_check_list.h` 只做算术检查（溢出、截断、除零、符号、定义域、Q15 饱和使保护失效）；其余配置合理性交给使用者。
+
+## 验证（`tests/ident_eval`，仿真）
+
+| 命令 | 内容 | 当前结果 |
+|---|---|---|
+| `python3 run_startup.py angles` | 10 类电机 × 36 个初始角，已知参数起动 | 358/360 |
+| `python3 run_startup.py e2e --seed 7` | 盲测分布 120 台 × 随机初始角，AUTO 辨识 + 起动 | 109/120 |
+| `python3 run_startup.py identalign` | 辨识定位的初始角扫描 | |
+| `python3 run_psi.py <work>` | 磁链 ×{0.5, 0.7, 1.4, 2.0} 扰动起动（先 `run_eval.build_suite` 构建） | |
+| `python3 run_blind.py --seed <新种子>` | Protocol v2.1 盲测（L(i) 精度 SwpL、门控召回） | 仍可运行；其中门控召回与"静默失败"验收线针对已删除的阻断门控，现只把 SwpL 作精度参考 |
+
+全部仿真配置与 `IDENT_TEST = 0 / 1` 在 GCC `-Wall -Wextra` 下 0 警告。
+
+## 实验分支
+
+`exp/direct-cl-start`（保持基于 `master`）：预定位 / 摆动捕获后不经 I/F 直接切闭环（交接时 id 置 0、只混合 iq0），
+观测器去直流截止频率随转速 `FLUX_HPF_RATIO·|ω_e|`。去直流改动只在该分支：对小磁链电机在 `master` 上变差（e2e 108→102、110→99）。
+
+## 未决
+
+- 由辨识结果给出 I/F 参数（切换转速、拖动电流）建议：已讨论，未实施；拖动电流须由使用者配置。
+
+## 历史文档
+
+以下文档描述的是当时的代码与定标，结论不适用于当前实现，保留作记录：
+
+- `REVIEW_HANDOFF.md`：2-DOF 注入方案审核交接（`be7f1e4`）。
+- `tests/ident_eval/PROTOCOL.md`、`PROTOCOL_V2.md`、`BLIND_REPORT_*.md`、`REVIEW_DIAG*.md`、`REVIEW_R*_RESULT.md`：
+  `acFit` 方案的评估协议、盲测与诊断。
+- `交接_飞车检测延迟_0xF20E0069*.md`、`台架记录_堵风口_0xF20E0069.md`：起动延迟与堵风口台架记录，电流按旧增益 3.139
+  （`I_MAX = 7.964 A`）换算；硬件未变，按正确增益换算须乘 5.515 / 7.964 ≈ 0.692。

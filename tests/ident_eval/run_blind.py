@@ -16,6 +16,12 @@ Acceptance lines (unchanged from v2.1, written before running):
 - Bad-motor recall >= 90% on both the frozen (20261188) and independent (704910903) sets,
   ambiguous wind < 0.13 Nm excluded.
 
+The one-shot runners run_blind_661924030.py / run_blind_670303305.py (seeds burned) were removed after
+commit e1b2be0 and remain in git history.
+
+Since 05337d7 the identification has no blocking gates any more: the gate-recall and silent-failure lines
+below refer to the removed implementation; SwpL is kept as an L(i) accuracy reference.
+
 Metric corrections vs run_blind_670303305.py (v2.1 definitions, implementation only):
 1. A run that ends with a supervisor fault before identification completes (state != DONE, phase == 0,
    nothing committed) is a SAFE ABORT, counted with blocks - as run_blind_661924030.py already did.

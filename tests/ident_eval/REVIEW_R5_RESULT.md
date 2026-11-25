@@ -1,5 +1,7 @@
 # Round 5 修复与全 4 数据集回归报告
 
+> **历史记录（2026-11-25 注）**：本文针对 `05337d7` 之前的辨识实现（2-DOF 交流注入、`acFit` 饱和拟合、阻断门控），这些代码已删除，文中函数、行号与验收结论不适用于当前代码。当前实现与验证方式见仓库根目录 `REVIEW_STATUS.md`。
+
 ## 1. 修复内容摘要
 
 1. **Bug 1（`!pending || rejectMask & 39u` 阻断）**：`offerStill(trustedPre)` 后无论 `IDENT_MODE_STATIC` 还是 `IDENT_MODE_AUTO`，只要 `!trustedPre || (gParamStat.rejectMask & 39u) || !gParamStat.pending` 均置位 `IDENT_WARN_AUTO_BLOCKED`。

@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased] - 2026-11-25
+
+### 文档更新到当前实现
+- REVIEW_STATUS.md 重写为当前辨识流程（共用频率 L(i)、闭环细测磁链、凸极由实测决定）、板级定标（增益 4.533）、
+  仿真验证命令与结果、实验分支说明。
+- 历史文档加注：REVIEW_HANDOFF.md 与 tests/ident_eval 下的协议 / 盲测 / 诊断报告针对已删除的 2-DOF / acFit 方案；
+  三份 0xF20E0069 台架与交接记录的电流按旧增益 3.139 换算，以 A 表示的值须乘 0.692。
+- 删除已用过种子的一次性盲测脚本 run_blind_661924030.py / run_blind_670303305.py（run_blind.py --seed 取代，
+  原文件在 git 历史中）；run_blind.py 注明门控召回与静默失败验收线已不适用。
+
+### 13 个只在本文件内调用的函数改为 static
+- Ctrl_ResetRunVariables、FluxObs_BeginOpenLoop / Run / SeedCatch、FluxPLL_PhaseError / Run / StepQ15、
+  FocCore_ResetDecouple、Svpwm_Init / Calc、Ident_RunActive、OpenLoop_WarmCurrent、Param_Defaults：去掉头文件声明。
+  行为不变（初始角 358/360、端到端 109/120 与修改前相同）。
+
 ## [Unreleased] - 2026-11-23
 
 ### 删除无用代码；README 更正

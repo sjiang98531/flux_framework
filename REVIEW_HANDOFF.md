@@ -1,5 +1,7 @@
 # 参数辨识审核交接文档
 
+> **历史记录（2026-11-25 注）**：本文是 `be7f1e4` 时 2-DOF 交流注入方案的审核交接；该方案已在 `05337d7` 删除，文中行号、函数（`acSegStart` / `acFast` / `dfStep` 等）、IPD 后置与盲测结论均不适用于当前代码。当前状态见 `REVIEW_STATUS.md`。
+
 ## 仓库
 
 `https://github.com/sjiang98531/flux_framework.git`

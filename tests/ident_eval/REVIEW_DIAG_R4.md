@@ -1,5 +1,7 @@
 # Round 4 离线验证与 `b198` 正偏定位（基于 `fe8d163`）
 
+> **历史记录（2026-11-25 注）**：本文针对 `05337d7` 之前的辨识实现（2-DOF 交流注入、`acFit` 饱和拟合、阻断门控），这些代码已删除，文中函数、行号与验收结论不适用于当前代码。当前实现与验证方式见仓库根目录 `REVIEW_STATUS.md`。
+
 ## 1. Bug 1（`!pending || rejectMask & 39` 阻断）与 Bug 2（`n=0` `h3Mag[0]>0.20` 过滤）消融
 
 | 方案 | 数据集 | unblk | blk | FP (FP%) | high_risk (>25%) | raw SwpL p95 | 纯算法 SwpL p95 | high_risk 明细 |

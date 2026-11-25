@@ -1,5 +1,7 @@
 # 开发集诊断明细表（基于 `b4caac6`）
 
+> **历史记录（2026-11-25 注）**：本文针对 `05337d7` 之前的辨识实现（2-DOF 交流注入、`acFit` 饱和拟合、阻断门控），这些代码已删除，文中函数、行号与验收结论不适用于当前代码。当前实现与验证方式见仓库根目录 `REVIEW_STATUS.md`。
+
 > 注：`FW/Inc/identify.h` 中 `0x2 = IDENT_WARN_SWING_CLAMP`，`0x4 = IDENT_WARN_DLY_MISMATCH`。
 > 此前 `REVIEW_STATUS.md` 中将 `warn=0x2` 误写为 `DLY_MISMATCH`，实际置位的是 `SWING_CLAMP`（见下表 `warn_bits` 列）。
 
