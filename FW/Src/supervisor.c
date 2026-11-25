@@ -505,17 +505,18 @@ void Sup_SwitchSwingOpenLoop(int16_t theta, int16_t speedQ15)
  * 速度环积分器从 0 开始，定位电流作为融合分量在 OPENLOOP_BLEND_S 内淡出（同 I/F 切闭环），斜坡从此刻转速开始。 */
 void Sup_SwitchSwingSpin(int16_t theta, int16_t speedQ15, int16_t alignTheta)
 {
-    int16_t i = gFoc.idqRef.s16D, id0, iq0;
+    int16_t i = gFoc.idqRef.s16D, iq0;
     SinCos_TypeDef a;
     IRQ_LOCK();
-    Est_OnCatch(theta, speedQ15);                       /* PLL 角 / 转速、观测器磁链 |psi_f|∠theta、gFoc.theta = PLL 角 */
+    Est_OnCatch(theta, speedQ15);                       /* PLL 角 / 转速、观测器磁链、gFoc.theta = PLL 角 */
     a = FocMath_SinCos((int16_t)(alignTheta - gFoc.theta));
-    id0 = QMath_MulQ15(i, a.s16Cos);
+    /* 定位电流在转子坐标中的 q 分量是此刻作用在转子上的转矩，保持连续并淡出；d 分量不产生转矩，直接置 0：
+     * 闭环从 id = 0 开始，正是闭环细测磁链的工况，模型在此最准（+d 增磁会使 d 轴饱和、有效磁链偏离 psi_f） */
     iq0 = QMath_MulQ15(i, a.s16Sin);
-    FocCore_SetIdqRef(id0, iq0);
+    FocCore_SetIdqRef(0, iq0);
     FocCore_RotatePI(a);
-    SpeedCtrl_OnEnterSpin(id0, 0);
-    SpeedCtrl_BlendStart(id0, iq0, (int32_t)speedQ15 << 16, 4096, 0);
+    SpeedCtrl_OnEnterSpin(0, 0);
+    SpeedCtrl_BlendStart(0, iq0, (int32_t)speedQ15 << 16, 4096, 0);
     Spin_OnEnterDirect();
     gSup.runState = RunState_Spin;
     FocCore_SetDecouple(1);
