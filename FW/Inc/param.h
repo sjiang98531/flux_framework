@@ -77,7 +77,7 @@ typedef struct {
     int32_t alignStillEmfQ15;   /* 定位：转速 ALIGN_STILL_RPM 对应的反电势（Q15），低于该值判为静止 */
     int32_t swingLagAngQ12;     /* 摆动起动反电势测量延迟角度系数（Q12） */
     int32_t openLoopAccStepQ31; /* I/F 开环每快环拍转速步长（Q31） */
-    int16_t openLoopAccFfIq;    /* I/F 开环：按 OPENLOOP_ACC_RPM_S 加速需要的 iq（Q15），切换前馈 */
+    int16_t openLoopAccFfIq;    /* I/F 开环：按 OPENLOOP_ACC_RPM_S_OF 加速需要的 iq（Q15），切换前馈 */
     int32_t currentSlewStepQ15; /* 软停机 / 电流过渡每慢环拍步长（Q15） */
     /* ---- 飞车检测（flystart.c） */
     int32_t flyWlrQ12;          /* 满量程转速下 w*Lq/Rs（Q12），算短路电流阻抗角 atan(w*L/R) */

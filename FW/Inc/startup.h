@@ -10,12 +10,12 @@
  *   I/F（开环拖动）：
  *     Align 子状态按起动方式 gStartup.mode（上电默认 STARTUP_MODE，cfg_app.h）二选一：
  *     IPD（STARTUP_MODE_IPD，ipd.h）：高频注入测凸极轴向、直流偏置判极性，确定 N 极角后直接从该角进入 OpenLoop，
- *       电流从 1/4 起按 CURRENT_SLEW_A_S 升至 OPENLOOP_CURRENT_A（加速度同比例）；对比度不足时本次自动退回摆动中起动（SWING）。
+ *       电流从 1/4 起按 CURRENT_SLEW_STEP_Q15_OF 升至 OPENLOOP_CURRENT_A（加速度同比例）；对比度不足时本次自动退回摆动中起动（SWING）。
  *     摆动中起动（STARTUP_MODE_SWING，静音起动）：d 轴电流斜坡升至 ALIGN_A（同时电流矢量扫到定位轴），不加阻尼、不等停稳；
  *       转子顺转向摆过定位轴（q 轴反电势达到顺向峰值）的瞬间，开环角与开环转速接到转子上，负载角平滑建立后连续加速。
  *       （参数辨识 IDENT_TEST = 1 静止测量时仍先阻尼定位并等待停稳）
  *     OpenLoop：电流 OPENLOOP_CURRENT_A 沿开环角方向，开环角按
- *       OPENLOOP_ACC_RPM_S 加速到 OPENLOOP_HANDOVER_RPM 并保持；观测器 + PLL 同步跟踪（不参与控制）。
+ *       OPENLOOP_ACC_RPM_S_OF 加速到 OPENLOOP_HANDOVER_RPM 并保持；观测器 + PLL 同步跟踪（不参与控制）。
  *       PLL 转速（滤波）与开环转速相差 < OPENLOOP_AGREE_RATIO 并持续 OPENLOOP_AGREE_S
  *       -> 转矩不变切换：iq_new = I * sin(theta_ol - theta_est)，id = 0 -> Spin
  *       OPENLOOP_TIMEOUT_S 内仍不一致 -> 堵转故障

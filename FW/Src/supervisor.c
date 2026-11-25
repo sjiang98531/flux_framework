@@ -498,7 +498,7 @@ void Sup_SwitchSwingOpenLoop(int16_t theta, int16_t speedQ15)
 void Sup_SwitchIpdOpenLoop(int16_t theta)
 {
     OpenLoopEntry_TypeDef e;
-    OpenLoop_PrepareCold(&e);           /* 开环电流从 1/4 起按 CURRENT_SLEW_A_S 上升，加速度同比例 */
+    OpenLoop_PrepareCold(&e);           /* 开环电流从 1/4 起按 CURRENT_SLEW_STEP_Q15_OF 上升，加速度同比例 */
     {
         IRQ_LOCK();
         gFoc.theta = theta;

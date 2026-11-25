@@ -177,7 +177,7 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->currentSlewStepQ15 = CURRENT_SLEW_STEP_Q15_OF(p->accRpmSPerA);
     g->rampOpenLoopQ31 = Q31(OPENLOOP_ACC_RPM_S_OF(p->accRpmSPerA) / SPEED_MAX / SLOWLOOP_FREQ);
     g->rampOpenLoopRevQ31 = Q31(OPENLOOP_REV_ACC_RPM_S_OF(p->accRpmSPerA) / SPEED_MAX / SLOWLOOP_FREQ);
-    /* I/F 开环：按设计加速度 OPENLOOP_ACC_RPM_S 拖动所需的 iq（加速度 / 加速度系数），切闭环时作为前馈（openloop.c） */
+    /* I/F 开环：按设计加速度 OPENLOOP_ACC_RPM_S_OF 拖动所需的 iq（加速度 / 加速度系数），切闭环时作为前馈（openloop.c） */
     g->openLoopAccFfIq = OPENLOOP_ACC_FF_IQ_OF(p->accRpmSPerA);
     /* 定位判静止：ALIGN_STILL_RPM 对应的反电势 */
     g->alignStillEmfQ15 = ALIGN_STILL_EMF_Q15_OF(p->psiWb);

@@ -204,11 +204,11 @@ static void spinLostLockStop(void)
 
 /* 回退融合：Spin -> I/F 时 I/F 电流沿开环 d 轴、幅值为 I，而此时闭环 id 常为回馈制动的负 id，
  * 直接切换会使 d 轴电流阶跃。分两段消除阶跃：
- *  1. 判定需回退后先留在 Spin，将 |id| 上限按电流变化率 CURRENT_SLEW_A_S 降到 0（撤除回馈制动 id，电流只减不增，
+ *  1. 判定需回退后先留在 Spin，将 |id| 上限按电流变化率 CURRENT_SLEW_STEP_Q15_OF 降到 0（撤除回馈制动 id，电流只减不增，
  *     观测器不受影响；若在闭环中直接渐变到 I/F 的 d 分量，低速大 id 下电阻误差可能导致观测器失锁）；
  *  2. 进入 I/F 时开环电流从 |iq| / sin(OPENLOOP_WARM_DELTA_DEG) 起、按同一变化率升到目标（OpenLoop_Prepare），
  *     切换时刻 d 轴仅增加 |iq|。
- * 两段均使用 CURRENT_SLEW_A_S（= 软停机 = S 形斜坡的最大转矩变化率）。
+ * 两段均使用 CURRENT_SLEW_STEP_Q15_OF（= 软停机 = S 形斜坡的最大转矩变化率）。
  * 条件中途不再成立（指令改回）时停止。 */
 
 static uint8_t fallbackBlend(void)

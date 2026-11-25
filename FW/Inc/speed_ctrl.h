@@ -29,7 +29,7 @@ typedef struct {
      * blendW = 32767 表示不融合（正常 Spin） */
     int16_t  blendW;
     int16_t  blendId0, blendIq0;    /* 切换时刻需淡出的 d / q 电流分量（Q15） */
-    int16_t  blendAccQ12;       /* 切换时开环加速度 / OPENLOOP_ACC_RPM_S（Q12），斜坡斜率与加速前馈由此开始过渡 */
+    int16_t  blendAccQ12;       /* 切换时开环加速度 / OPENLOOP_ACC_RPM_S_OF（Q12），斜坡斜率与加速前馈由此开始过渡 */
     Dq_TypeDef idqCmd;   /* Spin 慢环计算的电流指令（依次经速度环 -> MTPA/弱磁 -> 融合修改），
                                  * 每拍最后通过 FocCore_SetIdqRef 一次性发布到 gFoc.idqRef */
     Ramp_TypeDef speedRampSt;   /* 速度斜坡的步长与状态 */
@@ -51,7 +51,7 @@ void SpeedCtrl_FollowSpeed(void);
 /* 进入 OpenLoop：速度斜坡改用 STARTUP_SPEED_RAMP */
 void SpeedCtrl_UseOpenLoopRamp(void);
 /* I/F 切换时刻调用：开始融合。(id0, iq0) 为需淡出的分量（叠加在控制器输出上）；
- * 斜坡从 rampStartQ31（开环转速）以 I/F 加速度继续；accScaleQ12 = 开环加速度 / OPENLOOP_ACC_RPM_S */
+ * 斜坡从 rampStartQ31（开环转速）以 I/F 加速度继续；accScaleQ12 = 开环加速度 / OPENLOOP_ACC_RPM_S_OF */
 void SpeedCtrl_BlendStart(int16_t id0, int16_t iq0, int32_t rampStartQ31, int16_t accScaleQ12, int16_t ff0);
 /* 停止融合（离开 Spin / 停机 / 飞车直接进 Spin） */
 void SpeedCtrl_BlendStop(void);

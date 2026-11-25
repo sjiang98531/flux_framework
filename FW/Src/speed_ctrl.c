@@ -170,7 +170,7 @@ static int32_t rampSCurve(int32_t tgt)
 }
 
 /* 回退前的轨迹衔接：需交给 I/F 时（指令反向或低于闭环最低转速），回退时刻斜坡的减速度应等于 I/F 开环
- * 过零的减速度（OPENLOOP_REV_ACC_RPM_S），以保证转矩连续。按 jerk 收回加速度需要 (a^2 - a_if^2) / (2j) 的转速，
+ * 过零的减速度（OPENLOOP_REV_ACC_RPM_S_OF），以保证转矩连续。按 jerk 收回加速度需要 (a^2 - a_if^2) / (2j) 的转速，
  * 距回退点剩余该转速时，减速侧上限按 jerk 每拍减小，到达回退点时恰好为 a_if。 */
 static void approachFallback(void)
 {
@@ -192,7 +192,7 @@ static void approachFallback(void)
 /* 速度环一拍（Spin 慢环）：
  *   1. 非融合期：按方向选择斜坡速率（反转用 SPEED_RAMP_REV）、回退前衔接、母线电压限制减速；
  *   2. S 形斜坡运行一步，得到给定 ramp；斜坡本拍变化量 * 前馈系数 = 加速前馈 iq；
- *   3. 回馈兜底：母线超过 BUS_REGEN_START_V 时限制"阻碍转动方向"的 iq；
+ *   3. 回馈兜底：母线超过 BUS_REGEN_START_V_OF 时限制"阻碍转动方向"的 iq；
  *   4. 速度 PI（给定 - 实测）+ 母线电流限 PI + 前馈 = iq 指令，限幅；id 指令 = 损耗制动 id（MTPA 关闭时）。
  * 结果写入 gSpd.idqCmd，由 spin.c 发布给电流环 */
 void SpeedCtrl_SpinSlow(void)

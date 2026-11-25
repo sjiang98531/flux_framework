@@ -60,9 +60,7 @@
 #define SPEED_RAMP_ROUND_S      0.1         /* s */
 /* 电流矢量最大变化率：等于 S 形斜坡最大转矩变化率，下限取 SPD_PI_LIMIT / 1.5（防大惯量电机变化过慢），
  * 用于软停机、回退 I/F 撤除制动 id 及 I/F 电流升至目标值。 */
-#define CURRENT_SLEW_JERK_A_S   (SPEED_RAMP_UP / MOTOR_ACC_RPM_S_PER_A / SPEED_RAMP_ROUND_S)
 #define CURRENT_SLEW_MIN_A_S    (SPD_PI_LIMIT / 1.5)
-#define CURRENT_SLEW_A_S        (CURRENT_SLEW_JERK_A_S > CURRENT_SLEW_MIN_A_S ? CURRENT_SLEW_JERK_A_S : CURRENT_SLEW_MIN_A_S)
 
 /* ===================== 起动：IPD / 摆动起动 + I/F 开环拖动 =============== */
 /* 初始位置检测（IPD，ipd.h）：静止时高频方波注入测凸极 d 轴，再缓慢加 ±IPD_BIAS_A 直流偏置判 N 极。
@@ -91,7 +89,6 @@
 #define ALIGN_SWING_MAX_T       3.0         /* T，等待顺向过轴的最长时间（大摆幅的周期为小摆幅的数倍） */
 /* I/F 开环拖动：加速度取拖动电流最大能力的 1/3（平衡负载角 δ_eq = asin(OPENLOOP_ACC_FRAC) ≈ 19°），按惯量自动缩放。 */
 #define OPENLOOP_ACC_FRAC             0.33        /* I/F 加速度 / 拖动电流可产生的最大加速度（余量 3 倍）= sin(平衡负载角) */
-#define OPENLOOP_ACC_RPM_S            (OPENLOOP_ACC_FRAC * MOTOR_ACC_RPM_S_PER_A * OPENLOOP_CURRENT_A)   /* rpm/s（本电机 124 rpm/s） */
 /* Spin -> I/F 回退（热接管）开环电流：保证负载角 <= OPENLOOP_WARM_DELTA_DEG；过零反转至少 OPENLOOP_REV_CURRENT_A。 */
 #define OPENLOOP_WARM_DELTA_DEG       45.0
 #define OPENLOOP_REV_CURRENT_A        (OPENLOOP_CURRENT_A / 0.75)       /* A，本电机 1.0 A */
@@ -137,7 +134,7 @@
  * 门限排布（cfg_derived.h）：从过压保护 BOARD_DCBUS_OVP_V 向下每档间隔 dV_d（Td 内最大回馈压升）：
  *   FULL = OVP - dV_d（回馈 iq 兜底归零），START = FULL - dV_d（兜底比例带起点），REF = START - dV_d（Vref 调节点）。
  * 对大功率电机，单档压升自动封顶在 BUS_DV_MAX_V = 0.9*(OVP - BUS_IDLE_MAX_V)/3 以确保 REF 始终高于空载母线上限，
- * 并按 BUS_DV_MAX_V / dV_raw 同步按比例下调回馈方向最大电流 BUS_REGEN_IQ_MAX_A（加速方向仍保持 SPD_PI_LIMIT）。 */
+ * 并按 BUS_DV_MAX_V / dV_raw 同步按比例下调回馈方向最大电流 BUS_REGEN_IQ_MAX_A_OF（加速方向仍保持 SPD_PI_LIMIT）。 */
 #define BUS_VDC_BW_HZ           5.0         /* Hz，母线电压环带宽 */
 /* 损耗制动：减速受母线限制时叠加负 id（产生铜损消耗动能），lam >= BUS_BRAKE_FULL_LAMBDA 给满 BUS_REGEN_BRAKE_A */
 #define BUS_REGEN_BRAKE_A       (1.0 * MOTOR_I_RATED_A)     /* A，本电机 0.75 A */
