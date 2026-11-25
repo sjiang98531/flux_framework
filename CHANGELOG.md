@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-11-23
 
+### 删除两项门限顺序检查（OPENLOOP_SPEED_ORDER、TRACK_END_RANGE）
+- 二者只约束配置门限之间的大小顺序，不涉及定点 / 除零：运行时各门限在 param.c 中按 0.9*SPEED_MAX 封顶后换算，
+  cfg_derived.h 中对应的编译期 Q15 / Q31 宏无引用。调试"一直开环拖"需要 OPENLOOP_HANDOVER_RPM 高于
+  OPENLOOP_FALLBACK_RPM / SPEED_MAX，原检查会报 MC_FAULT_CFG 而不起动。
+- 仿真（HANDOVER 3100 rpm、指令 200 rpm）：持续 I/F、无故障；I/F 转速被 OPENLOOP_FALLBACK_RPM 限在约 269 rpm。
+  同时把 OPENLOOP_SPIN_MIN_RPM 设到指令之上（如 2800）时，按指令 200 rpm 持续 I/F。
+
 ### 电机凸极由辨识出的 Ld / Lq 决定，删除 MOTOR_IPM
 - 原来 MOTOR_IPM = 0 时辨识把 Ld 强制改成 Lq，观测器幅值目标恒为 psi_f；只有 MOTOR_IPM = 1 才按 psi_f + (Ld-Lq)*id。
   电机是否凸极是参数事实，不是配置选项：现在所有模块直接按 Ld / Lq 计算（Ld = Lq 时自然退化为表贴式）。
