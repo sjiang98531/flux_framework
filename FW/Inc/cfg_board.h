@@ -24,8 +24,8 @@
 /* ---- 电流采样 ------------------------------------------------------------ */
 #define ADC_REFV                5.0                        /* V */
 #define R_SHUNT                 (0.1)                      /* ohm */
-#define CURRENT_OPA_GAIN        (3.139)
-/* 电流 Q15 满量程 = 5/2/3.139/0.1 = 7.964 A。gMeas.iabc、gFoc.idq / idqRef 均采用此基准。 */
+#define CURRENT_OPA_GAIN        (4.5)
+/* 电流 Q15 满量程 = 5/2/4.5/0.1 = 5.556 A。gMeas.iabc、gFoc.idq / idqRef 均采用此基准。硬件过流 BOARD_HOCP_A 约 4.06 A。 */
 #define I_MAX                   (ADC_REFV / 2 / CURRENT_OPA_GAIN / R_SHUNT)
 #define IBUS_RECONSTRUCTED      1                          /* 1 = 母线电流使用 SVPWM 重构值 */
 /* 硬件过流比较器（CMP3）DAC 门限电压及对应电流（母线采样与相电流共用 R_SHUNT 与 CURRENT_OPA_GAIN，
