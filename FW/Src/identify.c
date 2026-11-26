@@ -612,6 +612,7 @@ static double accAtPsi(const MotorParam_TypeDef *p, float psi)
 #define OLFLUX_SETTLE_MS   300
 #define OLFLUX_AVG_MS      500
 static float s_olfF[4], s_olfE, s_olfEd, s_olfEq;
+static int32_t s_olfPll;            /* 平均段 PLL 转速累加（Q15） */
 
 static float olfEmf(float w, float *pd, float *pq)
 {
@@ -676,6 +677,7 @@ uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
         s_olFluxSt = OLF_AVG;
         s_olFluxN = 0;
         s_olfE = s_olfEd = s_olfEq = 0;
+        s_olfPll = 0;
         return 1;
     }
     {
@@ -685,14 +687,20 @@ uint8_t Ident_OpenLoopFluxSlow(int32_t ol, int32_t tgt)
         s_olfE += olfEmf(ol < 0 ? -w : w, &ed, &eq);
         s_olfEd += ed;
         s_olfEq += (ol < 0) ? -eq : eq;
+        s_olfPll += gEst.pll.s32Speed >> 16;
         if (++s_olFluxN < OLFLUX_AVG_MS) return 1;
         /* 测量前提：转子跟着拖动转。同步时 e 在拖动坐标中不旋转、方向接近 q 轴；失步时 e 以滑差频率旋转（矢量平均趋于 0），
          * 转子停滞时只剩残差：R / 死区误差沿电流方向，电感误差 ω ΔL i 沿 q 轴、也与 ω 成正比（与反电势同形，只能按幅值区分）。
-         * 判据：|矢量平均| > 0.3 mean|e|，方向在 q 轴 ±60° 内，且 mean|e| > 0.2 ω L(i) |i|（电感误差在 20% 以内时不会被当作反电势） */
+         * 判据：|矢量平均| > 0.3 mean|e|，方向在 q 轴 ±60° 内，且 mean|e| > 0.2 ω L(i) |i|（电感误差在 20% 以内时不会被当作反电势）；
+         * 并且平均段 PLL 转速与拖动转速一致（相对误差 < OPENLOOP_AGREE_RATIO，与切闭环相同）：凸极电机转子被负载卡住时，
+         * 旋转电流看到的电感随 2θ 变化，残差可达 ω (Lq - Ld) |i|（超过上面的 20%），且方向可落在 q 轴附近；此时 PLL 锁在
+         * 残差上，转速与拖动转速不一致（常为反向）。不同步则不采用（OLF_NOSYNC，切闭环判据超时报堵转后重测） */
         mv = sqrtf(s_olfEd * s_olfEd + s_olfEq * s_olfEq);
         {
             float im = sqrtf(s_olfF[0] * s_olfF[0] + s_olfF[1] * s_olfF[1]);
+            int32_t olq = ol >> 16, d = s_olfPll / OLFLUX_AVG_MS - olq;
             if (s_olfE < 0.2f * w * Param_LqAt(im) * im * OLFLUX_AVG_MS) mv = 0;
+            if ((d < 0 ? -d : d) > (int32_t)(OPENLOOP_AGREE_RATIO * (float)(olq < 0 ? -olq : olq))) mv = 0;
         }
         if (!(mv > 0.3f * s_olfE && s_olfEq > 0.5f * mv)) {
             s_olFluxSt = OLF_NOSYNC;
