@@ -17,7 +17,7 @@
  *   2. 每 1 ms 求一次电流矢量平均 I_n。相邻两块 Δφ = atan2(I_{n-1}×I_n, I_{n-1}·I_n)
  *      （叉积 / 点积经一阶低通后再求角度）= 1 ms 内转过的电角度 -> 转速，符号即转向
  *   3. |I| < 门限持续 FLYBRAKE_TIME -> FLY_STILL（静止，进入 Align：IPD / 摆动起动）
- *      连续 FLY_STABLE_MS 次稳定：|转速| 足够高（同向 FLY_CATCH_EMF_PCT、反向 FLY_REV_SPIN_MIN_EMF_PCT）-> FLY_CATCH，
+ *      连续 FLY_STABLE_MS 次稳定：|转速| 足够高（同向 gGain.spdFlyCatch、反向 飞车反向接入转速（gGain.spdFlyRevMin））-> FLY_CATCH，
  *      >= FLY_LOW_MIN_RPM -> FLY_CATCH_OPENLOOP，
  *      接管角 = 本拍 ∠i + 阻抗角（见上式）
  *      其余情况继续短接（即制动，短路转矩近似正比于转速）；超过 FLY_BRAKE_TIMEOUT_S 仍未停止 -> FLY_TIMEOUT
@@ -62,7 +62,7 @@ extern FlyStart_TypeDef gFly;
 typedef enum {
     FLY_BUSY = 0,       /* 正在测量 / 制动 */
     FLY_STILL,          /* 静止 -> Align（IPD / 摆动起动 / 辨识定位） */
-    FLY_CATCH,          /* 转速足够（同向 >= FLY_CATCH_EMF_PCT、反向 >= FLY_REV_SPIN_MIN_EMF_PCT）-> 直接进入 Spin */
+    FLY_CATCH,          /* 转速足够（同向 >= gGain.spdFlyCatch、反向 >= 飞车反向接入转速（gGain.spdFlyRevMin））-> 直接进入 Spin */
     FLY_CATCH_OPENLOOP,       /* FLY_LOW_MIN_RPM ~ 上述门限 -> 直接进入 I/F 开环 */
     FLY_TIMEOUT         /* 制动超时 -> 故障 */
 } FlyVerdict_t;

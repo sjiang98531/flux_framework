@@ -65,18 +65,21 @@
 #define ALIGN_STILL_EMF_PCT     0.2027     /* rpm，参数辨识静止测量的停稳判据（k 约 0.2%）。每次都等满上限时调高 */
 
 /* ---- 开环拖动（I/F）与闭环的交接 ---- */
-#define OPENLOOP_HANDOVER_EMF_PCT 2.128       /* rpm，I/F 切入闭环的转速（k 约 2.5%）。切换瞬间抖动或无法切入（报堵转）时调高 */
-#define OPENLOOP_SPIN_MIN_EMF_PCT 1.196       /* rpm，闭环运行的最低指令转速，更低的指令以 I/F 开环运行（k 约 1.4%） */
-#define OPENLOOP_FALLBACK_EMF_PCT 5.108       /* rpm，减速 / 反转时闭环交还 I/F 的转速（k 约 6%）。减速至低速失步时调高 */
-#define SPIN_LOST_EMF_PCT       0.8107      /* rpm，闭环失锁判据：指令同向而估计转速低于该值时停机并重新起动 */
-#define TRACK_END_EMF_PCT       2.635       /* rpm，停机时受控减速 / 零电流跟踪至该转速后关闭 PWM（不低于 OPENLOOP_HANDOVER_RPM）。
-                                             * 滑行至低速后再给指令出现冲击声时调高 */
+/* I/F 切换转速及相关门限：与固件 FW/Inc/cfg_app.h 默认值相同（各类电机统一，由额定转速与辨识参数自动换算） */
+#define OPENLOOP_HANDOVER_RATED_K  0.10
+#define OPENLOOP_HANDOVER_MAX_K    0.30
+#define OPENLOOP_HANDOVER_VERR_K   0.5
+#define OPENLOOP_HANDOVER_RS_ERR   0.10
+#define OPENLOOP_SPIN_MIN_K        0.56
+#define OPENLOOP_FALLBACK_K        2.40
+#define SPIN_LOST_K                0.38
+#define TRACK_END_K                1.24
+#define FLY_REV_SPIN_MIN_K         4.80
 
 /* ---- 顺逆风（飞车）起动 ---- */
 #define FLY_STILL_RPM           31.5        /* rpm，低于该转速按静止处理（k 约 0.75%） */
 #define FLY_STILL_END_RPM       2.0         /* rpm，制动后开始 IPD / 摆动起动时允许的残余转速。制动后起动出现抖动时调低 */
 #define FLY_LOW_MIN_RPM         42.0        /* rpm，同向转速不低于该值时直接接入 I/F，更低则先制动（须高于 FLY_STILL_RPM，k 约 1%） */
-#define FLY_REV_SPIN_MIN_EMF_PCT 10.22       /* rpm，反向旋转时不低于该值才直接接入闭环（约 2 倍 OPENLOOP_FALLBACK_RPM） */
 
 /* ---- 观测器 / 调制 ---- */
 #define FLUX_HPF_COMP_MIN_RPM   21.0        /* rpm，观测器去直流相位补偿的起始转速（k 约 0.5%），2 倍该转速时补满 */

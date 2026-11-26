@@ -15,11 +15,11 @@
  *       转子顺转向摆过定位轴（q 轴反电势达到顺向峰值）的瞬间，开环角与开环转速接到转子上，负载角平滑建立后连续加速。
  *       （参数辨识 IDENT_TEST = 1 静止测量时仍先阻尼定位并等待停稳）
  *     OpenLoop：电流 OPENLOOP_CURRENT_A 沿开环角方向，开环角按
- *       OPENLOOP_ACC_RPM_S_OF 加速到 OPENLOOP_HANDOVER_EMF_PCT 并保持；观测器 + PLL 同步跟踪（不参与控制）。
+ *       OPENLOOP_ACC_RPM_S_OF 加速到 切换转速（gGain.spdHandover） 并保持；观测器 + PLL 同步跟踪（不参与控制）。
  *       PLL 转速（滤波）与开环转速相差 < OPENLOOP_AGREE_RATIO 并持续 OPENLOOP_AGREE_S
  *       -> 转矩不变切换：iq_new = I * sin(theta_ol - theta_est)，id = 0 -> Spin
  *       OPENLOOP_TIMEOUT_S 内仍不一致 -> 堵转故障
- *     Spin 回退（指令反向或低于闭环最低转速、减速到 OPENLOOP_FALLBACK_EMF_PCT）时，从当前估计角和转速继续开环拖动。
+ *     Spin 回退（指令反向或低于闭环最低转速、减速到 回退转速（gGain.spdFallback））时，从当前估计角和转速继续开环拖动。
  *
  * 子状态之间的切换函数位于 supervisor.c（Sup_Switch*），本模块的处理函数在条件满足时调用它们。
  * ==========================================================================*/

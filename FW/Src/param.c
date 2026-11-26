@@ -48,6 +48,20 @@ static void Param_Defaults(MotorParam_TypeDef *p)
     p->dtEffS = INVERTER_DT_EFF_S;
 }
 
+/* I/F 电流（A）：拖动 / 反转过零 / 上限（回退接管与失速加强），均为配置值（cfg_app.h / cfg_internal.h），
+ * 不超过驱动板上限 OPENLOOP_BOARD_MAX_A（硬件过流余量）；上限不低于拖动与反转电流 */
+typedef struct { double ol, rev, warm; } OlCur_TypeDef;
+static OlCur_TypeDef openLoopCurrents(void)
+{
+    OlCur_TypeDef c;
+    const double cap = OPENLOOP_BOARD_MAX_A;
+    c.ol = OPENLOOP_CURRENT_A < cap ? OPENLOOP_CURRENT_A : cap;
+    c.rev = OPENLOOP_REV_CURRENT_A < cap ? OPENLOOP_REV_CURRENT_A : cap;
+    c.warm = OPENLOOP_WARM_MAX_A < cap ? OPENLOOP_WARM_MAX_A : cap;
+    if (c.warm < c.rev) c.warm = c.rev;
+    return c;
+}
+
 /* 合理性检查。不与配置标称值比较（新电机可能没有可靠的标称值），只检查"物理上为正"和"定点范围可容纳"，
  * 条件与 cfg_check_list.h 第二部分逐项对应（那里检查 IDENT_TEST = 0 时的配置值，这里检查任意一组参数，含辨识测得值）。
  * 同时依赖多个量的条件归入辨识中最后测得的那个量的位（psi、加速度系数在运行测量中才测得），
@@ -85,12 +99,13 @@ static uint16_t checkParam(const MotorParam_TypeDef *p)
      * 斜率前馈在位宽内；定位摆周期拍数 >= 1 且平方乘积不溢出；母线电压控制器（与 psi 共同决定）增益与乘积在位宽内 */
     if (!(p->accRpmSPerA > 0)) bad |= 16u;
     else {
-        double a = p->accRpmSPerA, st = OPENLOOP_ACC_STEP_Q31_OF(a), t2 = ALIGN_T2_TICKS2_OF(p->psiWb, a);
+        OlCur_TypeDef c = openLoopCurrents();
+        double a = p->accRpmSPerA, st = OPENLOOP_ACC_STEP_Q31_AT(a, c.ol), t2 = ALIGN_T2_TICKS2_OF(p->psiWb, a);
         int32_t ks = CURRENT_SLEW_STEP_Q15_OF(a);
         double ff = SPEED_FF_K_Q16_OF(a), ai = SPEED_ACC_PER_IQ_Q8_OF(a);
         if (!(SPEED_KP_OF(a) >= 1 && SPEED_KI_OF(a) >= 1 &&
               (2 * SPEED_ZETA * 2 * MATH_PI * SPEED_WN_HZ * SPD_GAIN_SCALE_OF(a)) < 2147483647.0 &&
-              st >= 1 && st * OPENLOOP_REV_IQ_Q15 / OPENLOOP_IQ_Q15 < 2147483647.0 &&
+              st >= 1 && st * c.rev / c.ol < 2147483647.0 && Q15(c.ol / I_MAX) >= 1 &&
               ks >= 1 && ks < 32767 && ff >= 1 && ff < 2147483647.0 && ai >= 1 && ai < 32768.0 * 256 &&
               t2 >= 1.0 && ALIGN_SWING_MAX_T * ALIGN_SWING_MAX_T * t2 < 32767.0 * 32767.0)) bad |= 16u;
         else if (p->psiWb > 0) {
@@ -112,6 +127,7 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
 {
     int32_t k;
     double psiN = FLUX_PSI_N_OF(p->psiWb, p->ldH, p->lqH);
+    OlCur_TypeDef olc;
     g->cfgWarn = 0;
     /* 电流环：Kp = 2*pi*CURRENT_BW_HZ*L，Ki = 2*pi*CURRENT_BW_HZ*R/PWM_FREQ（Kp/Ki = L/R，PI 零点对消电机极点，
      * 闭环为一阶、带宽 CURRENT_BW_HZ）。d、q 轴各用各自的电感（44842 / 475） */
@@ -191,12 +207,18 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
         g->alignStepBlank = (uint16_t)(bl > 65535.0 ? 65535.0 : bl);
         g->swingLagAngQ12 = ALIGN_SWING_LAG_ANG_Q12_OF(p->lqH, p->rsOhm);
     }
-    g->openLoopAccStepQ31 = OPENLOOP_ACC_STEP_Q31_OF(p->accRpmSPerA);
+    /* I/F 电流（openLoopCurrents：配置值按驱动板限幅），开环加速度按实际拖动电流（最大能力的 OPENLOOP_ACC_FRAC） */
+    olc = openLoopCurrents();
+    g->olIqQ15 = Q15(olc.ol / I_MAX);
+    g->olRevIqQ15 = Q15(olc.rev / I_MAX);
+    g->olWarmImaxQ15 = Q15(olc.warm / I_MAX);
+    g->olCurMa = (uint16_t)(olc.ol * 1000.0 + 0.5);
+    g->openLoopAccStepQ31 = OPENLOOP_ACC_STEP_Q31_AT(p->accRpmSPerA, olc.ol);
     g->currentSlewStepQ15 = CURRENT_SLEW_STEP_Q15_OF(p->accRpmSPerA);
-    g->rampOpenLoopQ31 = Q31(OPENLOOP_ACC_RPM_S_OF(p->accRpmSPerA) / SPEED_MAX / SLOWLOOP_FREQ);
-    g->rampOpenLoopRevQ31 = Q31(OPENLOOP_REV_ACC_RPM_S_OF(p->accRpmSPerA) / SPEED_MAX / SLOWLOOP_FREQ);
-    /* I/F 开环：按设计加速度 OPENLOOP_ACC_RPM_S_OF 拖动所需的 iq（加速度 / 加速度系数），切闭环时作为前馈（openloop.c） */
-    g->openLoopAccFfIq = OPENLOOP_ACC_FF_IQ_OF(p->accRpmSPerA);
+    g->rampOpenLoopQ31 = Q31(OPENLOOP_ACC_RPM_S_AT(p->accRpmSPerA, olc.ol) / SPEED_MAX / SLOWLOOP_FREQ);
+    g->rampOpenLoopRevQ31 = Q31(OPENLOOP_ACC_RPM_S_AT(p->accRpmSPerA, olc.rev) / SPEED_MAX / SLOWLOOP_FREQ);
+    /* I/F 开环：按设计加速度拖动所需的 iq（加速度 / 加速度系数 = OPENLOOP_ACC_FRAC * 拖动电流），切闭环时作为前馈（openloop.c） */
+    g->openLoopAccFfIq = OPENLOOP_ACC_FF_IQ_AT(olc.ol);
     /* 母线回馈减速与超速保护 */
     g->busRegenStartQ15 = BUS_REGEN_START_Q15_OF(p->psiWb);
     g->busRegenFullQ15 = BUS_REGEN_FULL_Q15_OF(p->psiWb);
@@ -205,16 +227,24 @@ static void computeGain(const MotorParam_TypeDef *p, CtrlGain_TypeDef *g)
     g->busVdcRefSq = BUS_VDC_REF_SQ_OF(p->psiWb);
     g->busVdcKQ8 = BUS_VDC_K_Q8_OF(p->psiWb, p->accRpmSPerA);
     g->protectSpeedOcQ15 = PROTECT_SPEED_OC_Q15_OF(p->psiWb);
-    {   /* 观测器可靠性相关的转速门限：反电势百分比按极对数与当前磁链换算（见 param.h），不超过 0.9 * SPEED_MAX */
+    {   /* 观测器可靠性相关的转速门限（见 param.h、cfg_app.h）：切换转速 = max(额定转速的 OPENLOOP_HANDOVER_RATED_K，
+         * 反电势达到 OPENLOOP_HANDOVER_VERR_K 倍电压误差估计的转速)，不超过额定转速的 OPENLOOP_HANDOVER_MAX_K；
+         * 电压误差 = 死区电压（辨识的等效死区）+ OPENLOOP_HANDOVER_RS_ERR * Rs * I/F 电流（辨识的 Rs），反电势按当前磁链换算。
+         * 其余门限为切换转速的固定倍数。均不超过 0.9 * SPEED_MAX */
         double psi = p->psiWb, top = 0.9 * SPEED_MAX;
-        double hand, fb, sm, lost, te, fc, frev, warm;
-        hand = EMF_PCT_RPM_OF(OPENLOOP_HANDOVER_EMF_PCT, psi);  if (hand > top) hand = top;
-        fb   = EMF_PCT_RPM_OF(OPENLOOP_FALLBACK_EMF_PCT, psi);  if (fb > top) fb = top;
-        sm   = EMF_PCT_RPM_OF(OPENLOOP_SPIN_MIN_EMF_PCT, psi);  if (sm > top) sm = top;
-        lost = EMF_PCT_RPM_OF(SPIN_LOST_EMF_PCT, psi);          if (lost > top) lost = top;
-        te   = EMF_PCT_RPM_OF(TRACK_END_EMF_PCT, psi);          if (te > top) te = top;
-        fc   = EMF_PCT_RPM_OF(FLY_CATCH_EMF_PCT, psi);          if (fc > top) fc = top;
-        frev = EMF_PCT_RPM_OF(FLY_REV_SPIN_MIN_EMF_PCT, psi);   if (frev > top) frev = top;
+        double verr = UDC_RATE * p->dtEffS * PWM_FREQ + OPENLOOP_HANDOVER_RS_ERR * p->rsOhm * olc.ol;
+        double hand, fb, sm, lost, te, fc, frev, warm, lo;
+        hand = OPENLOOP_HANDOVER_RATED_K * MOTOR_SPEED_RATED_RPM;
+        lo = EMF_V_RPM_OF(OPENLOOP_HANDOVER_VERR_K * verr, psi);        if (lo > hand) hand = lo;
+        if (hand > OPENLOOP_HANDOVER_MAX_K * MOTOR_SPEED_RATED_RPM) hand = OPENLOOP_HANDOVER_MAX_K * MOTOR_SPEED_RATED_RPM;
+        if (hand > top) hand = top;
+        g->handoverRpm = (uint16_t)(hand + 0.5);
+        fb   = OPENLOOP_FALLBACK_K * hand;  if (fb > top) fb = top;
+        sm   = OPENLOOP_SPIN_MIN_K * hand;  if (sm > top) sm = top;
+        lost = SPIN_LOST_K * hand;          if (lost > top) lost = top;
+        te   = TRACK_END_K * hand;          if (te > top) te = top;
+        fc   = FLY_CATCH_K * hand;          if (fc > top) fc = top;
+        frev = FLY_REV_SPIN_MIN_K * hand;   if (frev > top) frev = top;
         warm = 1.5 * fb;                   if (warm > 0.95 * SPEED_MAX) warm = 0.95 * SPEED_MAX;
         g->spdHandoverQ31 = (int32_t)(hand / SPEED_MAX * 2147483648.0);
         g->spdFallbackQ31 = (int32_t)(fb / SPEED_MAX * 2147483648.0);

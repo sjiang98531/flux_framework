@@ -50,33 +50,42 @@
 /* 电流上限，以额定电流（cfg_motor.h MOTOR_I_RATED_A，相电流峰值）的倍数表示，更换电机时自动缩放。
  * 须低于功率器件与电机退磁允许的电流；配置检查校验其在采样量程 I_MAX 以内。 */
 #define SPD_PI_LIMIT            (4.0 * MOTOR_I_RATED_A)     /* A，闭环运行的相电流上限（速度环输出限幅），本电机 3.0 A；须低于硬件过流 BOARD_HOCP_A（4.03 A）并留电流环超调余量 */
-#define OPENLOOP_CURRENT_A      (1.0 * MOTOR_I_RATED_A)     /* A，起动拖动（I/F）电流，本电机 0.75 A；带载无法起动时加大 */
+/* I/F 拖动电流：运行时不超过驱动板过流余量（param.c，实际值见 gGain.olCurMa）。
+ * 拖不动（堵转）时自动重起动并逐档加大电流（最多 3 档，至 SPD_PI_LIMIT，同样限幅）、减小加速度，学到的档位保留到下次上电 */
+#define OPENLOOP_CURRENT_A      (1.0 * MOTOR_I_RATED_A)     /* A，起动拖动（I/F）电流，本电机 0.75 A；带载起动每次都要加强档位时加大 */
 
 /* ===================== 二、现场调试项 ==================================== */
-/* 默认值按本电机整定；更换电机后先用默认值试运行，再按现象调整。各项的原理与估算方法见 cfg_internal.h 对应小节。
- * 观测器相关的门限以"反电势占额定母线电压的百分比"（_EMF_PCT）给出：观测器是否可靠取决于反电势相对逆变器电压误差
- * （死区，与母线电压成正比）的大小，与电机无关。运行时按极对数与当前磁链（辨识后为实测值）换算成转速：
- *     n [rpm] = PCT / 100 * UDC_RATE * 60 / (2*pi * 极对数 * psi_f)       本电机每 1% 约 42 rpm
- * 换算后不超过 0.9 * SPEED_MAX。机械意义上的门限（FLY_STILL_*、FLY_LOW_MIN）以 rpm 给出，不随电机换算。 */
+/* 默认值对仿真中各类电机（风机、凸极、中小功率、低反电势高速电机）不加修改均可运行；更换电机后先用默认值试运行，再按现象调整。
+ * 各项的原理与估算方法见 cfg_internal.h 对应小节。机械意义上的门限（FLY_STILL_*、FLY_LOW_MIN）以 rpm 给出，不随电机换算。 */
 
 /* ---- 定位（仅参数辨识 IDENT_TEST = 1 静止测量时使用，SWING 起动使用同一定位电流 ALIGN_A）----
  * 参数辨识等转子停稳不预测摆动周期（惯量未知），按观测判断（cfg_internal.h ALIGN_QUIET_*）。 */
 #define ALIGN_STILL_EMF_PCT     0.24        /* %，参数辨识静止测量的停稳判据：反电势低于该值判为静止（本电机约 10 rpm）。
                                              * 反电势是测量电压的误差来源，判据直接按反电势给出，不需要磁链。每次都等满上限时调高 */
 
-/* ---- 开环拖动（I/F）与闭环的交接 ---- */
-#define OPENLOOP_HANDOVER_EMF_PCT  2.515    /* %，I/F 切入闭环（本电机约 105 rpm）。切换瞬间抖动或无法切入（报堵转）时调高 */
-#define OPENLOOP_SPIN_MIN_EMF_PCT  1.413    /* %，闭环运行的最低指令转速，更低的指令以 I/F 开环运行（本电机约 59 rpm） */
-#define OPENLOOP_FALLBACK_EMF_PCT  6.036    /* %，减速 / 反转时闭环交还 I/F（本电机约 252 rpm）。减速至低速失步时调高 */
-#define SPIN_LOST_EMF_PCT          0.958    /* %，闭环失锁判据：指令同向而估计转速低于该值时停机并重新起动（本电机约 40 rpm） */
-#define TRACK_END_EMF_PCT          3.114    /* %，停机时受控减速 / 零电流跟踪至该值后关闭 PWM（不低于切入闭环，本电机约 130 rpm）。
+/* ---- 开环拖动（I/F）与闭环的交接 ----
+ * 切换转速（I/F 切入闭环）由铭牌与辨识结果自动算出（param.c，参数更新时重算）：
+ *     n_h = max(OPENLOOP_HANDOVER_RATED_K * 额定转速,  反电势 = OPENLOOP_HANDOVER_VERR_K * 电压误差 的转速)
+ *     电压误差 = 逆变器死区电压 UDC_RATE * 等效死区 * PWM_FREQ + OPENLOOP_HANDOVER_RS_ERR * Rs * I/F 电流（死区、Rs 为辨识值）
+ *     n_h 不超过 OPENLOOP_HANDOVER_MAX_K * 额定转速与 0.9 * SPEED_MAX；反电势按辨识的磁链换算。
+ * 仿真中各类电机切换转速的可用区间约为额定转速的 5% ~ 20%（低于下限观测器与 I/F 转速不一致、报堵转；上限受 I/F 拖动时间与
+ * 回退门限接近指令转速限制），10% 在各类电机的可用区间内；电压误差项只在反电势很低的电机上起作用（本电机不起作用）。
+ * 其余门限按切换转速的倍数给出（本电机切换转速 110 rpm）。 */
+#define OPENLOOP_HANDOVER_RATED_K  0.10     /* 切换转速 / 额定转速（本电机 110 rpm）。切换瞬间抖动或无法切入（报堵转）时调高 */
+#define OPENLOOP_HANDOVER_MAX_K    0.30     /* 切换转速上限 / 额定转速 */
+#define OPENLOOP_HANDOVER_VERR_K   0.5      /* 切换时的反电势 / 电压误差估计，下限（仿真中低于约 0.45 时有电机切不进闭环） */
+#define OPENLOOP_HANDOVER_RS_ERR   0.10     /* 电压误差估计中 Rs 的相对误差（辨识误差与温升） */
+#define OPENLOOP_SPIN_MIN_K        0.56     /* 闭环运行的最低指令转速 / 切换转速，更低的指令以 I/F 开环运行（本电机约 62 rpm） */
+#define OPENLOOP_FALLBACK_K        2.40     /* 减速 / 反转时闭环交还 I/F 的转速 / 切换转速（本电机约 264 rpm）。减速至低速失步时调高 */
+#define SPIN_LOST_K                0.38     /* 闭环失锁判据 / 切换转速：指令同向而估计转速低于该值时停机并重新起动（本电机约 42 rpm） */
+#define TRACK_END_K                1.24     /* 停机时受控减速 / 零电流跟踪至该转速后关闭 PWM，/ 切换转速（本电机约 136 rpm）。
                                              * 滑行至低速后再给指令出现冲击声时调高 */
 
 /* ---- 顺逆风（飞车）起动 ---- */
 #define FLY_STILL_RPM           31.5        /* rpm，低于该转速按静止处理 */
 #define FLY_STILL_END_RPM       2.0         /* rpm，制动后开始 IPD / 摆动起动时允许的残余转速。制动后起动出现抖动时调低 */
 #define FLY_LOW_MIN_RPM         42.0        /* rpm，同向转速不低于该值时直接接入 I/F，更低则先制动（须高于 FLY_STILL_RPM） */
-#define FLY_REV_SPIN_MIN_EMF_PCT 12.07      /* %，反向旋转时不低于该值才直接接入闭环（约 2 倍交还 I/F，本电机约 504 rpm） */
+#define FLY_REV_SPIN_MIN_K      4.80        /* 反向旋转时不低于该转速 / 切换转速才直接接入闭环（约 2 倍交还 I/F，本电机约 528 rpm） */
 
 /* ---- 观测器 / 调制 ---- */
 #define FLUX_HPF_COMP_MIN_RPM   21.0        /* rpm，观测器去直流相位补偿的起始转速（k 约 0.5%），2 倍该转速时补满 */

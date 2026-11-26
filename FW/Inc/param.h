@@ -76,8 +76,12 @@ typedef struct {
     int32_t alignDampRQ8;       /* 参数辨识定位阻尼增益（Q8），ALIGN_DAMP_R_Q8_OF(Rs) */
     uint16_t alignStepBlank;    /* 参数辨识摆动测量：阶跃后 q 轴电压不作反电势的拍数（ALIGN_STEP_BLANK_TICKS_OF） */
     int32_t swingLagAngQ12;     /* 摆动起动反电势测量延迟角度系数（Q12） */
-    int32_t openLoopAccStepQ31; /* I/F 开环每快环拍转速步长（Q31） */
-    int16_t openLoopAccFfIq;    /* I/F 开环：按 OPENLOOP_ACC_RPM_S_OF 加速需要的 iq（Q15），切换前馈 */
+    int16_t olIqQ15;            /* I/F 拖动电流（Q15）：OPENLOOP_CURRENT_A 按驱动板过流余量限幅（param.c openLoopCurrents） */
+    int16_t olRevIqQ15;         /* I/F 反转过零电流（Q15）：OPENLOOP_REV_CURRENT_A，同样限幅 */
+    int16_t olWarmImaxQ15;      /* I/F 电流上限（Q15）：回退接管与冷起动失速加强，OPENLOOP_WARM_MAX_A（= SPD_PI_LIMIT），同样限幅 */
+    uint16_t olCurMa;           /* I/F 拖动电流 mA（只供查看） */
+    int32_t openLoopAccStepQ31; /* I/F 开环每快环拍转速步长（Q31），按实际拖动电流 */
+    int16_t openLoopAccFfIq;    /* I/F 开环：按设计加速度拖动需要的 iq（Q15），切换前馈 */
     int32_t currentSlewStepQ15; /* 软停机 / 电流过渡每慢环拍步长（Q15） */
     /* ---- 飞车检测（flystart.c） */
     int32_t flyWlrQ12;          /* 满量程转速下 w*Lq/Rs（Q12），算短路电流阻抗角 atan(w*L/R) */
@@ -87,19 +91,19 @@ typedef struct {
     uint16_t flyStillSpinMs;    /* 测到转动后等待停稳时间（ms） */
     uint32_t flyMayMoveExpireMs;/* 停机后跳过最坏情况等待的过期时间（ms） */
     /* ---- 观测器可靠性相关的转速门限（openloop.c / spin.c / speed_ctrl.c / supervisor.c / flystart.c / identify.c）
-     * cfg_app.h 中以"反电势占额定母线电压的百分比"给出（观测器是否可靠取决于反电势相对逆变器电压误差的大小），
-     * 运行时按极对数与 gParam.psiWb 换算：n = PCT/100 * UDC_RATE * 60 / (2*pi * 极对数 * psi)（EMF_PCT_RPM_OF），
-     * 换算后不超过 0.9 * SPEED_MAX。机械意义上的"静止"门限（FLY_STILL_*、FLY_LOW_MIN）与观测器去直流补偿起点
-     * （FLUX_HPF_COMP_MIN）以 rpm 给出，不随之变化 */
-    int32_t spdHandoverQ31;     /* OPENLOOP_HANDOVER_EMF_PCT：I/F 切入闭环 */
-    int32_t spdFallbackQ31;     /* OPENLOOP_FALLBACK_EMF_PCT：闭环交还 I/F */
-    int32_t spdWarmMaxQ31;      /* 1.5 * OPENLOOP_FALLBACK_EMF_PCT：回退进 I/F 时开环转速上限 */
+     * 切换转速由额定转速与辨识参数算出（cfg_app.h OPENLOOP_HANDOVER_*：额定转速的固定比例，反电势须高于死区与 Rs 误差
+     * 造成的电压误差），其余为切换转速的固定倍数（cfg_app.h *_K），均不超过 0.9 * SPEED_MAX。
+     * 机械意义上的"静止"门限（FLY_STILL_*、FLY_LOW_MIN）与观测器去直流补偿起点（FLUX_HPF_COMP_MIN）以 rpm 给出，不随之变化 */
+    uint16_t handoverRpm;       /* 切换转速 rpm（只供查看） */
+    int32_t spdHandoverQ31;     /* 切换转速：I/F 切入闭环 */
+    int32_t spdFallbackQ31;     /* 回退转速 = OPENLOOP_FALLBACK_K * 切换转速：闭环交还 I/F */
+    int32_t spdWarmMaxQ31;      /* 1.5 * 回退转速：回退进 I/F 时开环转速上限 */
     int16_t spdFallbackQ15;
-    int16_t spdSpinMinQ15;      /* OPENLOOP_SPIN_MIN_EMF_PCT：闭环最低指令转速 */
-    int16_t spdLostQ15;         /* SPIN_LOST_EMF_PCT：闭环失锁判据 */
-    int16_t spdTrackEndQ15;     /* TRACK_END_EMF_PCT：零电流跟踪 / 受控减速结束 */
-    int16_t spdFlyCatchQ15;     /* FLY_CATCH_EMF_PCT：飞车同向直接接入闭环下限 */
-    int16_t spdFlyRevMinQ15;    /* FLY_REV_SPIN_MIN_EMF_PCT：飞车反向直接接入闭环下限 */
+    int16_t spdSpinMinQ15;      /* OPENLOOP_SPIN_MIN_K：闭环最低指令转速 */
+    int16_t spdLostQ15;         /* SPIN_LOST_K：闭环失锁判据 */
+    int16_t spdTrackEndQ15;     /* TRACK_END_K：零电流跟踪 / 受控减速结束 */
+    int16_t spdFlyCatchQ15;     /* FLY_CATCH_K：飞车同向直接接入闭环下限 */
+    int16_t spdFlyRevMinQ15;    /* FLY_REV_SPIN_MIN_K：飞车反向直接接入闭环下限 */
     /* ---- 保护与告警（protect.c / diag.c） */
     int32_t protectSpeedOcQ15;  /* 超速保护门限（Q15） */
     uint16_t cfgWarn;           /* 增益超出定点范围被封顶：bit1 电流环，bit2 PLL，bit3 反电势前馈超量程 */

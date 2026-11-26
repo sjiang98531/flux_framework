@@ -3,7 +3,7 @@
  * @brief   I/F 开环（Run 子状态 OpenLoop）：开环拖动，以及开环与闭环之间的切换
  *          （openLoopHandover：开环 -> 闭环；OpenLoop_Prepare* / Commit：IPD、摆动起动、闭环回退、飞车接管 -> 开环）。接口见 openloop.h
  *
- * I/F 开环原理：电流矢量幅值恒定（OPENLOOP_CURRENT_A），角度按设定加速度积分旋转（不依赖转子位置）。
+ * I/F 开环原理：电流矢量幅值恒定（拖动电流 gGain.olIqQ15），角度按设定加速度积分旋转（不依赖转子位置）。
  *   转子自动跟随：电流矢量与转子 d 轴的夹角（负载角 δ）自动调整到 I*sin(δ)*Kt = 负载转矩 + 加速转矩。
  *   只要加速所需转矩小于 I*Kt 就不会失步。观测器与 PLL 在此期间只跟踪不控制，转速一致后切换闭环。
  * ==========================================================================*/
@@ -25,15 +25,16 @@ static volatile int32_t s_olSpeed;         /* 开环转速 Q31（快环斜坡）
 static volatile int32_t s_olTarget;        /* 目标转速 Q31，带方向（慢环写） */
 static int32_t s_pllFilt;                  /* PLL 转速一阶滤波 Q31（慢环，OPENLOOP_PLL_FILT_TAU_S） */
 static uint16_t s_agree, s_hold;
-/* 开环加速度按实际开环电流缩放：OPENLOOP_ACC_RPM_S_OF 为 OPENLOOP_CURRENT_A 下最大能力的 1/3，回退 / 反转时电流增大，
- * 保持相同余量时加速度也按电流比例增大，过零更快。s_accScaleQ12 = I / OPENLOOP_CURRENT_A（Q12，冷起动 = 4096） */
+/* 开环加速度按实际开环电流缩放：gGain.openLoopAccStepQ31 为拖动电流 gGain.olIqQ15 下最大能力的 1/3，回退 / 反转时电流增大，
+ * 保持相同余量时加速度也按电流比例增大，过零更快。s_accScaleQ12 = I / 拖动电流（Q12，冷起动 = 4096）。
+ * I/F 各电流（拖动 / 反转 / 上限）为配置值按驱动板限幅后的运行时值（param.c openLoopCurrents） */
 static int32_t s_accScaleQ12 = 4096;
 static int32_t s_olCur, s_olCurTarget;      /* 开环电流当前值 / 目标值（Q15）；回退时由小升至目标（CURRENT_SLEW_STEP_Q15_OF） */
 static volatile int32_t s_accStep = OPENLOOP_ACC_STEP_Q31;   /* 快环读 */
 static int32_t s_accStepFull;                         /* 开环电流达到目标后的加速度步长 */
 /* 冷起动失速自适应：I/F 能否把转子拖进同步取决于接入角误差、电流（转矩能力）与加速度之比，事先无法可靠判断。
- * 冷起动（摆动 / IPD 之后）在 I/F 中堵转超时一次，加强一档：电流按 OPENLOOP_BOOST_MAX 档从 OPENLOOP_CURRENT_A 均匀加到
- * OPENLOOP_WARM_MAX_A，加速度每档减半；堵转故障释放后由现有的自动重启（SUP_RESTART_LIMIT 次内）以新档位重试。
+ * 冷起动（摆动 / IPD 之后）在 I/F 中堵转超时一次，加强一档：电流按 OPENLOOP_BOOST_MAX 档从拖动电流 gGain.olIqQ15 均匀加到
+ * 上限 gGain.olWarmImaxQ15（闭环电流上限 SPD_PI_LIMIT，按驱动板限幅），加速度每档减半；堵转故障释放后由现有的自动重启（SUP_RESTART_LIMIT 次内）以新档位重试。
  * 学到的档位保留到下次上电（之后的起动直接使用），不影响闭环回退 / 飞车接管进入 I/F。正常电机首次即可起动，行为不变 */
 #define OPENLOOP_BOOST_MAX  3u
 #define OPENLOOP_IDENT_BOOST 2u   /* 自动辨识运行段测得磁链前，冷起动加速度的最低档 */
@@ -44,8 +45,8 @@ uint8_t OpenLoop_BoostLevel(void) { return s_ifBoost; }
 /* 当前开环转速（Q15），供观测器相位补偿等使用 */
 int16_t OpenLoop_SpeedQ15(void) { return (int16_t)(s_olSpeed >> 16); }
 
-/* 开环目标转速。|指令| >= OPENLOOP_SPIN_MIN_EMF_PCT：朝指令方向拖动，下限 OPENLOOP_HANDOVER_EMF_PCT（指令更低时先拖到切换转速、切闭环后再降速），
- * 上限 OPENLOOP_FALLBACK_EMF_PCT（观测器在此以上可靠）；超过 OPENLOOP_HANDOVER_EMF_PCT 后边加速边检查一致性，一致即切换，无需停顿等待。
+/* 开环目标转速。|指令| >= 闭环最低转速（gGain.spdSpinMin）：朝指令方向拖动，下限 切换转速（gGain.spdHandover）（指令更低时先拖到切换转速、切闭环后再降速），
+ * 上限 回退转速（gGain.spdFallback）（观测器在此以上可靠）；超过 切换转速（gGain.spdHandover） 后边加速边检查一致性，一致即切换，无需停顿等待。
  * 否则以指令转速持续开环运行。 */
 static int32_t openLoopTarget(void)
 {
@@ -70,7 +71,7 @@ static int16_t asinQ15(int32_t x)
     return (int16_t)lo;
 }
 
-/* 由 Spin 慢环查询是否需要回退到 I/F：转速已低于 OPENLOOP_FALLBACK_EMF_PCT（观测器可靠下限附近），且指令反向（需过零）
+/* 由 Spin 慢环查询是否需要回退到 I/F：转速已低于 回退转速（gGain.spdFallback）（观测器可靠下限附近），且指令反向（需过零）
  * 或指令本身低于闭环最低转速时返回 1 */
 uint8_t OpenLoop_WantsFallback(void)
 {
@@ -81,15 +82,15 @@ uint8_t OpenLoop_WantsFallback(void)
     return (uint8_t)((cmd > 0) != (filt > 0) || (cmd < 0 ? -cmd : cmd) < gGain.spdSpinMinQ15);
 }
 
-/* 从闭环回退到 I/F 时的开环电流：至少为 OPENLOOP_CURRENT_A；需能提供此刻的 iq 且负载角不超过 δmax（|iq| / sin(δmax)）；
- * 需过零（反转）时至少为 OPENLOOP_REV_CURRENT_A；不超过 OPENLOOP_WARM_MAX_A */
+/* 从闭环回退到 I/F 时的开环电流：至少为拖动电流；需能提供此刻的 iq 且负载角不超过 δmax（|iq| / sin(δmax)）；
+ * 需过零（反转）时至少为反转电流；不超过上限 gGain.olWarmImaxQ15 */
 static int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
 {
-    int32_t cur = OPENLOOP_IQ_Q15, aiq = iq < 0 ? -(int32_t)iq : iq;
+    int32_t cur = gGain.olIqQ15, aiq = iq < 0 ? -(int32_t)iq : iq;
     int32_t need = (int32_t)(((int64_t)aiq * OPENLOOP_WARM_KI_Q15) >> 15);      /* |iq| / sin(δmax) */
     if (need > cur) cur = need;
-    if (reversal && cur < OPENLOOP_REV_IQ_Q15) cur = OPENLOOP_REV_IQ_Q15;
-    if (cur > OPENLOOP_WARM_IMAX_Q15) cur = OPENLOOP_WARM_IMAX_Q15;
+    if (reversal && cur < gGain.olRevIqQ15) cur = gGain.olRevIqQ15;
+    if (cur > gGain.olWarmImaxQ15) cur = gGain.olWarmImaxQ15;
     return (int16_t)cur;
 }
 
@@ -104,15 +105,15 @@ static int16_t OpenLoop_WarmCurrent(int16_t iq, uint8_t reversal)
  *   warm = 0：冷起动（IPD / 摆动起动后），开环角 = 转子角 + 平衡负载角。 */
 static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t revAcc, int16_t speedQ15, OpenLoopEntry_TypeDef *e)
 {
-    int32_t cur = OPENLOOP_IQ_Q15;
+    int32_t cur = gGain.olIqQ15;
     uint8_t accBoost = s_ifBoost;
     /* 自动辨识的运行段、磁链尚未测得：加速度系数（∝ psi / J）仍为配置值，可能偏大数倍，冷起动加速度至少按
      * OPENLOOP_IDENT_BOOST 档（1/4），所需转矩随之减为 1/4，留出参数未知时的负载角余量。只降加速度、不加电流：
      * 内嵌式电机 Ld < Lq 时，磁阻转矩使 d 轴附近的刚度按 psi - (Lq - Ld) * i 下降，电流越大越容易失步。
      * 辨识允许耗时，测得 psi 后恢复正常档 */
     if (IDENT_TEST && !warm && accBoost < OPENLOOP_IDENT_BOOST && Ident_OpenLoopFluxPending()) accBoost = OPENLOOP_IDENT_BOOST;
-    if (!warm && s_ifBoost && OPENLOOP_WARM_IMAX_Q15 > OPENLOOP_IQ_Q15)
-        cur += ((int32_t)s_ifBoost * (OPENLOOP_WARM_IMAX_Q15 - OPENLOOP_IQ_Q15)) / (int32_t)OPENLOOP_BOOST_MAX;
+    if (!warm && s_ifBoost && gGain.olWarmImaxQ15 > gGain.olIqQ15)
+        cur += ((int32_t)s_ifBoost * (gGain.olWarmImaxQ15 - gGain.olIqQ15)) / (int32_t)OPENLOOP_BOOST_MAX;
     e->warm = warm;
     e->thetaOffset = 0;
     if (warm) {
@@ -148,9 +149,9 @@ static void prepareOpenLoop(uint8_t warm, int16_t iqNow, uint8_t revCur, uint8_t
     /* 电流沿开环角方向（开环坐标系 d 轴）：转子滞后 delta，转矩 ∝ I*sin(delta)，
      * 加速时 delta 自然增大。冷起动时与定位电流方向连续，避免像施加在 q 轴那样
      * 一开始就输出满转矩、激起新的摆动。 */
-    /* 反转过零时开环电流至少为 OPENLOOP_REV_CURRENT_A：加速度按 OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A 增大，余量与冷起动相同
+    /* 反转过零时开环电流至少为反转电流：加速度按反转电流 / 拖动电流增大，余量与冷起动相同
      * （按"所需 iq"增加的那部分电流用于已有转矩需求，不用于加速）。冷起动 / 同向 = 1 */
-    e->accScaleQ12 = (warm && revAcc) ? (int32_t)(((int64_t)OPENLOOP_REV_IQ_Q15 << 12) / OPENLOOP_IQ_Q15) : 4096;
+    e->accScaleQ12 = (warm && revAcc) ? (int32_t)(((int64_t)gGain.olRevIqQ15 << 12) / gGain.olIqQ15) : 4096;
     e->accStepFull = (int32_t)(((int64_t)gGain.openLoopAccStepQ31 * e->accScaleQ12) >> 12);
     if (!warm) e->accStepFull >>= accBoost;      /* 失速自适应：加速度每档减半 */
     /* 开环加速度与开环电流成正比：电流仍按 CURRENT_SLEW_STEP_Q15_OF 向目标上升时，可产生的转矩相应受限，
@@ -266,23 +267,18 @@ static void openLoopHandover(void)
     }
 }
 
-/* 从 gGain 重新装载飞车接管开环加速度步长（上电及 param.c 更新参数时） */
+/* 按 gGain 重新计算飞车接管进入 I/F 的两份入口参数（iq = 0，同向 / 过零；电流与加速度均随参数变化），
+ * 上电及 param.c 更新参数时调用。iq = 0 时只有整数运算与一次 asin(0)，可在关中断期间执行 */
 void OpenLoop_LoadGains(void)
 {
-    uint8_t k;
-    for (k = 0; k < 2; k++) {
-        if (s_catchIf[k].olCurTarget <= 0) continue;
-        s_catchIf[k].accStepFull = (int32_t)(((int64_t)gGain.openLoopAccStepQ31 * s_catchIf[k].accScaleQ12) >> 12);
-        s_catchIf[k].accStep = (int32_t)(((int64_t)s_catchIf[k].accStepFull * s_catchIf[k].olCur) / s_catchIf[k].olCurTarget);
-    }
+    OpenLoop_PrepareWarm(0, 0, 0, 0, &s_catchIf[0]);
+    OpenLoop_PrepareWarm(0, 1, 1, 0, &s_catchIf[1]);
 }
 
-/* 上电：飞车接管进入 I/F 的两份入口参数（iq = 0，同向 / 过零），快环接管时直接取用（常数时间） */
+/* 上电：飞车接管入口参数快环接管时直接取用（常数时间） */
 void OpenLoop_Init(void)
 {
     s_ifBoost = 0;
-    OpenLoop_PrepareWarm(0, 0, 0, 0, &s_catchIf[0]);   /* 飞车接管进入 I/F 的入口参数（iq = 0），同向 / 过零两份 */
-    OpenLoop_PrepareWarm(0, 1, 1, 0, &s_catchIf[1]);
     OpenLoop_LoadGains();
 }
 
@@ -315,7 +311,7 @@ void OpenLoop_Fast(void)
 /* I/F 慢环：
  *   更新目标、PLL 转速滤波；回退进入时开环电流按 CURRENT_SLEW_STEP_Q15_OF 升至目标（加速度同比例）；
  *   缺相检查；运行辨识模式下先测磁链；
- *   开环转速超过切换转速 OPENLOOP_HANDOVER_EMF_PCT 后，PLL 转速与开环转速一致（相对误差 < OPENLOOP_AGREE_RATIO）
+ *   开环转速超过切换转速 切换转速（gGain.spdHandover） 后，PLL 转速与开环转速一致（相对误差 < OPENLOOP_AGREE_RATIO）
  *   并持续 OPENLOOP_AGREE_S -> 切闭环；拖动超时仍不一致 -> 堵转故障 */
 void OpenLoop_Slow(void)
 {

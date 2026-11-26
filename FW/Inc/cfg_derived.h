@@ -118,8 +118,10 @@
 /* 斜坡 jerk（Q31 / 慢环拍^2）：SPEED_RAMP_ROUND_S 内加速度从 0 升到 SPEED_RAMP_UP */
 #define SPEED_JERK_Q31          ((int32_t)(SPEED_RAMP_UP / SPEED_MAX / SLOWLOOP_FREQ * 2147483648.0 / (SPEED_RAMP_ROUND_S * SLOWLOOP_FREQ) + 0.5))
 /* 回退 I/F 后过零的开环加减速度（rpm/s）：OpenLoop_Prepare 按 OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A 放大 OPENLOOP_ACC_RPM_S_OF */
-#define OPENLOOP_ACC_RPM_S_OF(acc)     (OPENLOOP_ACC_FRAC * (acc) * OPENLOOP_CURRENT_A)
-#define OPENLOOP_REV_ACC_RPM_S_OF(acc) (OPENLOOP_ACC_RPM_S_OF(acc) * OPENLOOP_REV_CURRENT_A / OPENLOOP_CURRENT_A)
+/* _AT(acc, i)：拖动电流 i（运行时按 param.c 限幅后的值）；_OF(acc)：配置拖动电流 OPENLOOP_CURRENT_A（编译期检查） */
+#define OPENLOOP_ACC_RPM_S_AT(acc, i)  (OPENLOOP_ACC_FRAC * (acc) * (i))
+#define OPENLOOP_ACC_RPM_S_OF(acc)     OPENLOOP_ACC_RPM_S_AT(acc, OPENLOOP_CURRENT_A)
+#define OPENLOOP_REV_ACC_RPM_S_OF(acc) OPENLOOP_ACC_RPM_S_AT(acc, OPENLOOP_REV_CURRENT_A)
 /* 软停机：电流幅值每慢环拍减小多少（Q15），= S 形斜坡的最大转矩变化率（不低于 CURRENT_SLEW_MIN_A_S） */
 #define CURRENT_SLEW_JERK_A_S_OF(acc)  (SPEED_RAMP_UP / (acc) / SPEED_RAMP_ROUND_S)
 #define CURRENT_SLEW_A_S_OF(acc)       (CURRENT_SLEW_JERK_A_S_OF(acc) > CURRENT_SLEW_MIN_A_S ? CURRENT_SLEW_JERK_A_S_OF(acc) : CURRENT_SLEW_MIN_A_S)
@@ -274,16 +276,20 @@
 #define ALIGN_SWING_MIN_SPD_T    (ALIGN_SWING_MIN_DELTA * OPENLOOP_LEAD_RAD * SLOWLOOP_FREQ * 60.0 / MOTOR_POLE_PAIRS / SPEED_MAX * 32768.0)
 /* "静止"门限：反电势（Q15 电压），直接由 ALIGN_STILL_EMF_PCT 给出，与磁链无关 */
 #define ALIGN_STILL_EMF_Q15  ((int32_t)(ALIGN_STILL_EMF_PCT * 0.01 * UDC_RATE / UDC_MAX * 32768.0 + 0.5))
-/* 反电势百分比（cfg_app.h *_EMF_PCT）-> 转速 rpm：n = PCT/100 * UDC_RATE * 60 / (2*pi * p * psi) */
-#define EMF_PCT_RPM_OF(pct, psi)    ((pct) * 0.01 * UDC_RATE * 60.0 / (2.0 * MATH_PI * MOTOR_POLE_PAIRS * (psi)))
+/* 反电势（V，峰值相电压）-> 转速 rpm：n = E * 60 / (2*pi * p * psi) */
+#define EMF_V_RPM_OF(e, psi)        ((e) * 60.0 / (2.0 * MATH_PI * MOTOR_POLE_PAIRS * (psi)))
 #define OPENLOOP_IQ_Q15               Q15(OPENLOOP_CURRENT_A / I_MAX)
 #define OPENLOOP_REV_IQ_Q15           Q15(OPENLOOP_REV_CURRENT_A / I_MAX)
-#define OPENLOOP_WARM_IMAX_Q15        Q15(OPENLOOP_WARM_MAX_A / I_MAX)
+/* I/F 电流的驱动板上限：速度环限幅、硬件过流余量（0.9 * BOARD_HOCP_A / 1.15，预留电流环超调）与 0.8 * I_MAX 中最小者 */
+#define OPENLOOP_BOARD_MAX_A          ((SPD_PI_LIMIT) < (0.9 * BOARD_HOCP_A / 1.15) ? \
+                                       ((SPD_PI_LIMIT) < 0.8 * I_MAX ? (SPD_PI_LIMIT) : 0.8 * I_MAX) : \
+                                       ((0.9 * BOARD_HOCP_A / 1.15) < 0.8 * I_MAX ? (0.9 * BOARD_HOCP_A / 1.15) : 0.8 * I_MAX))
 #define OPENLOOP_WARM_KI_Q15          ((int32_t)(32768.0 / MATH_SIN_DEG(OPENLOOP_WARM_DELTA_DEG) + 0.5))      /* 1/sin(δmax)，Q15 */
-#define OPENLOOP_ACC_STEP_Q31_OF(acc) ((int32_t)(OPENLOOP_ACC_RPM_S_OF(acc) / SPEED_MAX / PWM_FREQ * 2147483648.0))      /* 每快环拍 */
+#define OPENLOOP_ACC_STEP_Q31_AT(acc, i) ((int32_t)(OPENLOOP_ACC_RPM_S_AT(acc, i) / SPEED_MAX / PWM_FREQ * 2147483648.0))      /* 每快环拍 */
+#define OPENLOOP_ACC_STEP_Q31_OF(acc) OPENLOOP_ACC_STEP_Q31_AT(acc, OPENLOOP_CURRENT_A)
 #define OPENLOOP_ACC_STEP_Q31         OPENLOOP_ACC_STEP_Q31_OF(MOTOR_ACC_RPM_S_PER_A)
 /* I/F 加速度对应的加速电流（模型：MOTOR_ACC_RPM_S_PER_A），切换时作为加速前馈的起点 */
-#define OPENLOOP_ACC_FF_IQ_OF(acc)    Q15((OPENLOOP_ACC_RPM_S_OF(acc) / (acc)) / I_MAX)
+#define OPENLOOP_ACC_FF_IQ_AT(i)      Q15(OPENLOOP_ACC_FRAC * (i) / I_MAX)
 
 /* ---- 飞车检测（flystart.c） ---- */
 #define FLY_BLOCK_TICKS         (PWM_FREQ / 1000)           /* 每块 1 ms */

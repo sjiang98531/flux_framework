@@ -54,7 +54,7 @@
 #define IBUS_LIMIT_A            3.5         /* A */
 
 /* ===================== 斜坡 ============================================== */
-/* 反转过零前的减速斜率。同向调速见 cfg_app.h；反转先减速到 OPENLOOP_FALLBACK_EMF_PCT 再交给 I/F。 */
+/* 反转过零前的减速斜率。同向调速见 cfg_app.h；反转先减速到 回退转速（gGain.spdFallback） 再交给 I/F。 */
 #define SPEED_RAMP_REV          (2.0 * SPEED_RAMP_DOWN)     /* rpm/s，本电机 400 */
 /* 斜坡圆角：限制给定轨迹的加加速度（jerk），使加速度从 0 升至 SPEED_RAMP_UP 用时 SPEED_RAMP_ROUND_S（S 形曲线）。 */
 #define SPEED_RAMP_ROUND_S      0.1         /* s */
@@ -101,8 +101,12 @@
 /* Spin -> I/F 回退（热接管）开环电流：保证负载角 <= OPENLOOP_WARM_DELTA_DEG；过零反转至少 OPENLOOP_REV_CURRENT_A。 */
 #define OPENLOOP_WARM_DELTA_DEG       45.0
 #define OPENLOOP_REV_CURRENT_A        (OPENLOOP_CURRENT_A / 0.75)       /* A，本电机 1.0 A */
-#define OPENLOOP_WARM_MAX_A           (2.0 * MOTOR_I_RATED_A)     /* A，本电机 1.5 A */
-/* Spin 失锁检测周期（C 类经验值）：指令同向而估计转速低于 SPIN_LOST_EMF_PCT 时每 SPIN_CHECK_S 检查一次 */
+/* I/F 电流上限：回退接管与冷起动失速加强（openloop.c OPENLOOP_BOOST_MAX 档）的上限 = 闭环电流上限 SPD_PI_LIMIT
+ * （原为 2 倍额定：带载起动时 I/F 能提供的转矩不超过闭环的转矩，仿真中风机 0.9 ~ 1.5 倍额定负载由 0~5/12 升到 12/12）。
+ * 运行时（param.c）所有 I/F 电流另不超过驱动板上限 OPENLOOP_BOARD_MAX_A（硬件过流余量）。
+ * 凸极电机电流大时 d 轴附近的同步刚度 psi - (Lq - Ld) * I 下降，但仿真中按 (Lq - Ld) * I <= 0.5 psi 限幅反而更难带载起动，故不限 */
+#define OPENLOOP_WARM_MAX_A           SPD_PI_LIMIT                /* A，本电机 3.0 A */
+/* Spin 失锁检测周期（C 类经验值）：指令同向而估计转速低于 失锁转速（gGain.spdLost） 时每 SPIN_CHECK_S 检查一次 */
 #define SPIN_CHECK_S            0.010       /* s */
 /* 切换融合时间：切闭环后 id 从 I/F 分量渐变到 0、加速前馈渐入所用时间，取速度环时间常数 */
 #define OPENLOOP_BLEND_S              (1.0 / (2.0 * 3.14159265359 * SPEED_WN_HZ))     /* 本电机 0.20 s */
@@ -126,7 +130,7 @@
 #define FLYCURRENT_TH_PU        (FLY_STILL_RPM * 2.0 * 3.14159265358979 / 60.0 * MOTOR_POLE_PAIRS * MOTOR_PSI_F_WB \
                                  / MOTOR_RS_OHM / I_MAX)   /* 标幺（相对 I_MAX）：FLY_STILL_RPM 下的短路电流 */
 #define CALIPWMPERCENT          (0.99)      /* 短接时下桥占空比 */
-#define FLY_CATCH_EMF_PCT       OPENLOOP_FALLBACK_EMF_PCT  /* 反电势 %，同向直接接入闭环的下限（观测器在此以上可靠） */
+#define FLY_CATCH_K             OPENLOOP_FALLBACK_K   /* 同向直接接入闭环的下限 / 切换转速（观测器在此以上可靠） */
 /* 短接后等待电流暂态衰减（约 5 个实际 L/R 时间常数）再开始测量 */
 #define FLY_SETTLE_TAUS         10.0        /* x L/R（本电机 31 ms） */
 #define FLY_STABLE_MS           8           /* 连续该次数（每次 1 ms）转速估计稳定才接管 */

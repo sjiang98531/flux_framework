@@ -33,7 +33,7 @@ void OpenLoop_CommitCatch(int16_t spd);
 int16_t OpenLoop_SpeedQ15(void);
 /* 冷起动失速自适应档位（0 = 正常；冷起动 I/F 堵转一次加一档，最多 3 档：电流逐档加大、加速度逐档减半；上电清零）：诊断用 */
 uint8_t OpenLoop_BoostLevel(void);
-/* Spin 慢环调用：判断是否应交回 I/F（|转速| < OPENLOOP_FALLBACK_EMF_PCT 且指令反向或低于 OPENLOOP_SPIN_MIN_EMF_PCT） */
+/* Spin 慢环调用：判断是否应交回 I/F（|转速| < 回退转速（gGain.spdFallback） 且指令反向或低于 闭环最低转速（gGain.spdSpinMin）） */
 uint8_t OpenLoop_WantsFallback(void);
 
 #endif
